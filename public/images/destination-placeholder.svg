@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-label="Illustrated landscape">
+  <rect width="1200" height="720" fill="#e9edde"/>
+  <circle cx="890" cy="190" r="83" fill="#d6ddc4"/>
+  <path d="M0 500 280 205 560 510 780 310 1200 600V720H0Z" fill="#b9c5a5"/>
+  <path d="m0 610 340-220 315 210 325-160 220 160v120H0Z" fill="#98ab86"/>
+  <path d="M0 660q330-180 650 0t550-15v75H0Z" fill="#7f9672"/>
+</svg>

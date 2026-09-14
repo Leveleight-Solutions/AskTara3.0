@@ -1,0 +1,202 @@
+{
+  "provider": "Unsplash",
+  "width": 1200,
+  "format": "jpeg",
+  "assets": [
+    {
+      "id": "photo-1493976040374-85c8e12f0c0e",
+      "local": "/images/photo-1493976040374-85c8e12f0c0e.jpg",
+      "source": "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "kyoto"
+      ]
+    },
+    {
+      "id": "photo-1549549264-3d4bfce9a017",
+      "local": "/images/photo-1549549264-3d4bfce9a017.jpg",
+      "source": "https://images.unsplash.com/photo-1549549264-3d4bfce9a017?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "amalfi"
+      ],
+      "photographer": "Sandra Fernandes",
+      "page": "https://unsplash.com/photos/cKyqwl2_7rE",
+      "subject": "Positano, Amalfi Coast, Italy"
+    },
+    {
+      "id": "photo-1628642004970-1da51c8c7dec",
+      "local": "/images/photo-1628642004970-1da51c8c7dec.jpg",
+      "source": "https://images.unsplash.com/photo-1628642004970-1da51c8c7dec?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "marrakech",
+        "stay-marrakech"
+      ],
+      "photographer": "Jessica Kantak Bailey",
+      "page": "https://unsplash.com/photos/gCr0amJXOts",
+      "subject": "Riad BE courtyard, Marrakech, Morocco; style inspiration only for the fictional stay"
+    },
+    {
+      "id": "photo-1531662439848-a7ed93c51468",
+      "local": "/images/photo-1531662439848-a7ed93c51468.jpg",
+      "source": "https://images.unsplash.com/photo-1531662439848-a7ed93c51468?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "bali"
+      ],
+      "photographer": "Paolo Nicolello",
+      "page": "https://unsplash.com/photos/yAz5rCf87H8",
+      "subject": "Tegallalang rice terraces, Bali, Indonesia"
+    },
+    {
+      "id": "photo-1585208798174-6cedd86e019a",
+      "local": "/images/photo-1585208798174-6cedd86e019a.jpg",
+      "source": "https://images.unsplash.com/photo-1585208798174-6cedd86e019a?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "lisbon"
+      ],
+      "photographer": "Aayush Gupta",
+      "page": "https://unsplash.com/photos/ljhCEaHYWJ8",
+      "subject": "Lisbon tram, Portugal"
+    },
+    {
+      "id": "photo-1534106474077-f9e9c6f5a47c",
+      "local": "/images/photo-1534106474077-f9e9c6f5a47c.jpg",
+      "source": "https://images.unsplash.com/photo-1534106474077-f9e9c6f5a47c?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "dolomites"
+      ],
+      "photographer": "Michiel Ronde",
+      "page": "https://unsplash.com/photos/p7S6AxykCl0",
+      "subject": "Sassolungo and Sasso Piatto from Alpe di Siusi, Dolomites, Italy"
+    },
+    {
+      "id": "photo-1502602898657-3e91760cbb34",
+      "local": "/images/photo-1502602898657-3e91760cbb34.jpg",
+      "source": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "paris"
+      ]
+    },
+    {
+      "id": "photo-1580060839134-75a5edca2e99",
+      "local": "/images/photo-1580060839134-75a5edca2e99.jpg",
+      "source": "https://images.unsplash.com/photo-1580060839134-75a5edca2e99?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "cape-town"
+      ]
+    },
+    {
+      "id": "photo-1524231757912-21f4fe3a7200",
+      "local": "/images/photo-1524231757912-21f4fe3a7200.jpg",
+      "source": "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "istanbul"
+      ]
+    },
+    {
+      "id": "photo-1581593462109-f0fc8860e7c6",
+      "local": "/images/photo-1581593462109-f0fc8860e7c6.jpg",
+      "source": "https://images.unsplash.com/photo-1581593462109-f0fc8860e7c6?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "hunza",
+        "stay-hunza"
+      ],
+      "photographer": "Anas Najam",
+      "page": "https://unsplash.com/photos/G8LukJM3bF0",
+      "subject": "Hunza Valley, Pakistan"
+    },
+    {
+      "id": "photo-1513622470522-26c3c8a854bc",
+      "local": "/images/photo-1513622470522-26c3c8a854bc.jpg",
+      "source": "https://images.unsplash.com/photo-1513622470522-26c3c8a854bc?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "copenhagen"
+      ]
+    },
+    {
+      "id": "photo-1673733106978-f9075a071997",
+      "local": "/images/photo-1673733106978-f9075a071997.jpg",
+      "source": "https://images.unsplash.com/photo-1673733106978-f9075a071997?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "madeira"
+      ],
+      "photographer": "Artem Zhukov",
+      "page": "https://unsplash.com/photos/uwDMt9kQ0yY",
+      "subject": "Madeira coast, Portugal"
+    },
+    {
+      "id": "photo-1513635269975-59663e0ac1ad",
+      "local": "/images/photo-1513635269975-59663e0ac1ad.jpg",
+      "source": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "london"
+      ]
+    },
+    {
+      "id": "photo-1634000705856-4e7f1ec85818",
+      "local": "/images/photo-1634000705856-4e7f1ec85818.jpg",
+      "source": "https://images.unsplash.com/photo-1634000705856-4e7f1ec85818?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-kyoto"
+      ],
+      "photographer": "Se. Tsuchiya",
+      "page": "https://unsplash.com/photos/ITx82kndvm0",
+      "subject": "Traditional Japanese room; style inspiration for a fictional Kyoto stay"
+    },
+    {
+      "id": "photo-1782053491843-b1619b95db01",
+      "local": "/images/photo-1782053491843-b1619b95db01.jpg",
+      "source": "https://images.unsplash.com/photo-1782053491843-b1619b95db01?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-amalfi"
+      ],
+      "photographer": "Rafael Peier",
+      "page": "https://unsplash.com/photos/0DIoTyoRg2w",
+      "subject": "Coastal terraces in Positano; stay inspiration only"
+    },
+    {
+      "id": "photo-1540541338287-41700207dee6",
+      "local": "/images/photo-1540541338287-41700207dee6.jpg",
+      "source": "https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-bali",
+        "stay-madeira"
+      ]
+    },
+    {
+      "id": "photo-1546940084-6333670a0666",
+      "local": "/images/photo-1546940084-6333670a0666.jpg",
+      "source": "https://images.unsplash.com/photo-1546940084-6333670a0666?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-lisbon",
+        "stay-paris"
+      ],
+      "photographer": "Ralph Darabos",
+      "page": "https://unsplash.com/photos/ccydTEH5x7E",
+      "subject": "The Hoxton Paris room; interior style inspiration for fictional city stays"
+    },
+    {
+      "id": "photo-1449158743715-0a90ebb6d2d8",
+      "local": "/images/photo-1449158743715-0a90ebb6d2d8.jpg",
+      "source": "https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-dolomites"
+      ]
+    },
+    {
+      "id": "photo-1582719478250-c89cae4dc85b",
+      "local": "/images/photo-1582719478250-c89cae4dc85b.jpg",
+      "source": "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-cape-town"
+      ]
+    },
+    {
+      "id": "photo-1618773928121-c32242e63f39",
+      "local": "/images/photo-1618773928121-c32242e63f39.jpg",
+      "source": "https://images.unsplash.com/photo-1618773928121-c32242e63f39?auto=format&fit=crop&fm=jpg&w=1200&q=85",
+      "catalogItems": [
+        "stay-istanbul",
+        "stay-copenhagen"
+      ]
+    }
+  ]
+}
