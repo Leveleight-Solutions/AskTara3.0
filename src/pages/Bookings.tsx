@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowRight, BedDouble, Check, Clock3, Plane, RefreshCw, X } from 'lucide-react';
 import {
-  ArrowRight,
-  BedDouble,
-  Check,
-  Clock3,
-  LoaderCircle,
-  Plane,
-  RefreshCw,
-  X,
-} from 'lucide-react';
+  AlertDialog,
+  Badge,
+  Box,
+  Button,
+  Callout,
+  Card,
+  Checkbox,
+  DataList,
+  Flex,
+  Grid,
+  Heading,
+  Select,
+  Separator,
+  Text,
+  TextField,
+} from '@radix-ui/themes';
 import type {
   Booking,
   BookingGuest,
@@ -21,7 +29,7 @@ import type {
 } from '../../shared/bookings';
 import { api, ApiError, readableDate } from '../api';
 import { useApp } from '../context';
-import { EmptyState, Modal, Spinner } from '../components/ui';
+import { EmptyState, Spinner } from '../components/ui';
 import {
   BookingError,
   BookingPage,
@@ -31,7 +39,6 @@ import {
 } from '../components/BookingUI';
 import MarkdownText from '../components/MarkdownText';
 import { flightDate, flightTime, flightDuration } from '../../shared/flights';
-import './bookings.css';
 
 const statusLabels: Record<BookingStatus, string> = {
   checkout: 'Quote ready',
@@ -84,9 +91,20 @@ function useNow() {
   }, []);
   return now;
 }
+/** Status is never colour alone: every badge carries an icon and its wording. */
 function BookingBadge({ booking }: { booking: Booking }) {
+  const color =
+    booking.status === 'confirmed'
+      ? 'green'
+      : booking.status === 'failed'
+        ? 'red'
+        : booking.status === 'cancelled'
+          ? 'gray'
+          : ['pending', 'unknown', 'confirming', 'cancelling'].includes(booking.status)
+            ? 'amber'
+            : 'gray';
   return (
-    <span className={`booking-status status-${booking.status}`}>
+    <Badge size="2" radius="full" variant="soft" color={color}>
       {booking.status === 'confirmed' ? (
         <Check size={12} />
       ) : booking.status === 'cancelled' ? (
@@ -99,144 +117,188 @@ function BookingBadge({ booking }: { booking: Booking }) {
         : booking.status === 'checkout' && expiredAt(booking.quote.expiresAt)
           ? 'Quote expired'
           : statusLabels[booking.status]}
-    </span>
+    </Badge>
   );
 }
 function OfferSummary({ offer, quote }: { offer: BookingOfferView; quote?: BookingQuote }) {
   return (
-    <aside className="booking-summary" aria-label="Booking summary">
-      <span className="eyebrow">
-        {offer.kind === 'hotel' ? <BedDouble size={16} /> : <Plane size={16} />}{' '}
-        {offer.kind === 'hotel' ? 'YOUR STAY' : 'YOUR FLIGHT'}
-      </span>
-      <h2>{offer.name}</h2>
-      <p className="booking-muted">{offer.location}</p>
-      {offer.room && <p className="booking-muted">{offer.room}</p>}
-      <dl className="booking-facts">
-        <div>
-          <dt>{offer.kind === 'hotel' ? 'Check-in' : 'Departure'}</dt>
-          <dd>{readableDate(offer.startDate.slice(0, 10))}</dd>
-        </div>
-        {offer.endDate && (
-          <div>
-            <dt>{offer.kind === 'hotel' ? 'Check-out' : 'Return'}</dt>
-            <dd>{readableDate(offer.endDate.slice(0, 10))}</dd>
-          </div>
-        )}
-        <div>
-          <dt>Travelers</dt>
-          <dd>
-            {offer.adults} adult{offer.adults === 1 ? '' : 's'}
-          </dd>
-        </div>
-      </dl>
-      <div className="booking-total">
-        <span>{quote?.version ? 'Current quote' : 'Search price'}</span>
-        <strong>
-          {bookingPrice(
-            quote?.version ? quote.price : offer.price,
-            quote?.version ? quote.currency : offer.currency,
+    <Card asChild size="3">
+      <aside aria-label="Booking summary">
+        <Flex direction="column" gap="2" align="start">
+          <Flex align="center" gap="2">
+            {offer.kind === 'hotel' ? <BedDouble size={16} /> : <Plane size={16} />}
+            <Text size="1" color="gray" weight="medium" style={{ letterSpacing: '0.12em' }}>
+              {offer.kind === 'hotel' ? 'YOUR STAY' : 'YOUR FLIGHT'}
+            </Text>
+          </Flex>
+          <Heading as="h2" size="6">
+            {offer.name}
+          </Heading>
+          <Text as="p" size="2" color="gray">
+            {offer.location}
+          </Text>
+          {offer.room && (
+            <Text as="p" size="2" color="gray">
+              {offer.room}
+            </Text>
           )}
-        </strong>
-      </div>
-      <small>
-        {quote?.version
-          ? `${quote.currency} · total for this ${offer.kind === 'hotel' ? 'stay' : 'journey'}`
-          : 'The provider will recheck the price and terms before confirmation.'}
-      </small>
-      {!!offer.journeys?.length && (
-        <details className="booking-saved-terms">
-          <summary>Review all flight segments</summary>
-          <p className="booking-muted">Times are local to each airport.</p>
-          {offer.journeys.map((journey, index) => (
-            <section
-              key={journey.id}
-              className="booking-journey"
-              aria-label={
-                index === 0
-                  ? 'Outbound journey'
-                  : index === 1
-                    ? 'Return journey'
-                    : `Journey ${index + 1}`
-              }
-            >
-              <h3>
-                {index === 0 ? 'Outbound' : index === 1 ? 'Return' : `Journey ${index + 1}`}:{' '}
-                {journey.origin.code} → {journey.destination.code}
-              </h3>
-              <p>
-                {flightDuration(journey.duration)} ·{' '}
-                {journey.stops === 0
-                  ? 'Nonstop'
-                  : `${journey.stops} stop${journey.stops === 1 ? '' : 's'}`}
-              </p>
-              {journey.segments.map((segment) => (
-                <div key={segment.id}>
-                  <strong>
-                    {segment.marketingCarrier?.name || segment.operatingCarrier?.name || 'Airline'}{' '}
-                    {segment.marketingCarrier?.code}
-                    {segment.marketingFlightNumber}
-                  </strong>
-                  <p>
-                    {segment.origin.code} · {flightDate(segment.departure)}{' '}
-                    {flightTime(segment.departure)}
-                    <br />
-                    {segment.destination.code} · {flightDate(segment.arrival)}{' '}
-                    {flightTime(segment.arrival)}
-                  </p>
-                  {segment.operatingCarrier && (
-                    <p>
-                      Operated by {segment.operatingCarrier.name} {segment.operatingFlightNumber}
-                    </p>
-                  )}
-                </div>
+        </Flex>
+        <DataList.Root my="4" size="2" orientation="horizontal">
+          <DataList.Item>
+            <DataList.Label>{offer.kind === 'hotel' ? 'Check-in' : 'Departure'}</DataList.Label>
+            <DataList.Value>{readableDate(offer.startDate.slice(0, 10))}</DataList.Value>
+          </DataList.Item>
+          {offer.endDate && (
+            <DataList.Item>
+              <DataList.Label>{offer.kind === 'hotel' ? 'Check-out' : 'Return'}</DataList.Label>
+              <DataList.Value>{readableDate(offer.endDate.slice(0, 10))}</DataList.Value>
+            </DataList.Item>
+          )}
+          <DataList.Item>
+            <DataList.Label>Travelers</DataList.Label>
+            <DataList.Value>
+              {offer.adults} adult{offer.adults === 1 ? '' : 's'}
+            </DataList.Value>
+          </DataList.Item>
+        </DataList.Root>
+        <Separator size="4" my="3" />
+        <Flex justify="between" align="baseline" gap="3">
+          <Text size="2">{quote?.version ? 'Current quote' : 'Search price'}</Text>
+          <Text size="6" weight="bold">
+            {bookingPrice(
+              quote?.version ? quote.price : offer.price,
+              quote?.version ? quote.currency : offer.currency,
+            )}
+          </Text>
+        </Flex>
+        <Text as="p" size="1" color="gray" mt="2">
+          {quote?.version
+            ? `${quote.currency} · total for this ${offer.kind === 'hotel' ? 'stay' : 'journey'}`
+            : 'The provider will recheck the price and terms before confirmation.'}
+        </Text>
+        {!!offer.journeys?.length && (
+          <Box mt="4">
+            <details>
+              <Text asChild size="2" weight="medium">
+                <summary style={{ cursor: 'pointer' }}>Review all flight segments</summary>
+              </Text>
+              <Text as="p" size="1" color="gray" mt="2">
+                Times are local to each airport.
+              </Text>
+              {offer.journeys.map((journey, index) => (
+                <Box key={journey.id} asChild mt="3" style={{ overflowWrap: 'anywhere' }}>
+                  <section
+                    aria-label={
+                      index === 0
+                        ? 'Outbound journey'
+                        : index === 1
+                          ? 'Return journey'
+                          : `Journey ${index + 1}`
+                    }
+                  >
+                    <Heading size="2" as="h3">
+                      {index === 0 ? 'Outbound' : index === 1 ? 'Return' : `Journey ${index + 1}`}:{' '}
+                      {journey.origin.code} → {journey.destination.code}
+                    </Heading>
+                    <Text as="p" size="1" color="gray" mt="1">
+                      {flightDuration(journey.duration)} ·{' '}
+                      {journey.stops === 0
+                        ? 'Nonstop'
+                        : `${journey.stops} stop${journey.stops === 1 ? '' : 's'}`}
+                    </Text>
+                    {journey.segments.map((segment) => (
+                      <Box key={segment.id} mt="3">
+                        <Text as="div" size="1" weight="bold">
+                          {segment.marketingCarrier?.name ||
+                            segment.operatingCarrier?.name ||
+                            'Airline'}{' '}
+                          {segment.marketingCarrier?.code}
+                          {segment.marketingFlightNumber}
+                        </Text>
+                        <Text as="p" size="1" color="gray" mt="1">
+                          {segment.origin.code} · {flightDate(segment.departure)}{' '}
+                          {flightTime(segment.departure)}
+                          <br />
+                          {segment.destination.code} · {flightDate(segment.arrival)}{' '}
+                          {flightTime(segment.arrival)}
+                        </Text>
+                        {segment.operatingCarrier && (
+                          <Text as="p" size="1" color="gray" mt="1">
+                            Operated by {segment.operatingCarrier.name}{' '}
+                            {segment.operatingFlightNumber}
+                          </Text>
+                        )}
+                      </Box>
+                    ))}
+                  </section>
+                </Box>
               ))}
-            </section>
-          ))}
-        </details>
-      )}
-      {offer.tripId && (
-        <Link className="text-link" to={`/chat/${offer.tripId}`}>
-          View your itinerary <ArrowRight size={12} />
-        </Link>
-      )}
-    </aside>
+            </details>
+          </Box>
+        )}
+        {offer.tripId && (
+          <Box mt="4">
+            <Button asChild variant="ghost" size="2">
+              <Link to={`/chat/${offer.tripId}`}>
+                View your itinerary <ArrowRight size={12} />
+              </Link>
+            </Button>
+          </Box>
+        )}
+      </aside>
+    </Card>
   );
 }
 function QuoteTerms({ quote }: { quote: BookingQuote }) {
   return (
     <>
-      <h3>What your quote includes</h3>
+      <Heading as="h3" size="3" mt="4" mb="2">
+        What your quote includes
+      </Heading>
       {quote.terms.length ? (
-        <ul className="booking-terms">
-          {quote.terms.map((term, index) => (
-            <li key={index}>
-              <MarkdownText text={term} />
-            </li>
-          ))}
-        </ul>
+        <Flex asChild direction="column" gap="2">
+          <ul style={{ margin: 0, paddingLeft: 'var(--space-5)' }}>
+            {quote.terms.map((term, index) => (
+              <Text asChild size="2" color="gray" key={index}>
+                <li>
+                  <MarkdownText text={term} />
+                </li>
+              </Text>
+            ))}
+          </ul>
+        </Flex>
       ) : (
-        <p>The provider has not supplied additional rate terms.</p>
+        <Text as="p" size="2" color="gray">
+          The provider has not supplied additional rate terms.
+        </Text>
       )}
-      <h3>Cancellation terms</h3>
+      <Heading as="h3" size="3" mt="4" mb="2">
+        Cancellation terms
+      </Heading>
       {quote.cancellationPolicies.length ? (
-        <ul className="booking-terms">
-          {quote.cancellationPolicies.map((policy, index) => (
-            <li key={index}>
-              <MarkdownText text={policy.description} />
-              {policy.from && <span>From {policyDateTime(policy.from)}. </span>}
-              {policy.until && <span>Until {policyDateTime(policy.until)}. </span>}
-              {policy.amount !== undefined && (
-                <span>Fee: {bookingPrice(policy.amount, policy.currency || quote.currency)}.</span>
-              )}
-            </li>
-          ))}
-        </ul>
+        <Flex asChild direction="column" gap="2">
+          <ul style={{ margin: 0, paddingLeft: 'var(--space-5)' }}>
+            {quote.cancellationPolicies.map((policy, index) => (
+              <Text asChild size="2" color="gray" key={index}>
+                <li>
+                  <MarkdownText text={policy.description} />
+                  {policy.from && <span>From {policyDateTime(policy.from)}. </span>}
+                  {policy.until && <span>Until {policyDateTime(policy.until)}. </span>}
+                  {policy.amount !== undefined && (
+                    <span>
+                      Fee: {bookingPrice(policy.amount, policy.currency || quote.currency)}.
+                    </span>
+                  )}
+                </li>
+              </Text>
+            ))}
+          </ul>
+        </Flex>
       ) : (
-        <p>
+        <Text as="p" size="2" color="gray">
           Cancellation fees have not been supplied. Check the booking status before requesting a
           cancellation.
-        </p>
+        </Text>
       )}
     </>
   );
@@ -316,47 +378,63 @@ function NewBookingContent({ offerId }: { offerId: string }) {
         <>
           {error && <BookingError message={error} />}{' '}
           {offer && (
-            <div className="booking-layout">
-              <div className="booking-main">
-                <section className="booking-panel">
-                  <h2>Your selected {offer.kind === 'hotel' ? 'stay' : 'flight'}</h2>
-                  <p>{offer.description}</p>
-                  <p>We’ll check the current total and cancellation terms before you continue.</p>
-                  {offer.confirmationAvailable === false && (
-                    <p>
-                      {offer.unavailableReason ||
-                        'Sandbox confirmation is not enabled for this offer. You can still review its price and terms.'}
-                    </p>
-                  )}
-                  {expiredAt(offer.expiresAt, now) ? (
-                    <BookingError message="This search offer has expired. Search again for a current offer.">
-                      <Link to={offer.kind === 'flight' ? '/flights' : '/stays'}>
-                        Find another offer
-                      </Link>
-                    </BookingError>
-                  ) : (
-                    <p className="booking-muted">
-                      Search offer valid until {dateTime(offer.expiresAt)}.
-                    </p>
-                  )}
-                  <div className="booking-actions">
-                    <button
-                      className="button button-primary"
-                      disabled={busy || expiredAt(offer.expiresAt, now) || offer.mode !== 'test'}
-                      onClick={() => void prepare()}
-                    >
-                      {busy ? (
-                        <LoaderCircle size={16} className="spinning" />
-                      ) : (
+            <Grid columns={{ initial: '1', md: 'minmax(0, 1fr) 325px' }} gap="5" align="start">
+              <Box
+                gridColumn={{ initial: '1', md: '2' }}
+                gridRow="1"
+                position={{ initial: 'static', md: 'sticky' }}
+                top="5"
+              >
+                <OfferSummary offer={offer} />
+              </Box>
+              <Box minWidth="0">
+                <Card asChild size="3">
+                  <section>
+                    <Heading as="h2" size="6" mb="3">
+                      Your selected {offer.kind === 'hotel' ? 'stay' : 'flight'}
+                    </Heading>
+                    <Text as="p" size="2" color="gray">
+                      {offer.description}
+                    </Text>
+                    <Text as="p" size="2" color="gray" mt="3">
+                      We’ll check the current total and cancellation terms before you continue.
+                    </Text>
+                    {offer.confirmationAvailable === false && (
+                      <Text as="p" size="2" color="gray" mt="3">
+                        {offer.unavailableReason ||
+                          'Sandbox confirmation is not enabled for this offer. You can still review its price and terms.'}
+                      </Text>
+                    )}
+                    {expiredAt(offer.expiresAt, now) ? (
+                      <Box mt="3">
+                        <BookingError message="This search offer has expired. Search again for a current offer.">
+                          <Button asChild variant="soft" color="red" size="3">
+                            <Link to={offer.kind === 'flight' ? '/flights' : '/stays'}>
+                              Find another offer
+                            </Link>
+                          </Button>
+                        </BookingError>
+                      </Box>
+                    ) : (
+                      <Text as="p" size="1" color="gray" mt="3">
+                        Search offer valid until {dateTime(offer.expiresAt)}.
+                      </Text>
+                    )}
+                    <Flex gap="3" wrap="wrap" mt="5">
+                      <Button
+                        size="3"
+                        loading={busy}
+                        disabled={busy || expiredAt(offer.expiresAt, now) || offer.mode !== 'test'}
+                        onClick={() => void prepare()}
+                      >
                         <ArrowRight size={16} />
-                      )}{' '}
-                      {busy ? 'Checking price & terms…' : 'Check price & terms'}
-                    </button>
-                  </div>
-                </section>
-              </div>
-              <OfferSummary offer={offer} />
-            </div>
+                        {busy ? 'Checking price & terms…' : 'Check price & terms'}
+                      </Button>
+                    </Flex>
+                  </section>
+                </Card>
+              </Box>
+            </Grid>
           )}
         </>
       )}
@@ -602,322 +680,402 @@ function BookingDetailContent({ id }: { id: string }) {
         <>
           {error && <BookingError message={error} />}{' '}
           {booking && (
-            <div className="booking-layout">
-              <div className="booking-main">
-                <section className="booking-panel">
-                  <BookingBadge booking={booking} />
-                  {booking.message && (
-                    <div className="booking-message">
-                      <MarkdownText text={booking.message} />
-                    </div>
-                  )}
-                  {uncertain && (
-                    <BookingError message="The booking outcome needs checking. Check the saved provider status before taking another action; a second reservation has not been requested." />
-                  )}
-                  {canConfirm ? (
-                    <>
-                      <h2>Review the total and terms</h2>
-                      {booking.quote.priceChanged && (
-                        <div className="booking-price-change" role="status">
-                          <strong>The price changed during verification</strong>
-                          <p>
-                            The search showed{' '}
-                            {bookingPrice(booking.quote.originalPrice, booking.offer.currency)}.
-                            Your current quote is{' '}
-                            {bookingPrice(booking.quote.price, booking.quote.currency)}. Confirm
-                            only if you accept this total.
-                          </p>
-                        </div>
-                      )}
-                      <p className="booking-muted">
-                        Quote valid until {dateTime(booking.quote.expiresAt)}.
-                      </p>
-                      <QuoteTerms quote={booking.quote} />
-                      <h3>{booking.kind === 'hotel' ? 'Lead guest details' : 'Booking contact'}</h3>
-                      <p>
-                        {booking.kind === 'hotel'
-                          ? 'One room is being reserved. The lead guest will be listed on the sandbox reservation.'
-                          : 'Provide a contact for the booking and details for every adult traveler.'}
-                      </p>
-                      <form className="booking-form" onSubmit={confirm}>
-                        <fieldset disabled={busy}>
-                          <div className="booking-guest-fields">
-                            <label>
-                              First name
-                              <input
-                                required
-                                maxLength={80}
-                                autoComplete="given-name"
-                                value={holder.firstName}
-                                onChange={(e) =>
-                                  setHolder({ ...holder, firstName: e.target.value })
-                                }
-                              />
-                            </label>
-                            <label>
-                              Last name
-                              <input
-                                required
-                                maxLength={80}
-                                autoComplete="family-name"
-                                value={holder.lastName}
-                                onChange={(e) => setHolder({ ...holder, lastName: e.target.value })}
-                              />
-                            </label>
-                            <label>
-                              Email address
-                              <input
-                                required
-                                maxLength={254}
-                                type="email"
-                                autoComplete="email"
-                                value={holder.email}
-                                onChange={(e) => setHolder({ ...holder, email: e.target.value })}
-                              />
-                            </label>
-                            {booking.kind === 'flight' && (
+            <Grid columns={{ initial: '1', md: 'minmax(0, 1fr) 325px' }} gap="5" align="start">
+              <Box
+                gridColumn={{ initial: '1', md: '2' }}
+                gridRow="1"
+                position={{ initial: 'static', md: 'sticky' }}
+                top="5"
+              >
+                <OfferSummary offer={booking.offer} quote={booking.quote} />
+              </Box>
+              <Box minWidth="0">
+                <Card asChild size="3">
+                  <section>
+                    <BookingBadge booking={booking} />
+                    {booking.message && (
+                      <Box my="4">
+                        <Text as="div" size="2" color="gray">
+                          <MarkdownText text={booking.message} />
+                        </Text>
+                      </Box>
+                    )}
+                    {uncertain && (
+                      <Box my="4">
+                        <BookingError message="The booking outcome needs checking. Check the saved provider status before taking another action; a second reservation has not been requested." />
+                      </Box>
+                    )}
+                    {canConfirm ? (
+                      <>
+                        <Heading as="h2" size="6" mt="4" mb="3">
+                          Review the total and terms
+                        </Heading>
+                        {booking.quote.priceChanged && (
+                          <Callout.Root color="amber" role="status" my="4">
+                            <Callout.Text>
+                              <Text as="span" weight="bold">
+                                The price changed during verification
+                              </Text>
+                              <br />
+                              The search showed{' '}
+                              {bookingPrice(booking.quote.originalPrice, booking.offer.currency)}.
+                              Your current quote is{' '}
+                              {bookingPrice(booking.quote.price, booking.quote.currency)}. Confirm
+                              only if you accept this total.
+                            </Callout.Text>
+                          </Callout.Root>
+                        )}
+                        <Text as="p" size="1" color="gray">
+                          Quote valid until {dateTime(booking.quote.expiresAt)}.
+                        </Text>
+                        <QuoteTerms quote={booking.quote} />
+                        <Heading as="h3" size="3" mt="4" mb="2">
+                          {booking.kind === 'hotel' ? 'Lead guest details' : 'Booking contact'}
+                        </Heading>
+                        <Text as="p" size="2" color="gray">
+                          {booking.kind === 'hotel'
+                            ? 'One room is being reserved. The lead guest will be listed on the sandbox reservation.'
+                            : 'Provide a contact for the booking and details for every adult traveler.'}
+                        </Text>
+                        <form onSubmit={confirm}>
+                          <fieldset
+                            disabled={busy}
+                            style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+                          >
+                            <Grid columns={{ initial: '1', sm: '2' }} gap="4" mt="4">
                               <label>
-                                Phone country calling code
-                                <input
+                                <Text as="div" size="2" weight="medium" mb="1">
+                                  First name
+                                </Text>
+                                <TextField.Root
+                                  size="3"
                                   required
-                                  type="tel"
-                                  autoComplete="tel-country-code"
-                                  placeholder="44"
-                                  maxLength={4}
-                                  pattern="[0-9]{1,4}"
-                                  value={holder.phoneCountryCode || ''}
+                                  maxLength={80}
+                                  autoComplete="given-name"
+                                  value={holder.firstName}
                                   onChange={(e) =>
-                                    setHolder({ ...holder, phoneCountryCode: e.target.value })
+                                    setHolder({ ...holder, firstName: e.target.value })
                                   }
                                 />
                               </label>
-                            )}
-                            <label>
-                              Phone number
-                              <input
-                                required
-                                type="tel"
-                                autoComplete={booking.kind === 'flight' ? 'tel-national' : 'tel'}
-                                placeholder={
-                                  booking.kind === 'flight' ? '7700900123' : '+44 7700 900123'
-                                }
-                                maxLength={25}
-                                pattern={booking.kind === 'flight' ? '[0-9]{7,15}' : undefined}
-                                value={holder.phone}
-                                onChange={(e) => setHolder({ ...holder, phone: e.target.value })}
-                              />
-                            </label>
-                          </div>
-                          {booking.kind === 'flight' &&
-                            guests.map((guest, index) => (
-                              <GuestFields
-                                key={index}
-                                guest={guest}
-                                index={index}
-                                onChange={(updated) =>
-                                  setGuests((current) =>
-                                    current.map((entry, i) => (i === index ? updated : entry)),
-                                  )
-                                }
-                              />
-                            ))}
-                          <label className="booking-check">
-                            <input
-                              type="checkbox"
-                              checked={terms}
-                              required
-                              onChange={(e) => setTerms(e.target.checked)}
-                            />
-                            <span>
-                              I accept the current total of{' '}
-                              <strong>
-                                {bookingPrice(booking.quote.price, booking.quote.currency)}
-                              </strong>{' '}
-                              and the cancellation terms above.
-                            </span>
-                          </label>
-                          <label className="booking-check">
-                            <input
-                              type="checkbox"
-                              checked={sandbox}
-                              required
-                              onChange={(e) => setSandbox(e.target.checked)}
-                            />
-                            <span>
-                              I understand this is a sandbox reservation. No real stay or flight is
-                              reserved and no payment is collected.
-                            </span>
-                          </label>
-                          <div className="booking-actions">
-                            <button
-                              className="button button-primary"
-                              disabled={busy || !terms || !sandbox || quoteExpired}
-                            >
-                              {busy ? (
-                                <LoaderCircle size={16} className="spinning" />
-                              ) : (
+                              <label>
+                                <Text as="div" size="2" weight="medium" mb="1">
+                                  Last name
+                                </Text>
+                                <TextField.Root
+                                  size="3"
+                                  required
+                                  maxLength={80}
+                                  autoComplete="family-name"
+                                  value={holder.lastName}
+                                  onChange={(e) =>
+                                    setHolder({ ...holder, lastName: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <Text as="div" size="2" weight="medium" mb="1">
+                                  Email address
+                                </Text>
+                                <TextField.Root
+                                  size="3"
+                                  required
+                                  maxLength={254}
+                                  type="email"
+                                  autoComplete="email"
+                                  value={holder.email}
+                                  onChange={(e) => setHolder({ ...holder, email: e.target.value })}
+                                />
+                              </label>
+                              {booking.kind === 'flight' && (
+                                <label>
+                                  <Text as="div" size="2" weight="medium" mb="1">
+                                    Phone country calling code
+                                  </Text>
+                                  <TextField.Root
+                                    size="3"
+                                    required
+                                    type="tel"
+                                    autoComplete="tel-country-code"
+                                    placeholder="44"
+                                    maxLength={4}
+                                    pattern="[0-9]{1,4}"
+                                    value={holder.phoneCountryCode || ''}
+                                    onChange={(e) =>
+                                      setHolder({ ...holder, phoneCountryCode: e.target.value })
+                                    }
+                                  />
+                                </label>
+                              )}
+                              <label>
+                                <Text as="div" size="2" weight="medium" mb="1">
+                                  Phone number
+                                </Text>
+                                <TextField.Root
+                                  size="3"
+                                  required
+                                  type="tel"
+                                  autoComplete={booking.kind === 'flight' ? 'tel-national' : 'tel'}
+                                  placeholder={
+                                    booking.kind === 'flight' ? '7700900123' : '+44 7700 900123'
+                                  }
+                                  maxLength={25}
+                                  pattern={booking.kind === 'flight' ? '[0-9]{7,15}' : undefined}
+                                  value={holder.phone}
+                                  onChange={(e) => setHolder({ ...holder, phone: e.target.value })}
+                                />
+                              </label>
+                            </Grid>
+                            {booking.kind === 'flight' &&
+                              guests.map((guest, index) => (
+                                <GuestFields
+                                  key={index}
+                                  guest={guest}
+                                  index={index}
+                                  onChange={(updated) =>
+                                    setGuests((current) =>
+                                      current.map((entry, i) => (i === index ? updated : entry)),
+                                    )
+                                  }
+                                />
+                              ))}
+                            {/* The reviewed total and terms stay beside the confirm button. */}
+                            <Flex asChild align="start" gap="3" mt="5">
+                              <label>
+                                <Checkbox
+                                  size="3"
+                                  checked={terms}
+                                  required
+                                  onCheckedChange={(checked) => setTerms(checked === true)}
+                                />
+                                <Text size="2">
+                                  I accept the current total of{' '}
+                                  <Text weight="bold">
+                                    {bookingPrice(booking.quote.price, booking.quote.currency)}
+                                  </Text>{' '}
+                                  and the cancellation terms above.
+                                </Text>
+                              </label>
+                            </Flex>
+                            <Flex asChild align="start" gap="3" mt="4">
+                              <label>
+                                <Checkbox
+                                  size="3"
+                                  checked={sandbox}
+                                  required
+                                  onCheckedChange={(checked) => setSandbox(checked === true)}
+                                />
+                                <Text size="2">
+                                  I understand this is a sandbox reservation. No real stay or flight
+                                  is reserved and no payment is collected.
+                                </Text>
+                              </label>
+                            </Flex>
+                            <Flex gap="3" wrap="wrap" mt="5">
+                              <Button
+                                size="3"
+                                loading={busy}
+                                disabled={busy || !terms || !sandbox || quoteExpired}
+                              >
                                 <Check size={16} />
-                              )}{' '}
-                              {busy ? 'Confirming with provider…' : 'Confirm sandbox booking'}
-                            </button>
-                          </div>
-                        </fieldset>
-                      </form>
-                    </>
-                  ) : (
-                    <>
-                      <h2>
-                        {booking.status === 'checkout' && quoteExpired && booking.quote.version
-                          ? 'Quote expired'
-                          : statusLabels[booking.status]}
-                      </h2>
-                      {booking.status === 'checkout' && !booking.quote.version ? (
-                        <p>
-                          Your quote is still being prepared. Check its status before entering guest
-                          details.
-                        </p>
-                      ) : booking.status === 'checkout' && quoteExpired ? (
-                        <p>
-                          This quote has expired. Start a new search for current prices and terms.
-                        </p>
-                      ) : booking.status === 'checkout' &&
-                        booking.offer.confirmationAvailable === false ? (
-                        <p>
-                          {booking.offer.unavailableReason ||
-                            'Sandbox confirmation is not enabled for this offer. Your verified quote is available below.'}
-                        </p>
-                      ) : booking.status === 'confirmed' ? (
-                        <p>
-                          The provider confirmed this test reservation. It cannot be used for actual
-                          travel.
-                        </p>
-                      ) : booking.status === 'cancelled' ? (
-                        <p>The provider reports that this test reservation is cancelled.</p>
-                      ) : ['pending', 'confirming', 'unknown', 'cancelling'].includes(
-                          booking.status,
-                        ) || uncertain ? (
-                        <p>
-                          The provider has not returned a final outcome. Check the status here; do
-                          not create another reservation for the same request.
-                        </p>
-                      ) : (
-                        <p>Search again for a current offer when you are ready.</p>
-                      )}
-                      {(booking.confirmationCode || booking.providerBookingId) && (
-                        <>
-                          <h3>Provider reference</h3>
-                          <strong className="booking-reference">
-                            {booking.confirmationCode || booking.providerBookingId}
-                          </strong>
-                        </>
-                      )}
-                      {!!booking.ticketNumbers?.length && (
-                        <p>Sandbox ticket references: {booking.ticketNumbers.join(', ')}</p>
-                      )}
-                      <p className="booking-muted">
-                        {booking.paymentStatus === 'simulated'
-                          ? 'Payment simulated · no real charge'
-                          : booking.paymentStatus === 'unknown'
-                            ? 'Payment simulation status is unconfirmed.'
-                            : 'No payment collected.'}
-                      </p>
-                      {booking.cancellation && (
-                        <p className="booking-muted">
-                          Cancellation: {booking.cancellation.status}
-                          {booking.cancellation.fee !== undefined
-                            ? ` · ${bookingPrice(booking.cancellation.fee, booking.cancellation.currency || booking.quote.currency)} simulated fee`
-                            : ''}
-                        </p>
-                      )}
-                      <div className="booking-actions">
-                        <button
-                          className="button button-secondary"
-                          disabled={busy}
-                          onClick={() => void refresh()}
-                        >
-                          <RefreshCw size={15} className={busy ? 'spinning' : ''} />{' '}
-                          {busy ? 'Checking status…' : 'Check booking status'}
-                        </button>
-                        {booking.status === 'confirmed' && !uncertain && (
-                          <button
-                            className="button button-secondary"
-                            disabled={busy}
-                            onClick={() => {
-                              setAcceptCancel(false);
-                              setCancelling(true);
-                            }}
-                          >
-                            Cancel sandbox booking
-                          </button>
+                                {busy ? 'Confirming with provider…' : 'Confirm sandbox booking'}
+                              </Button>
+                            </Flex>
+                          </fieldset>
+                        </form>
+                      </>
+                    ) : (
+                      <>
+                        <Heading as="h2" size="6" mt="4" mb="3">
+                          {booking.status === 'checkout' && quoteExpired && booking.quote.version
+                            ? 'Quote expired'
+                            : statusLabels[booking.status]}
+                        </Heading>
+                        {booking.status === 'checkout' && !booking.quote.version ? (
+                          <Text as="p" size="2" color="gray">
+                            Your quote is still being prepared. Check its status before entering
+                            guest details.
+                          </Text>
+                        ) : booking.status === 'checkout' && quoteExpired ? (
+                          <Text as="p" size="2" color="gray">
+                            This quote has expired. Start a new search for current prices and terms.
+                          </Text>
+                        ) : booking.status === 'checkout' &&
+                          booking.offer.confirmationAvailable === false ? (
+                          <Text as="p" size="2" color="gray">
+                            {booking.offer.unavailableReason ||
+                              'Sandbox confirmation is not enabled for this offer. Your verified quote is available below.'}
+                          </Text>
+                        ) : booking.status === 'confirmed' ? (
+                          /* Peak-End: a confirmed sandbox reservation gets a visible ending. */
+                          <Callout.Root color="green" role="status">
+                            <Callout.Icon>
+                              <Check size={17} />
+                            </Callout.Icon>
+                            <Callout.Text>
+                              The provider confirmed this test reservation. It cannot be used for
+                              actual travel.
+                            </Callout.Text>
+                          </Callout.Root>
+                        ) : booking.status === 'cancelled' ? (
+                          <Text as="p" size="2" color="gray">
+                            The provider reports that this test reservation is cancelled.
+                          </Text>
+                        ) : ['pending', 'confirming', 'unknown', 'cancelling'].includes(
+                            booking.status,
+                          ) || uncertain ? (
+                          <Text as="p" size="2" color="gray">
+                            The provider has not returned a final outcome. Check the status here; do
+                            not create another reservation for the same request.
+                          </Text>
+                        ) : (
+                          <Text as="p" size="2" color="gray">
+                            Search again for a current offer when you are ready.
+                          </Text>
                         )}
-                        {['failed', 'expired'].includes(booking.status) ||
-                        (booking.status === 'checkout' && quoteExpired) ? (
-                          <Link
-                            className="text-link"
-                            to={booking.kind === 'flight' ? '/flights' : '/stays'}
+                        {(booking.confirmationCode || booking.providerBookingId) && (
+                          <>
+                            <Heading as="h3" size="3" mt="4" mb="2">
+                              Provider reference
+                            </Heading>
+                            <Text
+                              as="div"
+                              size="5"
+                              weight="bold"
+                              my="3"
+                              style={{ letterSpacing: '1px', overflowWrap: 'anywhere' }}
+                            >
+                              {booking.confirmationCode || booking.providerBookingId}
+                            </Text>
+                          </>
+                        )}
+                        {!!booking.ticketNumbers?.length && (
+                          <Text as="p" size="2" color="gray" mt="3">
+                            Sandbox ticket references: {booking.ticketNumbers.join(', ')}
+                          </Text>
+                        )}
+                        <Text as="p" size="1" color="gray" mt="3">
+                          {booking.paymentStatus === 'simulated'
+                            ? 'Payment simulated · no real charge'
+                            : booking.paymentStatus === 'unknown'
+                              ? 'Payment simulation status is unconfirmed.'
+                              : 'No payment collected.'}
+                        </Text>
+                        {booking.cancellation && (
+                          <Text as="p" size="1" color="gray" mt="2">
+                            Cancellation: {booking.cancellation.status}
+                            {booking.cancellation.fee !== undefined
+                              ? ` · ${bookingPrice(booking.cancellation.fee, booking.cancellation.currency || booking.quote.currency)} simulated fee`
+                              : ''}
+                          </Text>
+                        )}
+                        <Flex gap="3" wrap="wrap" align="center" mt="5">
+                          <Button
+                            size="3"
+                            loading={busy}
+                            disabled={busy}
+                            onClick={() => void refresh()}
                           >
-                            Search again <ArrowRight size={13} />
-                          </Link>
-                        ) : null}
-                      </div>
-                      {booking.quote.version && (
-                        <details
-                          className="booking-saved-terms"
-                          open={booking.offer.confirmationAvailable === false || undefined}
-                        >
-                          <summary>Saved quote & cancellation terms</summary>
-                          <QuoteTerms quote={booking.quote} />
-                        </details>
-                      )}
-                    </>
-                  )}
-                </section>
-                <p className="booking-muted">
+                            <RefreshCw size={15} />
+                            {busy ? 'Checking status…' : 'Check booking status'}
+                          </Button>
+                          {booking.status === 'confirmed' && !uncertain && (
+                            <Button
+                              size="3"
+                              variant="soft"
+                              color="red"
+                              disabled={busy}
+                              onClick={() => {
+                                setAcceptCancel(false);
+                                setCancelling(true);
+                              }}
+                            >
+                              Cancel sandbox booking
+                            </Button>
+                          )}
+                          {['failed', 'expired'].includes(booking.status) ||
+                          (booking.status === 'checkout' && quoteExpired) ? (
+                            <Button asChild variant="soft" color="gray" size="3">
+                              <Link to={booking.kind === 'flight' ? '/flights' : '/stays'}>
+                                Search again <ArrowRight size={13} />
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </Flex>
+                        {booking.quote.version && (
+                          <Box mt="5">
+                            <details
+                              open={booking.offer.confirmationAvailable === false || undefined}
+                            >
+                              <Text asChild size="2" weight="medium">
+                                <summary style={{ cursor: 'pointer' }}>
+                                  Saved quote &amp; cancellation terms
+                                </summary>
+                              </Text>
+                              <QuoteTerms quote={booking.quote} />
+                            </details>
+                          </Box>
+                        )}
+                      </>
+                    )}
+                  </section>
+                </Card>
+                <Text as="p" size="1" color="gray" mt="3">
                   Last updated {dateTime(booking.updatedAt)}. Booking ID: {booking.id}
-                </p>
-              </div>
-              <OfferSummary offer={booking.offer} quote={booking.quote} />
-            </div>
+                </Text>
+              </Box>
+            </Grid>
           )}
         </>
       )}
-      {cancelling && booking && (
-        <Modal
-          title="Cancel this sandbox booking?"
-          onClose={() => {
-            if (!busy) setCancelling(false);
+      {booking && (
+        <AlertDialog.Root
+          open={cancelling}
+          onOpenChange={(open) => {
+            if (!open && !busy) setCancelling(false);
           }}
         >
-          <p className="modal-intro">
-            This requests cancellation of the provider’s test reservation.
-          </p>
-          <QuoteTerms quote={booking.quote} />
-          <label className="booking-check">
-            <input
-              type="checkbox"
-              checked={acceptCancel}
-              disabled={busy}
-              onChange={(e) => setAcceptCancel(e.target.checked)}
-            />
-            <span>I accept the cancellation terms for this sandbox booking.</span>
-          </label>
-          <div className="booking-actions">
-            <button
-              className="button button-secondary"
-              disabled={busy}
-              onClick={() => setCancelling(false)}
-            >
-              Keep booking
-            </button>
-            <button
-              className="button button-danger"
-              disabled={busy || !acceptCancel}
-              onClick={() => void cancel()}
-            >
-              {busy ? 'Cancelling…' : 'Confirm cancellation'}
-            </button>
-          </div>
-        </Modal>
+          <AlertDialog.Content maxWidth="520px">
+            <AlertDialog.Title>Cancel this sandbox booking?</AlertDialog.Title>
+            <AlertDialog.Description size="2" color="gray">
+              This requests cancellation of the provider’s test reservation.
+            </AlertDialog.Description>
+            <QuoteTerms quote={booking.quote} />
+            <Flex asChild align="start" gap="3" mt="4">
+              <label>
+                <Checkbox
+                  size="3"
+                  checked={acceptCancel}
+                  disabled={busy}
+                  onCheckedChange={(checked) => setAcceptCancel(checked === true)}
+                />
+                <Text size="2">I accept the cancellation terms for this sandbox booking.</Text>
+              </label>
+            </Flex>
+            <Flex gap="3" wrap="wrap" mt="5" justify="end">
+              <AlertDialog.Cancel>
+                <Button
+                  size="3"
+                  variant="soft"
+                  color="gray"
+                  disabled={busy}
+                  onClick={() => setCancelling(false)}
+                >
+                  Keep booking
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                size="3"
+                color="red"
+                loading={busy}
+                disabled={busy || !acceptCancel}
+                onClick={() => void cancel()}
+              >
+                {busy ? 'Cancelling…' : 'Confirm cancellation'}
+              </Button>
+            </Flex>
+          </AlertDialog.Content>
+        </AlertDialog.Root>
       )}
     </BookingPage>
   );
@@ -933,96 +1091,127 @@ function GuestFields({
   onChange: (guest: BookingGuest) => void;
 }) {
   return (
-    <section className="booking-passenger">
-      <h3>Traveler {index + 1}</h3>
-      <div className="booking-guest-fields">
-        <label>
-          Traveler {index + 1} first name
-          <input
-            required
-            maxLength={80}
-            value={guest.firstName}
-            onChange={(e) => onChange({ ...guest, firstName: e.target.value })}
-          />
-        </label>
-        <label>
-          Traveler {index + 1} last name
-          <input
-            required
-            maxLength={80}
-            value={guest.lastName}
-            onChange={(e) => onChange({ ...guest, lastName: e.target.value })}
-          />
-        </label>
-        <label>
-          Date of birth
-          <input
-            required
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            value={guest.dateOfBirth}
-            onChange={(e) => onChange({ ...guest, dateOfBirth: e.target.value })}
-          />
-        </label>
-        <label>
-          Gender on travel document
-          <select
-            required
-            value={guest.gender || ''}
-            onChange={(e) => onChange({ ...guest, gender: e.target.value as 'M' | 'F' })}
-          >
-            <option value="">Select</option>
-            <option value="F">Female</option>
-            <option value="M">Male</option>
-          </select>
-        </label>
-        <label>
-          Nationality (2-letter code)
-          <input
-            required
-            minLength={2}
-            maxLength={2}
-            pattern="[A-Za-z]{2}"
-            placeholder="GB"
-            value={guest.nationality}
-            onChange={(e) => onChange({ ...guest, nationality: e.target.value.toUpperCase() })}
-          />
-        </label>
-        <label>
-          Passport number
-          <input
-            required
-            maxLength={30}
-            value={guest.passportNumber}
-            onChange={(e) => onChange({ ...guest, passportNumber: e.target.value })}
-          />
-        </label>
-        <label>
-          Passport expiry
-          <input
-            required
-            type="date"
-            min={new Date().toISOString().slice(0, 10)}
-            value={guest.passportExpiry}
-            onChange={(e) => onChange({ ...guest, passportExpiry: e.target.value })}
-          />
-        </label>
-        <label>
-          Passport issuing country (2-letter code)
-          <input
-            required
-            minLength={2}
-            maxLength={2}
-            pattern="[A-Za-z]{2}"
-            placeholder="GB"
-            value={guest.passportIssueCountry || ''}
-            onChange={(e) =>
-              onChange({ ...guest, passportIssueCountry: e.target.value.toUpperCase() })
-            }
-          />
-        </label>
-      </div>
-    </section>
+    <Box asChild mt="5">
+      <section data-testid="booking-passenger">
+        <Separator size="4" mb="4" />
+        <Heading as="h3" size="3" mb="3">
+          Traveler {index + 1}
+        </Heading>
+        <Grid columns={{ initial: '1', sm: '2' }} gap="4">
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Traveler {index + 1} first name
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              maxLength={80}
+              value={guest.firstName}
+              onChange={(e) => onChange({ ...guest, firstName: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Traveler {index + 1} last name
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              maxLength={80}
+              value={guest.lastName}
+              onChange={(e) => onChange({ ...guest, lastName: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Date of birth
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              type="date"
+              max={new Date().toISOString().slice(0, 10)}
+              value={guest.dateOfBirth}
+              onChange={(e) => onChange({ ...guest, dateOfBirth: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Gender on travel document
+            </Text>
+            <Select.Root
+              required
+              size="3"
+              value={guest.gender || ''}
+              onValueChange={(value) => onChange({ ...guest, gender: value as 'M' | 'F' })}
+            >
+              <Select.Trigger placeholder="Select" style={{ width: '100%' }} />
+              <Select.Content>
+                <Select.Item value="F">Female</Select.Item>
+                <Select.Item value="M">Male</Select.Item>
+              </Select.Content>
+            </Select.Root>
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Nationality (2-letter code)
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              minLength={2}
+              maxLength={2}
+              pattern="[A-Za-z]{2}"
+              placeholder="GB"
+              value={guest.nationality}
+              onChange={(e) => onChange({ ...guest, nationality: e.target.value.toUpperCase() })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Passport number
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              maxLength={30}
+              value={guest.passportNumber}
+              onChange={(e) => onChange({ ...guest, passportNumber: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Passport expiry
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              type="date"
+              min={new Date().toISOString().slice(0, 10)}
+              value={guest.passportExpiry}
+              onChange={(e) => onChange({ ...guest, passportExpiry: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Passport issuing country (2-letter code)
+            </Text>
+            <TextField.Root
+              size="3"
+              required
+              minLength={2}
+              maxLength={2}
+              pattern="[A-Za-z]{2}"
+              placeholder="GB"
+              value={guest.passportIssueCountry || ''}
+              onChange={(e) =>
+                onChange({ ...guest, passportIssueCountry: e.target.value.toUpperCase() })
+              }
+            />
+          </label>
+        </Grid>
+      </section>
+    </Box>
   );
 }
 
@@ -1061,7 +1250,14 @@ export function Bookings() {
         <Spinner label="Finding your bookings…" />
       ) : error ? (
         <BookingError message={error}>
-          <button onClick={() => setVersion((current) => current + 1)}>Try again</button>
+          <Button
+            variant="soft"
+            color="red"
+            size="3"
+            onClick={() => setVersion((current) => current + 1)}
+          >
+            Try again
+          </Button>
         </BookingError>
       ) : !bookings.length ? (
         <EmptyState
@@ -1071,38 +1267,55 @@ export function Bookings() {
           to="/stays"
         />
       ) : (
-        <div className="booking-list">
+        <Flex direction="column" gap="4">
           {bookings.map((booking) => (
-            <article className="booking-list-card" key={booking.id}>
-              <div>
-                <BookingBadge booking={booking} />
-                <h2>{booking.offer.name}</h2>
-                <p>
-                  {readableDate(booking.offer.startDate.slice(0, 10))}
-                  {booking.offer.endDate
-                    ? ` – ${readableDate(booking.offer.endDate.slice(0, 10))}`
-                    : ''}{' '}
-                  · {booking.offer.adults} adult{booking.offer.adults === 1 ? '' : 's'}
-                </p>
-              </div>
-              <div>
-                <strong>
-                  {bookingPrice(
-                    booking.quote.version ? booking.quote.price : booking.offer.price,
-                    booking.quote.version ? booking.quote.currency : booking.offer.currency,
-                  )}
-                </strong>
-                <Link
-                  className="button button-secondary button-small"
-                  to={`/bookings/${booking.id}`}
+            <Card asChild size="3" key={booking.id}>
+              <article>
+                <Flex
+                  direction={{ initial: 'column', sm: 'row' }}
+                  justify="between"
+                  align={{ initial: 'start', sm: 'center' }}
+                  gap="4"
                 >
-                  {booking.status === 'checkout' ? 'Continue checkout' : 'View booking'}
-                  <ArrowRight size={14} />
-                </Link>
-              </div>
-            </article>
+                  <Box minWidth="0">
+                    <BookingBadge booking={booking} />
+                    <Heading as="h2" size="6" mt="2" mb="1">
+                      {booking.offer.name}
+                    </Heading>
+                    <Text as="p" size="2" color="gray">
+                      {readableDate(booking.offer.startDate.slice(0, 10))}
+                      {booking.offer.endDate
+                        ? ` – ${readableDate(booking.offer.endDate.slice(0, 10))}`
+                        : ''}{' '}
+                      · {booking.offer.adults} adult{booking.offer.adults === 1 ? '' : 's'}
+                    </Text>
+                  </Box>
+                  <Flex
+                    direction={{ initial: 'row', sm: 'column' }}
+                    align={{ initial: 'center', sm: 'end' }}
+                    justify="between"
+                    gap="3"
+                    width={{ initial: '100%', sm: 'auto' }}
+                    flexShrink="0"
+                  >
+                    <Text size="5" weight="bold">
+                      {bookingPrice(
+                        booking.quote.version ? booking.quote.price : booking.offer.price,
+                        booking.quote.version ? booking.quote.currency : booking.offer.currency,
+                      )}
+                    </Text>
+                    <Button asChild variant="soft" size="3">
+                      <Link to={`/bookings/${booking.id}`}>
+                        {booking.status === 'checkout' ? 'Continue checkout' : 'View booking'}
+                        <ArrowRight size={14} />
+                      </Link>
+                    </Button>
+                  </Flex>
+                </Flex>
+              </article>
+            </Card>
           ))}
-        </div>
+        </Flex>
       )}
     </BookingPage>
   );

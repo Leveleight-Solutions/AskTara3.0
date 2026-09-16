@@ -2,6 +2,7 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
 import type { Booking, BookingOfferView, ConfirmBookingInput } from '../shared/bookings';
+import { choose } from './ui-helpers';
 
 const offerId = '10000000-0000-4000-8000-000000000001';
 const bookingId = '20000000-0000-4000-8000-000000000001';
@@ -271,7 +272,7 @@ for (const mobile of [false, true]) {
     await expect(page.getByText('SANDBOX-GARDEN-1', { exact: true })).toBeVisible();
     expect(state.confirms).toHaveLength(1);
     await page.getByRole('button', { name: 'Cancel sandbox booking', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole('alertdialog');
     await expect(
       dialog.getByRole('button', { name: 'Confirm cancellation', exact: true }),
     ).toBeDisabled();
@@ -393,15 +394,17 @@ test('enabled flight checkout requires a separate passport and contact country f
   await page.goto(`/bookings/${bookingId}`);
   await fillHolder(page, true);
   for (let i = 0; i < 2; i++) {
-    const passenger = page.locator('.booking-passenger').nth(i);
+    const passenger = page.getByTestId('booking-passenger').nth(i);
     await passenger
       .getByLabel(`Traveler ${i + 1} first name`, { exact: true })
       .fill(i ? 'Jordan' : 'Taylor');
     await passenger.getByLabel(`Traveler ${i + 1} last name`, { exact: true }).fill('Example');
     await passenger.getByLabel('Date of birth', { exact: true }).fill('1990-04-10');
-    await passenger
-      .getByRole('combobox', { name: 'Gender on travel document', exact: true })
-      .selectOption('F');
+    await choose(
+      page,
+      passenger.getByRole('combobox', { name: 'Gender on travel document', exact: true }),
+      'Female',
+    );
     await passenger.getByLabel('Nationality (2-letter code)', { exact: true }).fill('GB');
     await passenger.getByLabel('Passport number', { exact: true }).fill(`TEST0000${i}`);
     await passenger.getByLabel('Passport expiry', { exact: true }).fill('2035-04-10');
@@ -464,7 +467,7 @@ for (const cancellationFailure of ['failed', 'review_required'] as const) {
     await page.goto(`/bookings/${bookingId}`);
     for (let attempt = 0; attempt < 2; attempt++) {
       await page.getByRole('button', { name: 'Cancel sandbox booking', exact: true }).click();
-      const dialog = page.getByRole('dialog');
+      const dialog = page.getByRole('alertdialog');
       await dialog.getByRole('checkbox', { name: /I accept the cancellation terms/ }).check();
       await dialog.getByRole('button', { name: 'Confirm cancellation', exact: true }).click();
       await expect(dialog).toHaveCount(0);

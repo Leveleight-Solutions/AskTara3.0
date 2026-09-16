@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, CalendarPlus, Check } from 'lucide-react';
+import { ArrowRight, CalendarPlus, Check, CircleAlert } from 'lucide-react';
+import { Box, Button, Callout, Flex, Grid, Select, Text, TextField } from '@radix-ui/themes';
 import type { Experience, Stay, Trip } from '../../shared/types';
 import { api } from '../api';
 import { useApp } from '../context';
-import { Modal } from './ui';
+import { Modal, Spinner } from './ui';
 import { catalogDurationMinutes } from '../../shared/durations';
 
 type Selection = { kind: 'stay'; item: Stay } | { kind: 'experience'; item: Experience };
@@ -97,28 +98,30 @@ export function AddToTripDialog({
   }
   return (
     <Modal title="Make room for this idea" onClose={onClose}>
-      <p className="modal-intro">
-        <strong>{selection.item.name}</strong>
+      <Text as="p" size="2" mt="2" mb="4">
+        <Text weight="bold">{selection.item.name}</Text>
         <br />
         Add it to a day in {destination.name}. Your choice will be protected when Tara replans.
-      </p>
+      </Text>
       {loading ? (
-        <p role="status">Finding your trips…</p>
+        <Spinner label="Finding your trips…" />
       ) : !trips.length ? (
-        <div className="stack-form">
-          <p>You don’t have an itinerary in {destination.name} yet.</p>
-          <Link
-            className="button button-primary"
-            to={`/chat?q=${encodeURIComponent(`Plan a 5 day trip to ${destination.name}`)}`}
-            onClick={onClose}
-          >
-            Plan a trip here
-            <ArrowRight size={16} />
-          </Link>
-        </div>
+        <Flex direction="column" align="start" gap="3">
+          <Text as="p" size="2">
+            You don’t have an itinerary in {destination.name} yet.
+          </Text>
+          <Button asChild size="3">
+            <Link
+              to={`/chat?q=${encodeURIComponent(`Plan a 5 day trip to ${destination.name}`)}`}
+              onClick={onClose}
+            >
+              Plan a trip here
+              <ArrowRight size={16} />
+            </Link>
+          </Button>
+        </Flex>
       ) : (
         <form
-          className="stack-form"
           onSubmit={async (e) => {
             e.preventDefault();
             if (!chosen) return;
@@ -146,76 +149,101 @@ export function AddToTripDialog({
             }
           }}
         >
-          <label>
-            Choose a trip
-            <select value={tripId} onChange={(e) => selectTrip(e.target.value)}>
-              {trips.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-row">
-            <label>
-              Choose a day
-              <select
-                value={day}
-                onChange={(e) => {
-                  const number = Number(e.target.value);
-                  setDay(number);
-                  setTime(suggestedTime(chosen, number, duration));
-                  requestId.current = crypto.randomUUID();
-                  setError('');
-                }}
-              >
-                {days.map((d) => (
-                  <option key={d.day} value={d.day}>
-                    Day {d.day} · {d.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Start time
-              <input
-                type="time"
-                required
-                value={time}
-                onChange={(e) => {
-                  setTime(e.target.value);
-                  requestId.current = crypto.randomUUID();
-                  setError('');
-                }}
-              />
-            </label>
-          </div>
-          <p className="muted">
-            Allow {duration} minutes, plus a 15-minute gap between stops.{' '}
-            {selection.kind === 'stay'
-              ? 'This adds a sample stay reminder; its nightly room allowance is separate from activity costs.'
-              : 'This is an experience idea with an estimated per-person cost.'}
-          </p>
-          <button className="button button-primary" disabled={busy || !chosen}>
-            {busy ? 'Adding…' : 'Add to this trip'}
-            {busy ? <CalendarPlus size={16} /> : <Check size={16} />}
-          </button>
+          <Flex direction="column" gap="4">
+            <Flex direction="column" gap="1">
+              <Text as="label" size="2" weight="medium">
+                Choose a trip
+              </Text>
+              <Select.Root size="3" value={tripId} onValueChange={selectTrip}>
+                <Select.Trigger aria-label="Choose a trip" />
+                <Select.Content>
+                  {trips.map((t) => (
+                    <Select.Item key={t.id} value={t.id}>
+                      {t.title}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
+            </Flex>
+            <Grid columns={{ initial: '1', xs: '2' }} gap="4">
+              <Flex direction="column" gap="1">
+                <Text as="label" size="2" weight="medium">
+                  Choose a day
+                </Text>
+                <Select.Root
+                  size="3"
+                  value={String(day)}
+                  onValueChange={(value) => {
+                    const number = Number(value);
+                    setDay(number);
+                    setTime(suggestedTime(chosen, number, duration));
+                    requestId.current = crypto.randomUUID();
+                    setError('');
+                  }}
+                >
+                  <Select.Trigger aria-label="Choose a day" />
+                  <Select.Content>
+                    {days.map((d) => (
+                      <Select.Item key={d.day} value={String(d.day)}>
+                        Day {d.day} · {d.title}
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </Flex>
+              <Flex direction="column" gap="1" asChild>
+                <label>
+                  <Text size="2" weight="medium">
+                    Start time
+                  </Text>
+                  <TextField.Root
+                    size="3"
+                    type="time"
+                    required
+                    value={time}
+                    onChange={(e) => {
+                      setTime(e.target.value);
+                      requestId.current = crypto.randomUUID();
+                      setError('');
+                    }}
+                  />
+                </label>
+              </Flex>
+            </Grid>
+            <Text as="p" size="1" color="gray">
+              Allow {duration} minutes, plus a 15-minute gap between stops.{' '}
+              {selection.kind === 'stay'
+                ? 'This adds a sample stay reminder; its nightly room allowance is separate from activity costs.'
+                : 'This is an experience idea with an estimated per-person cost.'}
+            </Text>
+            <Button size="3" disabled={busy || !chosen} loading={busy}>
+              {busy ? 'Adding…' : 'Add to this trip'}
+              {busy ? <CalendarPlus size={16} /> : <Check size={16} />}
+            </Button>
+          </Flex>
         </form>
       )}
       {error && (
-        <div className="form-error" role="alert">
-          {error}
-          <button
-            type="button"
-            className="text-link"
-            onClick={() => {
-              requestId.current = crypto.randomUUID();
-              setRefresh((n) => n + 1);
-            }}
-          >
-            Refresh trip choices
-          </button>
-        </div>
+        <Callout.Root color="red" role="alert" mt="4">
+          <Callout.Icon>
+            <CircleAlert size={16} />
+          </Callout.Icon>
+          <Callout.Text>{error}</Callout.Text>
+          <Box>
+            <Button
+              type="button"
+              variant="soft"
+              size="3"
+              color="red"
+              onClick={() => {
+                requestId.current = crypto.randomUUID();
+                setRefresh((n) => n + 1);
+              }}
+            >
+              Refresh trip choices
+            </Button>
+          </Box>
+        </Callout.Root>
       )}
     </Modal>
   );

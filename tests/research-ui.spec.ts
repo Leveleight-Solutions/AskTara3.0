@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import type { Destination, Trip } from '../shared/types';
 
@@ -17,6 +17,9 @@ const osaka: Destination = {
   coordinates: [34.6937, 135.5023],
   highlights: [],
 };
+/** The planning report groups its sections in <details> blocks keyed by their summary. */
+const disclosure = (page: Page, summary: string) =>
+  page.locator('details').filter({ has: page.getByText(summary, { exact: true }) });
 const nara: Destination = { ...osaka, id: 'nara', name: 'Nara', coordinates: [34.6851, 135.8048] };
 function researchedTrip(): Trip {
   const date = '2026-09-12T12:00:00Z';
@@ -193,9 +196,9 @@ test('researched destinations render in chat, settings, maps, hotel searches and
   await page.goto(`/chat/${trip.id}`);
   await expect(page.getByRole('heading', { name: trip.title, exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Illustrated landscape for Osaka' })).toBeVisible();
-  await expect(page.locator('.message-text ol')).toHaveCount(1);
+  await expect(page.getByTestId('assistant-message').locator('ol')).toHaveCount(1);
   await expect(
-    page.locator('.message-text').getByRole('link', { name: 'official Osaka guide' }),
+    page.getByTestId('assistant-message').getByRole('link', { name: 'official Osaka guide' }),
   ).toHaveAttribute('href', 'https://example.org/osaka');
   await expect(page.getByRole('link', { name: 'Osaka garden', exact: true })).toHaveAttribute(
     'href',
@@ -214,21 +217,24 @@ test('researched destinations render in chat, settings, maps, hotel searches and
   await page.getByRole('button', { name: 'Edit trip details' }).click();
   const settings = page.getByRole('dialog', { name: 'Make it your kind of trip' });
   await settings.getByText('Plan more than one destination', { exact: true }).click();
-  await expect(settings.getByRole('combobox', { name: 'Destination 1' })).toHaveValue('osaka');
-  await expect(settings.getByRole('combobox', { name: 'Destination 2' })).toHaveValue('nara');
+  await expect(settings.getByRole('combobox', { name: 'Destination 1' })).toHaveText('Osaka');
+  await expect(settings.getByRole('combobox', { name: 'Destination 2' })).toHaveText('Nara');
   await page.keyboard.press('Escape');
   await page.getByRole('group', { name: 'Itinerary days' }).getByRole('button').nth(1).click();
   await expect(page.getByRole('heading', { name: 'Nara garden', exact: true })).toBeVisible();
-  await expect(page.locator('.itinerary-map')).toContainText('Nara');
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await expect(page.getByTestId('itinerary-map')).toContainText('Nara');
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await page.getByText('Assumptions & sources', { exact: true }).click();
-  await expect(page.locator('.plan-sources')).toContainText('Web research');
-  await expect(page.locator('.plan-sources')).toContainText('Published information may change');
+  const sources = disclosure(page, 'Assumptions & sources');
+  await expect(sources).toContainText('Web research');
+  await expect(sources).toContainText('Published information may change');
   await page.getByText('Places to stay (1)', { exact: true }).click();
-  await expect(page.locator('.research-stays')).toContainText('Sandbox rate');
+  await expect(disclosure(page, 'Places to stay (1)')).toContainText('Sandbox rate');
   await expect(
-    page.locator('.hotel-search').getByRole('combobox', { name: 'Destination', exact: true }),
-  ).toHaveValue('osaka');
+    page
+      .getByRole('region', { name: 'A stay for your dates' })
+      .getByRole('combobox', { name: 'Destination', exact: true }),
+  ).toHaveText('Osaka, Japan');
   await page.getByRole('button', { name: 'Check hotel rates', exact: true }).click();
   await expect(
     page.getByText('Test rates are simulated and do not establish real room availability.'),
@@ -247,7 +253,7 @@ test('researched destinations render in chat, settings, maps, hotel searches and
     /Help me plan a trip to Osaka/,
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: /Your itinerary/ }).click();
+  await page.getByRole('tab', { name: /Your itinerary/ }).click();
   await page.screenshot({
     path: testInfo.outputPath('global-trip-mobile-details.png'),
     fullPage: true,
@@ -255,8 +261,10 @@ test('researched destinations render in chat, settings, maps, hotel searches and
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.getByRole('button', { name: 'Itinerary', exact: true }).click();
-  await page.locator('.plan-panel').evaluate((element) => (element.scrollTop = 0));
+  await page.getByRole('tab', { name: 'Itinerary', exact: true }).click();
+  await page
+    .getByRole('region', { name: 'Your trip itinerary' })
+    .evaluate((element) => (element.scrollTop = 0));
   await page.screenshot({
     path: testInfo.outputPath('global-trip-mobile-itinerary.png'),
     fullPage: true,
@@ -272,7 +280,7 @@ test('researched destinations render in chat, settings, maps, hotel searches and
   await expect(page).toHaveURL(`/chat/${cloneId}`);
   await expect(page.getByRole('heading', { name: trip.title, exact: true })).toBeVisible();
   await page.goto('/trips');
-  await expect(page.locator('.trip-card')).toContainText('Osaka · Japan');
+  await expect(page.getByRole('article')).toContainText('Osaka · Japan');
   expect(unexpected).toEqual([]);
   expect(errors).toEqual([]);
 });

@@ -1,8 +1,17 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import type { Trip } from '../shared/types';
 import type { PlanningRun } from '../shared/planning';
 
+/** Radix Select has no native <select>: open the trigger, then pick the option by its label. */
+async function choose(page: Page, trigger: Locator, option: string) {
+  await trigger.click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+  await expect(trigger).toHaveText(option);
+}
 const dayTabs = (page: Page) => page.getByRole('group', { name: 'Itinerary days' });
+/** The planning report groups its sections in <details> blocks keyed by their summary. */
+const disclosure = (page: Page, summary: string) =>
+  page.locator('details').filter({ has: page.getByText(summary, { exact: true }) });
 
 async function savedTrip(page: Page, tripId?: string): Promise<Trip> {
   const id = tripId || new URL(page.url()).pathname.split('/').pop();
@@ -32,7 +41,7 @@ async function planKyoto(page: Page) {
 async function followUp(page: Page, message: string) {
   await page.getByRole('textbox', { name: 'Message Tara' }).fill(message);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  await expect(page.locator('.chat-messages')).toContainText(message);
+  await expect(page.getByTestId('chat-messages')).toContainText(message);
   await expect(page.getByRole('textbox', { name: 'Message Tara' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Edit trip details' })).toBeEnabled();
 }
@@ -47,7 +56,7 @@ test('a protected stop survives conversational changes, and restoring history re
   expect(originalVersion).toBeGreaterThan(0);
   const customTitle = 'A leisurely breakfast by the Kyoto river';
 
-  const originalCard = page.locator('.timeline-item').filter({
+  const originalCard = page.getByRole('article').filter({
     has: page.getByRole('heading', { name: firstStop.title, exact: true }),
   });
   await originalCard.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -75,7 +84,7 @@ test('a protected stop survives conversational changes, and restoring history re
 
   await page.reload();
   await expect(page.getByRole('heading', { name: customTitle, exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await expect(
     page.getByRole('heading', { name: 'Your trip, considered', exact: true }),
   ).toBeVisible();
@@ -83,7 +92,7 @@ test('a protected stop survives conversational changes, and restoring history re
     page.getByRole('heading', { name: 'Your estimated group spend', exact: true }),
   ).toBeVisible();
   await page.getByText('Assumptions & sources', { exact: true }).click();
-  await expect(page.locator('.plan-sources')).toBeVisible();
+  await expect(disclosure(page, 'Assumptions & sources')).toBeVisible();
 
   await page.getByRole('button', { name: 'Itinerary history', exact: true }).click();
   const history = page.getByRole('dialog', { name: 'Every version of your journey' });
@@ -93,7 +102,7 @@ test('a protected stop survives conversational changes, and restoring history re
   await expect(originalEntry).toHaveCount(1);
   await originalEntry.getByRole('button', { name: 'Restore', exact: true }).click();
   await expect(history).not.toBeVisible();
-  await page.getByRole('button', { name: 'Itinerary', exact: true }).click();
+  await page.getByRole('tab', { name: 'Itinerary', exact: true }).click();
   await expect(page.getByRole('heading', { name: firstStop.title, exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: customTitle, exact: true })).toHaveCount(0);
   const restored = await savedTrip(page);
@@ -111,20 +120,28 @@ test('destination allocations remain aligned across settings, regeneration and d
   await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Make it your kind of trip' });
   await settings.getByLabel('Number of days', { exact: true }).fill('4');
-  await settings.getByRole('combobox', { name: 'Your pace', exact: true }).selectOption('relaxed');
+  await choose(
+    page,
+    settings.getByRole('combobox', { name: 'Your pace', exact: true }),
+    'Slow & spacious',
+  );
   await settings.getByText('Plan more than one destination', { exact: true }).click();
   // A new single-destination trip may already have its first route stop populated.
   if (!(await settings.getByRole('combobox', { name: 'Destination 1', exact: true }).count())) {
     await settings.getByRole('button', { name: 'Add destination', exact: true }).click();
   }
-  await settings
-    .getByRole('combobox', { name: 'Destination 1', exact: true })
-    .selectOption('kyoto');
+  await choose(
+    page,
+    settings.getByRole('combobox', { name: 'Destination 1', exact: true }),
+    'Kyoto',
+  );
   await settings.getByRole('spinbutton', { name: 'Days in stop 1', exact: true }).fill('2');
   await settings.getByRole('button', { name: 'Add destination', exact: true }).click();
-  await settings
-    .getByRole('combobox', { name: 'Destination 2', exact: true })
-    .selectOption('lisbon');
+  await choose(
+    page,
+    settings.getByRole('combobox', { name: 'Destination 2', exact: true }),
+    'Lisbon',
+  );
   await settings.getByRole('spinbutton', { name: 'Days in stop 2', exact: true }).fill('2');
   await expect(settings.getByText('4 of 4 days allocated', { exact: true })).toBeVisible();
   await settings.getByRole('button', { name: 'Save trip details', exact: true }).click();
@@ -154,7 +171,7 @@ test('destination allocations remain aligned across settings, regeneration and d
     await dayTabs(page)
       .getByRole('button', { name: `Day ${number}`, exact: false })
       .click();
-    await expect(page.locator('.day-intro')).toContainText(city);
+    await expect(page.getByTestId('day-intro')).toContainText(city);
     await expect(page.getByRole('heading', { name: day.title, exact: true })).toBeVisible();
     const stop = day.items[0];
     await expect(page.getByRole('heading', { name: stop.title, exact: true })).toBeVisible();

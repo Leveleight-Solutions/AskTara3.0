@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { StudioWorkspace } from '../shared/studio';
+import { choose } from './ui-helpers';
 
 test('agent reviews, publishes, updates and revokes a branded client proposal with a real PDF', async ({
   page,
@@ -110,7 +111,7 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     await page.getByRole('tab', { name: 'Services', exact: true }).click();
     for (const title of ['A quiet Bloomsbury hotel', 'Arrival transfer']) {
       await page
-        .locator('.studio-service-item')
+        .getByRole('article')
         .filter({ has: page.getByRole('heading', { name: title, exact: true }) })
         .getByRole('button', { name: 'Edit service', exact: true })
         .click();
@@ -123,10 +124,10 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     await expect(
       page.getByText('Private preview · Publish only when the client-facing details are ready.'),
     ).toBeVisible();
-    await expect(page.locator('.studio-proposal-preview')).not.toContainText('PRIVATE_');
-    await expect(page.locator('.studio-proposal-preview')).toContainText(
-      'Currencies are shown separately',
-    );
+    const previewDoc = page.getByTestId('client-proposal');
+    await expect(previewDoc).toBeVisible();
+    await expect(previewDoc).not.toContainText('PRIVATE_');
+    await expect(previewDoc).toContainText('Currencies are shown separately');
     const draftDownload = page.waitForEvent('download');
     await page.getByRole('link', { name: 'Download draft PDF' }).click();
     const draftPath = testInfo.outputPath('draft-proposal.pdf');
@@ -136,19 +137,25 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     await expect(
       page.getByText('Client proposal published. Copy the link to share it.'),
     ).toBeVisible();
-    let link = await page.locator('.studio-proposal-link > p > a').getAttribute('href');
+    const clientLink = page.getByRole('link', { name: /\/proposal\// });
+    await expect(clientLink).toBeVisible();
+    let link = await clientLink.getAttribute('href');
     expect(link).toContain('/proposal/leveleight-demo-travel/');
     await viewer.goto(link!);
     await expect(
       viewer.getByRole('heading', { name: 'A considered London escape', exact: true }),
     ).toBeVisible();
-    await expect(viewer.locator('.proposal-brand')).toContainText('Leveleight Demo Travel');
+    await expect(viewer.getByTestId('proposal-brand')).toContainText('Leveleight Demo Travel');
     await expect(viewer.getByRole('status')).toContainText('Prices need reconfirmation');
-    await expect(viewer.locator('.client-proposal')).not.toContainText('PRIVATE_');
-    await expect(viewer.locator('.client-proposal')).not.toContainText('876.54');
-    await expect(viewer.locator('.site-header')).toHaveCount(0);
-    await expect(viewer.locator('.proposal-pricing')).toContainText('AUD');
-    await expect(viewer.locator('.proposal-pricing')).toContainText('USD');
+    const clientDoc = viewer.getByTestId('client-proposal');
+    await expect(clientDoc).toBeVisible();
+    await expect(clientDoc).not.toContainText('PRIVATE_');
+    await expect(clientDoc).not.toContainText('876.54');
+    await expect(viewer.getByRole('navigation', { name: 'Main navigation' })).toHaveCount(0);
+    const clientPricing = viewer.getByTestId('proposal-pricing');
+    await expect(clientPricing).toBeVisible();
+    await expect(clientPricing).toContainText('AUD');
+    await expect(clientPricing).toContainText('USD');
     await viewer.screenshot({
       path: testInfo.outputPath('client-proposal-desktop.png'),
       fullPage: true,
@@ -158,26 +165,31 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     const pdfPath = testInfo.outputPath('published-proposal.pdf');
     await (await download).saveAs(pdfPath);
     expect((await readFile(pdfPath)).subarray(0, 5).toString()).toBe('%PDF-');
-    await page
-      .getByRole('combobox', { name: 'Proposal format', exact: true })
-      .selectOption('package');
+    await choose(
+      page,
+      page.getByRole('combobox', { name: 'Proposal format', exact: true }),
+      'Show one package price',
+    );
     await page.getByLabel('Total package price', { exact: true }).fill('18500');
     await page.getByRole('button', { name: 'Save pricing', exact: true }).click();
     await expect(
       page.getByText('Pricing saved. Published client links remain unchanged until republished.'),
     ).toBeVisible();
     await viewer.reload();
-    await expect(viewer.locator('.proposal-pricing')).not.toContainText('18,500');
+    await expect(clientPricing).toBeVisible();
+    await expect(clientPricing).not.toContainText('18,500');
     await page.getByRole('button', { name: 'Republish client proposal', exact: true }).click();
     await expect(
       page.getByText('Client proposal published. Copy the link to share it.'),
     ).toBeVisible();
     const oldLink = link;
-    link = await page.locator('.studio-proposal-link > p > a').getAttribute('href');
+    link = await clientLink.getAttribute('href');
     expect(link).not.toBe(oldLink);
     await viewer.goto(link!);
-    await expect(viewer.locator('.proposal-pricing')).toContainText('18,500');
-    await expect(viewer.locator('.proposal-service-grid')).not.toContainText('1,200');
+    await expect(clientPricing).toContainText('18,500');
+    const clientServiceGrid = viewer.getByTestId('proposal-service-grid');
+    await expect(clientServiceGrid).toBeVisible();
+    await expect(clientServiceGrid).not.toContainText('1,200');
     await viewer.setViewportSize({ width: 390, height: 844 });
     await viewer.screenshot({
       path: testInfo.outputPath('client-proposal-mobile.png'),

@@ -225,7 +225,7 @@ test('the exact London request persists and Osaka switches globally when AI is c
     const followUp = (await submitted.json()) as { run: PlanningRun };
     expect(followUp.run.tripId).toBe(tripId);
     const completedFollowUp = await completeRun(page, followUp.run.id);
-    const reply = page.locator('.chat-message.assistant .message-text').last();
+    const reply = page.getByTestId('assistant-message').last();
     await expect(reply).toContainText('Osaka');
     await expect(reply).not.toContainText(/A few places come to mind/i);
     const updated = await readTrip(page, tripId);
@@ -253,9 +253,7 @@ test('the exact London request persists and Osaka switches globally when AI is c
     );
     await page.reload();
     await expect(page.getByRole('button', { name: 'Edit trip details' })).toBeEnabled();
-    await expect(page.locator('.chat-message.assistant .message-text').last()).toContainText(
-      'Osaka',
-    );
+    await expect(page.getByTestId('assistant-message').last()).toContainText('Osaka');
     await expect(
       page.getByRole('group', { name: 'Itinerary days' }).getByRole('button'),
     ).toHaveCount(integrations.ai ? 6 : 4);

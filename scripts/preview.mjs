@@ -51,7 +51,10 @@ try {
   console.log('Built application home:', await page.title());
   await page.getByRole('link', { name: 'Explore all destinations' }).click();
   await page.getByRole('heading', { name: 'Your next somewhere.' }).waitFor();
-  console.log('Built discover cards:', await page.locator('.destination-card').count());
+  console.log(
+    'Built discover cards:',
+    await page.locator('[data-testid="destination-card"]').count(),
+  );
   console.log('JavaScript errors:', JSON.stringify(errors));
   if (failed.length || errors.length) process.exitCode = 1;
 } finally {

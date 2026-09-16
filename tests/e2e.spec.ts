@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { destinations } from '../shared/catalog';
+import { chooseSetting } from './ui-helpers';
 
 async function capture(page: Page, name: string) {
   if (process.env.CAPTURE_SCREENSHOTS === '1') {
@@ -31,7 +32,7 @@ async function capture(page: Page, name: string) {
 }
 async function home(page: Page) {
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Less searching.');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('What are you planning?');
   await expect(page.getByRole('textbox', { name: 'Tell Tara about your trip' })).toBeVisible();
 }
 async function planKyoto(page: Page) {
@@ -61,7 +62,7 @@ test('discovery filters and wishlist survive a reload and can be undone', async 
   await page.getByRole('link', { name: 'Explore all destinations' }).click();
   await expect(page.getByRole('heading', { name: 'Your next somewhere.' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Search destinations' }).fill('Kyoto');
-  await expect(page.locator('.destination-card')).toHaveCount(1);
+  await expect(page.getByTestId('destination-card')).toHaveCount(1);
   await expect(page.getByRole('heading', { name: 'Kyoto', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Save Kyoto', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Unsave Kyoto', exact: true })).toHaveAttribute(
@@ -76,22 +77,27 @@ test('discovery filters and wishlist survive a reload and can be undone', async 
     page.getByRole('heading', { name: 'A blank page, full of possibility.' }),
   ).toBeVisible();
   await page.reload();
-  await expect(page.locator('.destination-card')).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'A blank page, full of possibility.' }),
+  ).toBeVisible();
+  await expect(page.getByTestId('destination-card')).toHaveCount(0);
   await page.goto('/explore');
+  // Radix Themes builds SegmentedControl on a single-select ToggleGroup, so the filter bar is a
+  // `radiogroup` of `radio`s, not a `group` of `button`s. Same two elements, current roles.
   await page
-    .getByRole('group', { name: 'Travel style', exact: true })
-    .getByRole('button', { name: 'By the water' })
+    .getByRole('radiogroup', { name: 'Travel style', exact: true })
+    .getByRole('radio', { name: 'By the water', exact: true })
     .click();
   await expect(page).toHaveURL(/vibe=By\+the\+water/);
-  await expect(page.getByRole('button', { name: 'By the water', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('radio', { name: 'By the water', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await expect(page.locator('.destination-card')).toHaveCount(2);
+  await expect(page.getByTestId('destination-card')).toHaveCount(2);
   await page.getByRole('textbox', { name: 'Search destinations' }).fill('no-such-place-9483');
   await expect(page.getByRole('heading', { name: 'A little further off the map.' })).toBeVisible();
   await page.getByRole('button', { name: 'Show all destinations' }).click();
-  await expect(page.locator('.destination-card')).toHaveCount(destinations.length);
+  await expect(page.getByTestId('destination-card')).toHaveCount(destinations.length);
 });
 
 test('a conversation creates an editable, persistent trip with calendar and revocable sharing', async ({
@@ -100,7 +106,7 @@ test('a conversation creates an editable, persistent trip with calendar and revo
 }) => {
   const tripUrl = await planKyoto(page);
   await capture(page, 'planner-desktop');
-  const firstStop = page.locator('.timeline-item').first();
+  const firstStop = page.getByRole('article').first();
   await expect(firstStop).toBeVisible();
   await firstStop.getByRole('button', { name: 'Edit', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'A moment in your journey' });
@@ -178,7 +184,7 @@ test('a conversation creates an editable, persistent trip with calendar and revo
   await sharing.getByRole('button', { name: 'Close dialog' }).click();
   await page.goto('/trips');
   await page.getByRole('button', { name: 'Ready to go', exact: true }).click();
-  await expect(page.locator('.trip-card')).toHaveCount(1);
+  await expect(page.getByRole('article')).toHaveCount(1);
   await page.getByRole('link', { name: 'Keep dreaming' }).click();
   await expect(page).toHaveURL(tripUrl);
   await expect(
@@ -202,11 +208,13 @@ test('registering transfers guest trip and wishlist, and login restores them', a
   await dialog.getByLabel('Password', { exact: true }).fill(password);
   await dialog.getByRole('button', { name: 'Create your account' }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+  // Sign out moved into the sidebar's Settings menu, so its button is no longer the proof of a
+  // session. The account button only renders for a signed-in user, so it proves the same thing.
+  await expect(page.getByTestId('account-button')).toBeVisible();
   await page.goto('/saved');
   await expect(page.getByRole('button', { name: 'Unsave Kyoto', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Less searching.');
+  await chooseSetting(page, 'Sign out');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('What are you planning?');
   await page.goto('/saved');
   await expect(
     page.getByRole('heading', { name: 'A blank page, full of possibility.' }),
@@ -231,9 +239,11 @@ test('public routes render without JavaScript crashes and disconnected suppliers
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const pages: [string, string][] = [
+  const pages: [string, string | RegExp][] = [
     ['/explore', 'Your next somewhere.'],
-    ['/destinations/kyoto', 'Kyoto'],
+    // Anchored: the destination page also carries an experience card headed "A slow morning in
+    // old Kyoto", so a substring match is now ambiguous. This still pins the page's own h1.
+    ['/destinations/kyoto', /^Kyoto$/],
     ['/saved', 'Your someday starts here.'],
     ['/trips', 'Places to go. Stories to tell.'],
     ['/chat', 'Where are we'],
@@ -258,7 +268,7 @@ test('public routes render without JavaScript crashes and disconnected suppliers
     await expect(page.getByRole('button', { name: 'Rates not connected' })).toBeDisabled();
   }
   await page.goto('/experiences');
-  await expect(page.locator('.experience-card')).toHaveCount(12);
+  await expect(page.getByTestId('experience-card')).toHaveCount(12);
   await page.goto('/flights');
   await expect(page.getByRole('heading', { name: 'Find your flight' })).toBeVisible();
   if (!integrations.flights) {
@@ -266,7 +276,9 @@ test('public routes render without JavaScript crashes and disconnected suppliers
     await page.getByLabel('To', { exact: true }).fill('LHR');
     await page.getByRole('button', { name: 'Search flights', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('Flight search is not available yet.');
-    await expect(page.locator('.flight-offer')).toHaveCount(0);
+    const offers = page.getByRole('region', { name: 'Flight search results' });
+    await expect(offers).toBeAttached();
+    await expect(offers.getByRole('article')).toHaveCount(0);
   }
   expect(errors).toEqual([]);
 });
@@ -287,7 +299,7 @@ test.describe('mobile', () => {
     await expect(navigation).not.toBeVisible();
     await noHorizontalOverflow(page);
     await page.getByRole('textbox', { name: 'Search destinations' }).fill('Kyoto');
-    await expect(page.locator('.destination-card')).toHaveCount(1);
+    await expect(page.getByTestId('destination-card')).toHaveCount(1);
     await page.getByRole('heading', { name: 'Kyoto', exact: true }).click();
     await expect(page).toHaveURL('/destinations/kyoto');
     await noHorizontalOverflow(page);
@@ -297,7 +309,7 @@ test.describe('mobile', () => {
       .fill('Plan a 3 day trip to Kyoto');
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
     await expect(page).toHaveURL(/\/chat\/[a-f0-9-]+$/);
-    await page.getByRole('button', { name: 'Your itinerary 3', exact: true }).click();
+    await page.getByRole('tab', { name: 'Your itinerary 3', exact: true }).click();
     await expect(
       page.getByRole('group', { name: 'Itinerary days' }).getByRole('button'),
     ).toHaveCount(3);

@@ -8,6 +8,7 @@ import {
   type StudioStop,
   type StudioWorkspace,
 } from '../shared/studio';
+import { choose } from './ui-helpers';
 
 const workspaceId = '60000000-0000-4000-8000-000000000001';
 const now = '2026-09-14T12:00:00Z';
@@ -232,11 +233,12 @@ test('Studio starts with brief review and explicit structure acceptance before s
 }) => {
   const workspace = fixtureWorkspace();
   const mocked = await mockStudio(page, workspace);
-  await page.goto('/studio');
+  // The composer that starts a workspace is the home hero now, not a /studio landing form.
+  await page.goto('/');
   await page
-    .getByLabel('Client request or planning notes')
+    .getByRole('textbox', { name: 'Tell Tara about your trip' })
     .fill('Plan a simple Paris and Amsterdam route for the Hendersons.');
-  await page.getByRole('button', { name: 'Start a workspace', exact: true }).click();
+  await page.getByRole('button', { name: 'Start planning your trip' }).click();
   await expect(page).toHaveURL(`/studio/${workspaceId}`);
   await expect(page.getByRole('region', { name: 'Brief review' })).toContainText(
     'When do they need to return?',
@@ -301,7 +303,7 @@ test('manual insurance estimate is reviewed and added without a booking request'
   await page.goto(`/studio/${workspaceId}`);
   await page.getByRole('button', { name: 'Add a service', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a service to the proposal' });
-  await dialog.getByLabel('Service type').selectOption('insurance');
+  await choose(page, dialog.getByRole('combobox', { name: 'Service type' }), 'Insurance');
   await dialog.getByLabel('Service name').fill('Agent insurance estimate');
   await dialog.getByLabel('Client price', { exact: true }).fill('350');
   await dialog.getByLabel('Internal cost · private').fill('280');
@@ -309,7 +311,9 @@ test('manual insurance estimate is reviewed and added without a booking request'
   await expect(dialog).toContainText('no policy is issued here');
   await dialog.getByRole('button', { name: 'Save service' }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.locator('.studio-service-list')).toContainText('Agent insurance estimate');
+  const services = page.getByRole('region', { name: 'Proposal services', exact: true });
+  await expect(services).toBeVisible();
+  await expect(services).toContainText('Agent insurance estimate');
   expect(workspace.items[0]).toMatchObject({
     kind: 'insurance',
     price: 350,
@@ -342,7 +346,9 @@ test('hotel quote search asks nationality and adds an explicit quote without res
   await expect(page.getByRole('heading', { name: 'Example station hotel' })).toBeVisible();
   expect(workspace.items).toHaveLength(0);
   await page.getByRole('button', { name: 'Add quote to proposal' }).click();
-  await expect(page.locator('.studio-service-list')).toContainText('Example station hotel');
+  await expect(page.getByRole('region', { name: 'Proposal services', exact: true })).toContainText(
+    'Example station hotel',
+  );
   const search = mocked.requests.find((r) => r.path.endsWith('/hotels/search'))!;
   expect(search.body).toEqual({ revision: 1, stopId: stops()[0].id, guestNationality: 'AU' });
   expect(workspace.items).toHaveLength(1);
@@ -359,7 +365,7 @@ test('family supplier quotes remain blocked until a supported confirmed party is
   await page.goto(`/studio/${workspaceId}`);
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Search hotels quotes' })).toBeDisabled();
-  await page.getByRole('combobox', { name: 'Search for', exact: true }).selectOption('flights');
+  await choose(page, page.getByRole('combobox', { name: 'Search for', exact: true }), 'Flights');
   await expect(page.getByRole('button', { name: 'Search flights quotes' })).toBeDisabled();
   await expect(page.getByLabel('Flight departure date')).toHaveValue('');
   await expect(page.getByLabel('Return date · optional')).toHaveValue('');
@@ -375,7 +381,7 @@ test('recommendations are opt-in for selected destinations and never impose a da
   await page.getByRole('tab', { name: 'Recommendations', exact: true }).click();
   expect(mocked.requests.some((r) => r.path.endsWith('/recommendations'))).toBe(false);
   await page.getByRole('checkbox', { name: 'Amsterdam', exact: true }).uncheck();
-  await page.getByLabel('Recommendation type').selectOption('food');
+  await choose(page, page.getByRole('combobox', { name: 'Recommendation type' }), 'Places to eat');
   await page.getByLabel('What would suit this client?').fill('Vegetarian, quiet, local food');
   await page.getByRole('button', { name: 'Research recommendations' }).click();
   await expect(page.getByRole('link', { name: 'Official café website' })).toHaveAttribute(
@@ -387,7 +393,12 @@ test('recommendations are opt-in for selected destinations and never impose a da
     stopIds: [stops()[0].id],
     interests: 'Vegetarian, quiet, local food',
   });
-  await expect(page.locator('.studio-recommendations')).not.toContainText('Morning');
+  const recommendations = page.getByRole('region', {
+    name: 'Recommendations',
+    exact: true,
+  });
+  await expect(recommendations).toBeVisible();
+  await expect(recommendations).not.toContainText('Morning');
   const inclusion = page.getByRole('checkbox', {
     name: 'Include Example vegetarian café in client proposal',
     exact: true,

@@ -20,13 +20,14 @@ try {
   await page.screenshot({ path: 'docs/screenshots/planner-agents-desktop.png' });
   const map = page.getByRole('region', { name: 'Your day, on the map' });
   await map.scrollIntoViewIfNeeded();
-  await map.getByLabel('Getting around').selectOption('walking');
+  await map.getByLabel('Getting around').click();
+  await page.getByRole('option', { name: 'Walking', exact: true }).click();
   await expect(map.getByRole('link', { name: 'Open itinerary in Google Maps' })).toHaveAttribute(
     'href',
     /travelmode=walking/,
   );
   await page.screenshot({ path: 'docs/screenshots/planner-map-desktop.png' });
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your trip, considered' })).toBeVisible();
   await page.screenshot({ path: 'docs/screenshots/planner-review-desktop.png' });
   await page.getByText('Assumptions & sources', { exact: true }).click();
@@ -34,8 +35,8 @@ try {
     .getByText('Asktara curated destination ideas', { exact: true })
     .scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'docs/screenshots/planner-sources-desktop.png' });
-  await page.getByRole('button', { name: 'Itinerary', exact: true }).click();
-  await page.locator('.plan-panel').evaluate((el) => (el.scrollTop = 0));
+  await page.getByRole('tab', { name: 'Itinerary', exact: true }).click();
+  await page.locator('[aria-label="Your trip itinerary"]').evaluate((el) => (el.scrollTop = 0));
   const placeButtons = page.getByRole('button', { name: 'Place details', exact: true });
   const placeCount = await placeButtons.count();
   if (!placeCount) throw new Error('The itinerary has no place details to inspect');
@@ -44,9 +45,9 @@ try {
   await page.screenshot({ path: 'docs/screenshots/planner-place-desktop.png' });
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: /Your itinerary/ }).click();
+  await page.getByRole('tab', { name: /Your itinerary/ }).click();
   await page.screenshot({ path: 'docs/screenshots/planner-agents-mobile.png' });
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await page.screenshot({ path: 'docs/screenshots/planner-review-mobile.png' });
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,

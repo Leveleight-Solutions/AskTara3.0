@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { FlightSegment } from '../shared/types';
+import { choose } from './ui-helpers';
 const segment = (
   id: string,
   origin: string,
@@ -126,12 +127,12 @@ test('flight quotes show complete round trips, connected carriers and expiry in 
   await page.getByLabel('To', { exact: true }).fill('HND');
   await page.getByLabel('Departure', { exact: true }).fill('2027-04-12');
   await page.getByLabel('Return', { exact: true }).fill('2027-04-19');
-  await page.getByRole('combobox', { name: 'Travelers', exact: true }).selectOption('2');
+  await choose(page, page.getByRole('combobox', { name: 'Travelers', exact: true }), '2 adults');
   await page.getByRole('button', { name: 'Search flights', exact: true }).click();
   await expect(
     page.getByRole('button', { name: 'View flight details', exact: true }),
   ).toBeVisible();
-  await expect(page.locator('.flight-journey-summary')).toHaveCount(2);
+  await expect(page.getByTestId('flight-journey-summary')).toHaveCount(2);
   await page.getByRole('button', { name: 'View flight details', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Flight details', exact: true });
   await expect(dialog).toBeVisible();

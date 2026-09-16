@@ -1,5 +1,17 @@
 import { useEffect, useId, useState } from 'react';
 import { ExternalLink, MapPin, Route } from 'lucide-react';
+import {
+  Box,
+  Button,
+  Card,
+  Flex,
+  Grid,
+  Heading,
+  Inset,
+  Link as ThemeLink,
+  Select,
+  Text,
+} from '@radix-ui/themes';
 import type { ItineraryDay, PublicConfig, Trip } from '../../shared/types';
 import type { PlanningPlace } from '../../shared/planning';
 import { findDestination } from '../../shared/destinations';
@@ -11,7 +23,6 @@ import {
   type MapTravelMode,
 } from '../../shared/maps';
 import { api } from '../api';
-import './itinerary-map.css';
 
 /** Fresh Google details are passed from page state; this component never persists them. */
 export default function ItineraryMap({
@@ -69,131 +80,191 @@ export default function ItineraryMap({
   const external = route?.url || (destinationStop ? googlePlaceLink(destinationStop) : undefined);
   if (!day || !destination) return null;
   return (
-    <section className="itinerary-map" aria-labelledby={`${id}-heading`}>
-      <div className="itinerary-map-heading">
-        <div>
-          <span className="eyebrow">
-            Day {day.day} · {destination.name}
-          </span>
-          <h3 id={`${id}-heading`}>
-            <Route size={17} />
-            {stops.length > 1 ? 'Your day, on the map' : 'Explore the neighborhood'}
-          </h3>
-        </div>
-        {external && (
-          <a
-            href={external}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Open itinerary in Google Maps"
-          >
-            <ExternalLink size={15} />
-            <span>Google Maps</span>
-          </a>
-        )}
-      </div>
-      {stops.length > 1 && (
-        <div className="itinerary-map-controls">
-          <label htmlFor={`${id}-mode`}>
-            Getting around
-            <select
-              id={`${id}-mode`}
-              value={mode}
-              onChange={(event) => setMode(event.target.value as MapTravelMode)}
-            >
-              <option value="suggested">Suggested routes</option>
-              <option value="walking">Walking</option>
-              <option value="driving">Driving</option>
-              <option value="transit">Public transport</option>
-            </select>
-          </label>
-          {routes.length > 1 && (
-            <label htmlFor={`${id}-section`}>
-              Route section
-              <select
-                id={`${id}-section`}
-                value={Math.min(section, routes.length - 1)}
-                onChange={(event) => setSection(Number(event.target.value))}
-              >
-                {routes.map((_entry, index) => (
-                  <option value={index} key={index}>
-                    Section {index + 1} of {routes.length}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-      )}
-      {embed ? (
-        <iframe
-          className="itinerary-map-frame"
-          title={`Google Maps ${stops.length > 1 ? 'route' : 'place'} for day ${day.day}`}
-          src={embed}
-          loading="lazy"
-          referrerPolicy="strict-origin-when-cross-origin"
-          allowFullScreen
-        />
-      ) : (
-        <div className="itinerary-map-unconnected">
-          <MapPin size={25} />
-          <p>{loading ? 'Preparing your map…' : 'Your places are ready to explore.'}</p>
-          <span>
-            {stops.length
-              ? `${stops.length} linked place${stops.length === 1 ? '' : 's'} in your day.`
-              : `Discover ${destination.name} and choose the places you’d like to visit.`}
-          </span>
+    <Card asChild size="2" mx={{ initial: '4', sm: '6' }} mb="5" mt="2">
+      <section aria-labelledby={`${id}-heading`} data-testid="itinerary-map">
+        <Flex align="center" justify="between" gap="3" mb="3">
+          <Box minWidth="0">
+            <Text size="1" color="gray">
+              Day {day.day} · {destination.name}
+            </Text>
+            <Heading as="h3" size="3" mt="1" id={`${id}-heading`}>
+              <Flex align="center" gap="2">
+                <Route size={17} />
+                {stops.length > 1 ? 'Your day, on the map' : 'Explore the neighborhood'}
+              </Flex>
+            </Heading>
+          </Box>
           {external && (
-            <a className="button" href={external} target="_blank" rel="noopener noreferrer">
-              {stops.length > 1 ? 'Open this route' : 'Explore on Google Maps'}
-              <ExternalLink size={14} />
-            </a>
-          )}
-        </div>
-      )}
-      {route && (
-        <ol className="itinerary-map-stops">
-          {route.stops.map((stop) => (
-            <li key={stop.id}>
-              <a href={googlePlaceLink(stop)} target="_blank" rel="noopener noreferrer">
-                {stop.label}
-                <ExternalLink size={11} />
+            <Button asChild variant="ghost" size="2" style={{ flexShrink: 0 }}>
+              <a
+                href={external}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open itinerary in Google Maps"
+              >
+                <ExternalLink size={15} />
+                <Box display={{ initial: 'none', sm: 'block' }}>
+                  <span>Google Maps</span>
+                </Box>
               </a>
-            </li>
-          ))}
-        </ol>
-      )}
-      {googleStops.length > 0 && (
-        <div className="itinerary-map-attribution">
-          <strong>Google Maps</strong>
-          {attributions.map((entry, index) => (
-            <span key={index}>
-              {entry.providerUri?.startsWith('https://') ? (
-                <a href={entry.providerUri} target="_blank" rel="noopener noreferrer">
-                  {entry.provider}
-                </a>
-              ) : (
-                entry.provider
+            </Button>
+          )}
+        </Flex>
+        {stops.length > 1 && (
+          <Grid columns={{ initial: '1', sm: routes.length > 1 ? '2' : '1' }} gap="3" mb="3">
+            <Box>
+              <Text
+                as="label"
+                htmlFor={`${id}-mode`}
+                size="1"
+                color="gray"
+                mb="1"
+                style={{ display: 'block' }}
+              >
+                Getting around
+              </Text>
+              <Select.Root
+                size="2"
+                value={mode}
+                onValueChange={(value) => setMode(value as MapTravelMode)}
+              >
+                <Select.Trigger id={`${id}-mode`} style={{ width: '100%' }} />
+                <Select.Content>
+                  <Select.Item value="suggested">Suggested routes</Select.Item>
+                  <Select.Item value="walking">Walking</Select.Item>
+                  <Select.Item value="driving">Driving</Select.Item>
+                  <Select.Item value="transit">Public transport</Select.Item>
+                </Select.Content>
+              </Select.Root>
+            </Box>
+            {routes.length > 1 && (
+              <Box>
+                <Text
+                  as="label"
+                  htmlFor={`${id}-section`}
+                  size="1"
+                  color="gray"
+                  mb="1"
+                  style={{ display: 'block' }}
+                >
+                  Route section
+                </Text>
+                <Select.Root
+                  size="2"
+                  value={String(Math.min(section, routes.length - 1))}
+                  onValueChange={(value) => setSection(Number(value))}
+                >
+                  <Select.Trigger id={`${id}-section`} style={{ width: '100%' }} />
+                  <Select.Content>
+                    {routes.map((_entry, index) => (
+                      <Select.Item value={String(index)} key={index}>
+                        Section {index + 1} of {routes.length}
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </Box>
+            )}
+          </Grid>
+        )}
+        {embed ? (
+          <Inset side="x" my="3">
+            <iframe
+              title={`Google Maps ${stops.length > 1 ? 'route' : 'place'} for day ${day.day}`}
+              src={embed}
+              loading="lazy"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 320,
+                minWidth: 200,
+                minHeight: 200,
+                border: 0,
+              }}
+            />
+          </Inset>
+        ) : (
+          <Inset side="x" my="3">
+            <Flex
+              direction="column"
+              align="center"
+              gap="2"
+              px="4"
+              py="5"
+              style={{ background: 'var(--gray-a2)', textAlign: 'center' }}
+            >
+              <MapPin size={25} />
+              <Text as="p" size="3">
+                {loading ? 'Preparing your map…' : 'Your places are ready to explore.'}
+              </Text>
+              <Text size="1" color="gray" style={{ maxWidth: 290 }}>
+                {stops.length
+                  ? `${stops.length} linked place${stops.length === 1 ? '' : 's'} in your day.`
+                  : `Discover ${destination.name} and choose the places you’d like to visit.`}
+              </Text>
+              {external && (
+                <Button asChild size="3" variant="soft" mt="3">
+                  <a href={external} target="_blank" rel="noopener noreferrer">
+                    {stops.length > 1 ? 'Open this route' : 'Explore on Google Maps'}
+                    <ExternalLink size={14} />
+                  </a>
+                </Button>
               )}
-            </span>
-          ))}
-        </div>
-      )}
-      <p className="itinerary-map-note">
-        {routes.length > 1 ? 'Longer days are split into sections for mobile directions. ' : ''}
-        Routes connect linked landmarks and researched places in itinerary order. Check directions
-        and travel times in Google Maps before setting out.
-      </p>
-      {embed && external && (
-        <a
-          className="itinerary-map-fallback"
-          href={external}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Map not loading? Open in Google Maps <ExternalLink size={12} />
-        </a>
-      )}
-    </section>
+            </Flex>
+          </Inset>
+        )}
+        {route && (
+          <Flex asChild direction="column" gap="2" mt="3">
+            <ol style={{ margin: 0, paddingLeft: 'var(--space-5)' }}>
+              {route.stops.map((stop) => (
+                <Text asChild size="1" color="gray" key={stop.id}>
+                  <li>
+                    <ThemeLink
+                      href={googlePlaceLink(stop)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {stop.label} <ExternalLink size={11} />
+                    </ThemeLink>
+                  </li>
+                </Text>
+              ))}
+            </ol>
+          </Flex>
+        )}
+        {googleStops.length > 0 && (
+          <Flex gap="2" wrap="wrap" align="center" mt="3">
+            <Text size="1" color="gray" weight="bold">
+              Google Maps
+            </Text>
+            {attributions.map((entry, index) => (
+              <Text size="1" color="gray" key={index}>
+                {entry.providerUri?.startsWith('https://') ? (
+                  <ThemeLink href={entry.providerUri} target="_blank" rel="noopener noreferrer">
+                    {entry.provider}
+                  </ThemeLink>
+                ) : (
+                  entry.provider
+                )}
+              </Text>
+            ))}
+          </Flex>
+        )}
+        <Text as="p" size="1" color="gray" mt="3">
+          {routes.length > 1 ? 'Longer days are split into sections for mobile directions. ' : ''}
+          Routes connect linked landmarks and researched places in itinerary order. Check directions
+          and travel times in Google Maps before setting out.
+        </Text>
+        {embed && external && (
+          <Box mt="2">
+            <ThemeLink href={external} target="_blank" rel="noopener noreferrer" size="1">
+              Map not loading? Open in Google Maps <ExternalLink size={12} />
+            </ThemeLink>
+          </Box>
+        )}
+      </section>
+    </Card>
   );
 }

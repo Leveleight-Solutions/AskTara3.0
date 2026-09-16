@@ -1,3 +1,4 @@
+import { Box, Text } from '@radix-ui/themes';
 import MarkdownText from './MarkdownText';
 
 /** Keep older research-heavy replies readable without changing saved content. */
@@ -16,10 +17,16 @@ export default function ConciergeMessage({ text }: { text: string }) {
   return (
     <>
       <MarkdownText text={preview.join('\n\n')} />
-      <details className="concierge-message-details">
-        <summary>Read the full response</summary>
-        <MarkdownText text={paragraphs.slice(preview.length).join('\n\n')} />
-      </details>
+      <Box asChild mt="2">
+        <details>
+          <summary style={{ cursor: 'pointer', display: 'list-item' }}>
+            <Text size="2" color="gray" weight="medium">
+              Read the full response
+            </Text>
+          </summary>
+          <MarkdownText text={paragraphs.slice(preview.length).join('\n\n')} />
+        </details>
+      </Box>
     </>
   );
 }

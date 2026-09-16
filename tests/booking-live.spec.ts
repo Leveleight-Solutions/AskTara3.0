@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import type { Booking, BookingOfferView } from '../shared/bookings';
+import { choose } from './ui-helpers';
 
 // This test creates and cancels a real provider SANDBOX hotel reservation.
 // It is deliberately opt-in and never invokes flight booking or real payment.
@@ -132,14 +133,18 @@ test('deployed sandbox hotel checkout confirms, persists and cancels through the
     expect(registration.status()).toBe(201);
     registered = true;
     await page.goto('/stays');
-    await page.getByRole('combobox', { name: 'Destination', exact: true }).selectOption('lisbon');
+    await choose(
+      page,
+      page.getByRole('combobox', { name: 'Destination', exact: true }),
+      'Lisbon, Portugal',
+    );
     await page
       .getByLabel('Check-in', { exact: true })
       .fill(process.env.ASKTARA_TEST_HOTEL_CHECKIN || '2026-11-18');
     await page
       .getByLabel('Check-out', { exact: true })
       .fill(process.env.ASKTARA_TEST_HOTEL_CHECKOUT || '2026-11-20');
-    await page.getByRole('combobox', { name: 'Guests', exact: true }).selectOption('2');
+    await choose(page, page.getByRole('combobox', { name: 'Guests', exact: true }), '2 adults');
     await page.getByLabel('Guest nationality', { exact: true }).fill('US');
     const searchPromise = page.waitForResponse(
       (response) =>

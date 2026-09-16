@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,6 +12,7 @@ import {
   Compass,
   Globe2,
   Heart,
+  Info,
   MapPin,
   Mountain,
   Plane,
@@ -22,6 +23,25 @@ import {
   Waves,
   X,
 } from 'lucide-react';
+import {
+  Badge,
+  Box,
+  Button,
+  Callout,
+  Card,
+  Container,
+  Flex,
+  Grid,
+  Heading,
+  VisuallyHidden,
+  IconButton,
+  Inset,
+  SegmentedControl,
+  Select,
+  TabNav,
+  Text,
+  TextField,
+} from '@radix-ui/themes';
 import type { Experience, Stay, Vibe } from '../../shared/types';
 import { money } from '../api';
 import { useApp } from '../context';
@@ -36,7 +56,6 @@ import {
 } from '../components/ui';
 import HotelSearch from '../components/HotelSearch';
 import { AddToTripDialog } from '../components/AddToTripDialog';
-import './explore.css';
 
 const vibes: { label: Vibe; icon: typeof Compass }[] = [
   { label: 'All places', icon: Globe2 },
@@ -48,6 +67,209 @@ const vibes: { label: Vibe; icon: typeof Compass }[] = [
 const matches = (text: string, query: string) =>
   text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 type SelectedListing = { kind: 'stay'; item: Stay } | { kind: 'experience'; item: Experience };
+
+/** Shared page shell: the old `.page-container` padding, as a Radix Container. */
+function Page({ children }: { children: ReactNode }) {
+  return (
+    <Container size="4" px={{ initial: '4', md: '6' }} py="6" pb="9">
+      {children}
+    </Container>
+  );
+}
+
+function PageIntro({ eyebrow, title, lead }: { eyebrow: string; title: string; lead: ReactNode }) {
+  return (
+    <Flex direction="column" gap="2" mb="2">
+      <Text size="1" color="gray" weight="medium">
+        {eyebrow}
+      </Text>
+      <Heading as="h1" size="8">
+        {title}
+      </Heading>
+      <Text as="p" size="3" color="gray">
+        {lead}
+      </Text>
+    </Flex>
+  );
+}
+
+/** Eyebrow + heading + optional lead, used above every section grid. */
+function SectionHeading({
+  eyebrow,
+  title,
+  lead,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  lead?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <Flex
+      justify="between"
+      align={{ initial: 'start', sm: 'end' }}
+      direction={{ initial: 'column', sm: 'row' }}
+      gap="3"
+      mb="4"
+    >
+      <Flex direction="column" gap="1">
+        <Text size="1" color="gray" weight="medium">
+          {eyebrow}
+        </Text>
+        <Heading as="h2" size="6">
+          {title}
+        </Heading>
+        {lead && (
+          <Text as="p" size="2" color="gray">
+            {lead}
+          </Text>
+        )}
+      </Flex>
+      {action}
+    </Flex>
+  );
+}
+
+function ExploreNav({ current }: { current: 'destinations' | 'stays' | 'experiences' }) {
+  const items = [
+    {
+      key: 'destinations' as const,
+      to: '/explore',
+      icon: <Globe2 size={17} />,
+      label: 'Destinations',
+    },
+    { key: 'flights' as const, to: '/flights', icon: <Plane size={17} />, label: 'Flights' },
+    { key: 'stays' as const, to: '/stays', icon: <BedDouble size={17} />, label: 'Stays' },
+    {
+      key: 'experiences' as const,
+      to: '/experiences',
+      icon: <Sparkles size={17} />,
+      label: 'Experiences',
+    },
+  ];
+  return (
+    <TabNav.Root aria-label="Discover travel" mt="5" mb="5">
+      {items.map((item) => {
+        const active = item.key === current;
+        return (
+          <TabNav.Link key={item.key} asChild active={active}>
+            <Link to={item.to} aria-current={active ? 'page' : undefined}>
+              <Flex align="center" gap="2">
+                {item.icon}
+                {item.label}
+              </Flex>
+            </Link>
+          </TabNav.Link>
+        );
+      })}
+    </TabNav.Root>
+  );
+}
+
+/** Search field + one dropdown: the whole filter surface stays on one scannable row. */
+function FilterBar({
+  searchLabel,
+  placeholder,
+  query,
+  onQuery,
+  selectLabel,
+  selectIcon,
+  selectValue,
+  selectText,
+  options,
+  onSelect,
+}: {
+  searchLabel: string;
+  placeholder: string;
+  query: string;
+  onQuery: (value: string) => void;
+  selectLabel: string;
+  selectIcon: ReactNode;
+  selectValue: string;
+  selectText: string;
+  options: { value: string; label: string }[];
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <Flex gap="3" align="center" wrap="wrap">
+      <Box flexGrow="1" style={{ minWidth: 240, maxWidth: 600 }}>
+        <TextField.Root
+          size="3"
+          aria-label={searchLabel}
+          placeholder={placeholder}
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+        >
+          <TextField.Slot>
+            <Search size={18} />
+          </TextField.Slot>
+          {query && (
+            <TextField.Slot side="right">
+              <IconButton
+                type="button"
+                size="2"
+                variant="ghost"
+                color="gray"
+                aria-label="Clear search"
+                onClick={() => onQuery('')}
+              >
+                <X size={16} />
+              </IconButton>
+            </TextField.Slot>
+          )}
+        </TextField.Root>
+      </Box>
+      <Select.Root size="3" value={selectValue} onValueChange={onSelect}>
+        <Select.Trigger aria-label={selectLabel}>
+          <Flex align="center" gap="2">
+            {selectIcon}
+            {selectText}
+          </Flex>
+        </Select.Trigger>
+        <Select.Content>
+          {options.map((o) => (
+            <Select.Item key={o.value} value={o.value}>
+              {o.label}
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Root>
+    </Flex>
+  );
+}
+
+function ResultCount({
+  children,
+  onReset,
+  label,
+}: {
+  children: ReactNode;
+  onReset?: () => void;
+  /** Names the results section. Rendered for assistive tech only: the count beside it is the
+      visible affordance, but without a heading here the card titles (h3) would follow the page
+      h1 with no h2 in between. */
+  label: string;
+}) {
+  return (
+    <Flex justify="between" align="center" gap="3" mt="5" mb="4" style={{ minHeight: 32 }}>
+      <VisuallyHidden>
+        <Heading as="h2">{label}</Heading>
+      </VisuallyHidden>
+      <Text size="2" color="gray" aria-live="polite">
+        {children}
+      </Text>
+      {onReset && (
+        <Button type="button" size="3" variant="ghost" color="gray" onClick={onReset}>
+          Reset filters
+          <X size={13} />
+        </Button>
+      )}
+    </Flex>
+  );
+}
+
+const cardGrid = { initial: '1', xs: '2', md: '3' } as const;
 
 function ListingDetail({
   selection,
@@ -71,83 +293,115 @@ function ListingDetail({
   if (adding) return <AddToTripDialog selection={selection} onClose={backToIdea} />;
   return (
     <Modal title={item.name} onClose={onClose} wide>
-      <div className="listing-detail">
-        <div className="listing-detail-photo">
+      <Grid columns={{ initial: '1', sm: '320px 1fr' }} gap="5" mt="3">
+        <Box position="relative">
           <img
             src={item.image}
             alt={`${isStay ? 'Stay' : 'Travel'} inspiration for ${destination.name}`}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: 240,
+              objectFit: 'cover',
+              borderRadius: 'var(--radius-3)',
+            }}
           />
-          <SaveButton type={selection.kind} id={item.id} label={item.name} />
-          <span>Sample inspiration</span>
-        </div>
-        <div className="listing-detail-content">
-          <p className="listing-location">
+          <Box position="absolute" top="2" right="2">
+            <SaveButton type={selection.kind} id={item.id} label={item.name} />
+          </Box>
+          <Box position="absolute" bottom="2" left="2">
+            <Badge variant="solid" highContrast>
+              Sample inspiration
+            </Badge>
+          </Box>
+        </Box>
+        <Flex direction="column" gap="3">
+          <Flex align="center" gap="2">
             <MapPin size={15} />
-            {destination.name}, {destination.country}
-          </p>
-          <p className="listing-description">
+            <Text size="2" color="gray">
+              {destination.name}, {destination.country}
+            </Text>
+          </Flex>
+          <Text as="p" size="3">
             {item.description.replace(/^Sample (stay inspiration|itinerary idea): /, '')}
-          </p>
-          <div className="listing-facts">
-            <div>
-              <Wallet size={18} />
-              <span>
-                <small>Planning estimate</small>
-                <strong>
-                  {money(item.price)} <span className="muted">/ {isStay ? 'night' : 'person'}</span>
-                </strong>
-              </span>
-            </div>
-            <div>
-              {isStay ? <BedDouble size={18} /> : <Clock3 size={18} />}
-              <span>
-                <small>{isStay ? 'The feeling' : 'Time to enjoy it'}</small>
-                <strong>{isStay ? (item as Stay).style : (item as Experience).duration}</strong>
-              </span>
-            </div>
-          </div>
+          </Text>
+          <Grid columns={{ initial: '1', xs: '2' }} gap="3">
+            <Card size="1">
+              <Flex align="center" gap="3">
+                <Wallet size={18} />
+                <Flex direction="column">
+                  <Text size="1" color="gray">
+                    Planning estimate
+                  </Text>
+                  <Text size="2" weight="bold">
+                    {money(item.price)}{' '}
+                    <Text color="gray" weight="regular">
+                      / {isStay ? 'night' : 'person'}
+                    </Text>
+                  </Text>
+                </Flex>
+              </Flex>
+            </Card>
+            <Card size="1">
+              <Flex align="center" gap="3">
+                {isStay ? <BedDouble size={18} /> : <Clock3 size={18} />}
+                <Flex direction="column">
+                  <Text size="1" color="gray">
+                    {isStay ? 'The feeling' : 'Time to enjoy it'}
+                  </Text>
+                  <Text size="2" weight="bold">
+                    {isStay ? (item as Stay).style : (item as Experience).duration}
+                  </Text>
+                </Flex>
+              </Flex>
+            </Card>
+          </Grid>
           {isStay && (
-            <div className="listing-amenities">
+            <Flex gap="2" wrap="wrap">
               {(item as Stay).amenities.map((a) => (
-                <span key={a}>
+                <Badge key={a} color="gray" variant="soft" size="2">
                   <Check size={14} />
                   {a}
-                </span>
+                </Badge>
               ))}
-            </div>
+            </Flex>
           )}
-          <p className="notice listing-notice">
-            {isStay
-              ? 'This is a fictional stay concept to help you shape your trip. Photos illustrate the style; no room inventory, guest reviews, or reservations are offered.'
-              : 'This is a curated itinerary idea, not an available tour or a confirmed booking.'}{' '}
-            Prices are illustrative USD estimates. Confirm current prices and availability directly
-            with a provider.
-          </p>
-          <div className="listing-actions">
-            <button className="button button-primary" onClick={() => setAdding(true)}>
+          <Callout.Root color="blue" size="1">
+            <Callout.Icon>
+              <Info size={16} />
+            </Callout.Icon>
+            <Callout.Text>
+              {isStay
+                ? 'This is a fictional stay concept to help you shape your trip. Photos illustrate the style; no room inventory, guest reviews, or reservations are offered.'
+                : 'This is a curated itinerary idea, not an available tour or a confirmed booking.'}{' '}
+              Prices are illustrative USD estimates. Confirm current prices and availability
+              directly with a provider.
+            </Callout.Text>
+          </Callout.Root>
+          <Flex gap="3" wrap="wrap" mt="2">
+            <Button size="3" onClick={() => setAdding(true)}>
               Add to an existing trip
               <CalendarDays size={16} />
-            </button>
-            <Link
-              className="button button-secondary"
-              to={`/chat?q=${encodeURIComponent(prompt)}`}
-              onClick={onClose}
-            >
-              Plan around this
-              <Sparkles size={16} />
-            </Link>
-            <a
-              className="button button-secondary"
-              href={`https://www.google.com/search?q=${encodeURIComponent(search)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Find real options
-              <ArrowUpRight size={16} />
-            </a>
-          </div>
-        </div>
-      </div>
+            </Button>
+            <Button asChild size="3" variant="soft">
+              <Link to={`/chat?q=${encodeURIComponent(prompt)}`} onClick={onClose}>
+                Plan around this
+                <Sparkles size={16} />
+              </Link>
+            </Button>
+            <Button asChild size="3" variant="soft" color="gray">
+              <a
+                href={`https://www.google.com/search?q=${encodeURIComponent(search)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Find real options
+                <ArrowUpRight size={16} />
+              </a>
+            </Button>
+          </Flex>
+        </Flex>
+      </Grid>
     </Modal>
   );
 }
@@ -178,114 +432,84 @@ export function Explore() {
   );
   const filtered = Boolean(query || vibe !== 'All places' || region !== 'all');
   return (
-    <div className="page-container explore-page">
-      <div className="page-intro">
-        <span className="eyebrow">LET CURIOSITY LEAD THE WAY</span>
-        <h1>Your next somewhere.</h1>
-        <p>A change of scene. A different rhythm. Find a place that speaks to you.</p>
-      </div>
-      <nav className="explore-nav" aria-label="Discover travel">
-        <Link className="active" to="/explore" aria-current="page">
-          <Globe2 size={17} />
-          Destinations
-        </Link>
-        <Link to="/flights">
-          <Plane size={17} />
-          Flights
-        </Link>
-        <Link to="/stays">
-          <BedDouble size={17} />
-          Stays
-        </Link>
-        <Link to="/experiences">
-          <Sparkles size={17} />
-          Experiences
-        </Link>
-      </nav>
-      <div className="explore-toolbar">
-        <label className="explore-search">
-          <Search size={18} />
-          <input
-            aria-label="Search destinations"
-            placeholder="A country, a city, a feeling…"
-            value={query}
-            onChange={(e) => filter('q', e.target.value)}
-          />
-          {query && (
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Clear search"
-              onClick={() => filter('q', '')}
-            >
-              <X size={16} />
-            </button>
-          )}
-        </label>
-        <label className="explore-region">
-          <SlidersHorizontal size={16} />
-          <span className="sr-only">Filter by region</span>
-          <select value={region} onChange={(e) => filter('region', e.target.value)}>
-            <option value="all">All regions</option>
-            {regions.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="vibe-filters explore-vibes" role="group" aria-label="Travel style">
-        {vibes.map(({ label, icon: Icon }) => (
-          <button
-            key={label}
-            className={vibe === label ? 'active' : ''}
-            aria-pressed={vibe === label}
-            onClick={() => filter('vibe', label)}
-          >
-            <Icon size={15} />
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="collection-count">
-        <span aria-live="polite">
-          {destinations.length} {destinations.length === 1 ? 'place' : 'places'} to get lost in
-        </span>
-        {filtered && (
-          <button type="button" onClick={() => setParams({})}>
-            Reset filters
-            <X size={13} />
-          </button>
-        )}
-      </div>
+    <Page>
+      <PageIntro
+        eyebrow="LET CURIOSITY LEAD THE WAY"
+        title="Your next somewhere."
+        lead="A change of scene. A different rhythm. Find a place that speaks to you."
+      />
+      <ExploreNav current="destinations" />
+      <FilterBar
+        searchLabel="Search destinations"
+        placeholder="A country, a city, a feeling…"
+        query={query}
+        onQuery={(value) => filter('q', value)}
+        selectLabel="Filter by region"
+        selectIcon={<SlidersHorizontal size={16} />}
+        selectValue={region}
+        selectText={region === 'all' ? 'All regions' : region}
+        options={[
+          { value: 'all', label: 'All regions' },
+          ...regions.map((r) => ({ value: r, label: r })),
+        ]}
+        onSelect={(value) => filter('region', value)}
+      />
+      <Box mt="4" maxWidth="100%" style={{ overflowX: 'auto' }}>
+        <SegmentedControl.Root
+          size="3"
+          value={vibe}
+          onValueChange={(value) => filter('vibe', value)}
+          aria-label="Travel style"
+        >
+          {vibes.map(({ label, icon: Icon }) => (
+            <SegmentedControl.Item key={label} value={label} aria-pressed={vibe === label}>
+              <Flex align="center" gap="2">
+                <Icon size={15} />
+                {label}
+              </Flex>
+            </SegmentedControl.Item>
+          ))}
+        </SegmentedControl.Root>
+      </Box>
+      <ResultCount label="Destinations" onReset={filtered ? () => setParams({}) : undefined}>
+        {destinations.length} {destinations.length === 1 ? 'place' : 'places'} to get lost in
+      </ResultCount>
       {destinations.length > 0 ? (
-        <div className="cards-grid explore-grid">
+        <Grid columns={cardGrid} gap="5">
           {destinations.map((d) => (
             <DestinationCard key={d.id} destination={d} />
           ))}
-        </div>
+        </Grid>
       ) : (
-        <div className="explore-empty">
-          <Search size={28} />
-          <h2>A little further off the map.</h2>
-          <p>Try another destination or clear a filter to see more places.</p>
-          <button className="button button-secondary" onClick={() => setParams({})}>
-            Show all destinations
-            <ArrowRight size={16} />
-          </button>
-        </div>
+        <EmptyState
+          title="A little further off the map."
+          description="Try another destination or clear a filter to see more places."
+          action="Show all destinations"
+          onAction={() => setParams({})}
+        />
       )}
-      <div className="explore-invitation">
-        <TaraMark size={30} />
-        <div>
-          <h3>Not sure where, but ready to go?</h3>
-          <p>Tell Tara what a perfect day feels like. Start from there.</p>
-        </div>
-        <Link className="button button-primary" to="/chat">
-          Find my kind of place
-          <ArrowRight size={16} />
-        </Link>
-      </div>
-    </div>
+      <Card mt="8" size="2">
+        <Flex align="center" gap="4" direction={{ initial: 'column', sm: 'row' }}>
+          <Box style={{ color: 'var(--accent-9)' }}>
+            <TaraMark size={30} />
+          </Box>
+          <Box flexGrow="1">
+            <Heading as="h2" size="4">
+              Not sure where, but ready to go?
+            </Heading>
+            <Text as="p" size="2" color="gray">
+              Tell Tara what a perfect day feels like. Start from there.
+            </Text>
+          </Box>
+          <Button asChild size="3" variant={destinations.length > 0 ? 'solid' : 'soft'}>
+            <Link to="/chat">
+              Find my kind of place
+              <ArrowRight size={16} />
+            </Link>
+          </Button>
+        </Flex>
+      </Card>
+    </Page>
   );
 }
 
@@ -302,156 +526,210 @@ export function DestinationDetail() {
     .filter((d) => d.id !== id && (d.vibe === destination.vibe || d.region === destination.region))
     .slice(0, 4);
   return (
-    <div className="page-container destination-detail-page">
-      <Link to="/explore" className="back-link">
-        <ArrowLeft size={16} />
-        All destinations
-      </Link>
-      <div className="destination-cover">
-        <img src={destination.image} alt={`${destination.name}, ${destination.country}`} />
-        <div className="destination-cover-shade" />
-        <SaveButton type="destination" id={destination.id} label={destination.name} />
-        <div className="destination-cover-content">
-          <span className="eyebrow">
+    <Page>
+      <Button asChild variant="ghost" color="gray" size="3" mb="4">
+        <Link to="/explore">
+          <ArrowLeft size={16} />
+          All destinations
+        </Link>
+      </Button>
+      <Card size="2">
+        <Inset clip="padding-box" side="top" pb="current">
+          <Box position="relative">
+            <img
+              src={destination.image}
+              alt={`${destination.name}, ${destination.country}`}
+              style={{ display: 'block', width: '100%', height: 320, objectFit: 'cover' }}
+            />
+            <Box position="absolute" top="3" right="3">
+              <SaveButton type="destination" id={destination.id} label={destination.name} />
+            </Box>
+          </Box>
+        </Inset>
+        <Flex direction="column" gap="2">
+          <Text size="1" color="gray">
             {destination.country} · {destination.region}
-          </span>
-          <h1>{destination.name}</h1>
-          <p>{destination.description}</p>
-        </div>
-      </div>
-      <div className="destination-overview">
-        <div className="destination-story">
-          <span className="eyebrow">A LITTLE INTRODUCTION</span>
-          <h2>A place to make your own.</h2>
-          <p>{destination.longDescription}</p>
-          <div className="destination-tags">
+          </Text>
+          <Heading as="h1" size="8">
+            {destination.name}
+          </Heading>
+          <Text as="p" size="3" color="gray">
+            {destination.description}
+          </Text>
+        </Flex>
+      </Card>
+      <Grid columns={{ initial: '1', md: '2fr 1fr' }} gap="6" mt="6" align="start">
+        <Box>
+          <Text size="1" color="gray" weight="medium">
+            A LITTLE INTRODUCTION
+          </Text>
+          <Heading as="h2" size="6" mt="1" mb="3">
+            A place to make your own.
+          </Heading>
+          <Text as="p" size="3" color="gray">
+            {destination.longDescription}
+          </Text>
+          <Flex gap="2" wrap="wrap" mt="4">
             {destination.tags.map((tag) => (
-              <span key={tag}>{tag}</span>
+              <Badge key={tag} color="gray" variant="soft" size="2">
+                {tag}
+              </Badge>
             ))}
-          </div>
-        </div>
-        <aside className="destination-at-a-glance">
-          <h3>The little details</h3>
-          <div>
-            <CalendarDays size={19} />
-            <span>
-              <small>A lovely time to visit</small>
-              <strong>{destination.bestTime}</strong>
-            </span>
-          </div>
-          <div>
-            <Wallet size={19} />
-            <span>
-              <small>Indicative daily budget</small>
-              <strong>
-                {money(destination.dailyBudget)} <span className="muted">/ person</span>
-              </strong>
-            </span>
-          </div>
-          <p className="budget-note">
-            A starting estimate in USD for stays, meals, and exploring. Flights are extra; season
-            and travel style change the total.
-          </p>
-          <Link
-            className="button button-primary full-width"
-            to={`/chat?q=${encodeURIComponent(`Plan a 5 day trip to ${destination.name}`)}`}
-          >
-            Plan this trip
-            <Sparkles size={16} />
-          </Link>
-        </aside>
-      </div>
-      <section className="destination-highlights">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">A FEW REASONS TO GO</span>
-            <h2>Make room for a little wonder.</h2>
-            <p>Starting points for your story. Leave space for what you find along the way.</p>
-          </div>
-        </div>
-        <div className="highlight-grid">
-          {destination.highlights.map((highlight, i) => (
-            <a
-              key={highlight}
-              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${highlight}, ${destination.name}`)}`}
-              target="_blank"
-              rel="noreferrer"
-              className="highlight-item"
-            >
-              <span className="highlight-number">{String(i + 1).padStart(2, '0')}</span>
-              <span>{highlight}</span>
-              <ArrowUpRight size={16} />
-            </a>
-          ))}
-        </div>
-      </section>
-      {(stays.length > 0 || experiences.length > 0) && (
-        <section className="destination-ideas">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">PIECE IT TOGETHER</span>
-              <h2>Little things to build a trip around.</h2>
-              <p>Sample stays and experiences to spark an idea.</p>
-            </div>
-          </div>
-          <div className="destination-ideas-grid">
-            {stays.map((s) => (
-              <StayCard
-                key={s.id}
-                stay={s}
-                onSelect={() => setSelection({ kind: 'stay', item: s })}
-              />
+          </Flex>
+        </Box>
+        <Card size="2" asChild>
+          <aside>
+            <Flex direction="column" gap="4">
+              <Heading as="h2" size="4">
+                The little details
+              </Heading>
+              <Flex align="center" gap="3">
+                <CalendarDays size={19} />
+                <Flex direction="column">
+                  <Text size="1" color="gray">
+                    A lovely time to visit
+                  </Text>
+                  <Text size="2" weight="bold">
+                    {destination.bestTime}
+                  </Text>
+                </Flex>
+              </Flex>
+              <Flex align="center" gap="3">
+                <Wallet size={19} />
+                <Flex direction="column">
+                  <Text size="1" color="gray">
+                    Indicative daily budget
+                  </Text>
+                  <Text size="2" weight="bold">
+                    {money(destination.dailyBudget)}{' '}
+                    <Text color="gray" weight="regular">
+                      / person
+                    </Text>
+                  </Text>
+                </Flex>
+              </Flex>
+              <Text as="p" size="1" color="gray">
+                A starting estimate in USD for stays, meals, and exploring. Flights are extra;
+                season and travel style change the total.
+              </Text>
+              <Button asChild size="3">
+                <Link
+                  to={`/chat?q=${encodeURIComponent(`Plan a 5 day trip to ${destination.name}`)}`}
+                >
+                  Plan this trip
+                  <Sparkles size={16} />
+                </Link>
+              </Button>
+            </Flex>
+          </aside>
+        </Card>
+      </Grid>
+      <Box asChild mt="8">
+        <section>
+          <SectionHeading
+            eyebrow="A FEW REASONS TO GO"
+            title="Make room for a little wonder."
+            lead="Starting points for your story. Leave space for what you find along the way."
+          />
+          <Grid columns={{ initial: '1', xs: '2', md: '3' }} gap="3">
+            {destination.highlights.map((highlight, i) => (
+              <Card key={highlight} asChild>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${highlight}, ${destination.name}`)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Flex align="center" gap="3">
+                    <Text size="1" color="gray" weight="bold">
+                      {String(i + 1).padStart(2, '0')}
+                    </Text>
+                    <Box flexGrow="1">
+                      <Text size="2">{highlight}</Text>
+                    </Box>
+                    <ArrowUpRight size={16} />
+                  </Flex>
+                </a>
+              </Card>
             ))}
-            {experiences.map((e) => (
-              <ExperienceCard
-                key={e.id}
-                experience={e}
-                onSelect={() => setSelection({ kind: 'experience', item: e })}
-              />
-            ))}
-            <div className="destination-plan-card">
-              <TaraMark size={34} />
-              <h3>
-                Your trip.
-                <br />
-                Your kind of wonderful.
-              </h3>
-              <p>
-                Tell Tara your dates, your pace, and the things you love. Bring it all together in
-                one plan.
-              </p>
-              <Link
-                className="button button-secondary"
-                to={`/chat?q=${encodeURIComponent(`Help me plan a trip to ${destination.name}`)}`}
-              >
-                Let’s make a plan
-                <ArrowRight size={16} />
-              </Link>
-            </div>
-          </div>
+          </Grid>
         </section>
+      </Box>
+      {(stays.length > 0 || experiences.length > 0) && (
+        <Box asChild mt="8">
+          <section>
+            <SectionHeading
+              eyebrow="PIECE IT TOGETHER"
+              title="Little things to build a trip around."
+              lead="Sample stays and experiences to spark an idea."
+            />
+            <Grid columns={cardGrid} gap="5">
+              {stays.map((s) => (
+                <StayCard
+                  key={s.id}
+                  stay={s}
+                  onSelect={() => setSelection({ kind: 'stay', item: s })}
+                />
+              ))}
+              {experiences.map((e) => (
+                <ExperienceCard
+                  key={e.id}
+                  experience={e}
+                  onSelect={() => setSelection({ kind: 'experience', item: e })}
+                />
+              ))}
+              <Card size="2">
+                <Flex direction="column" align="start" gap="3">
+                  <Box style={{ color: 'var(--accent-9)' }}>
+                    <TaraMark size={34} />
+                  </Box>
+                  <Heading as="h3" size="4">
+                    Your trip.
+                    <br />
+                    Your kind of wonderful.
+                  </Heading>
+                  <Text as="p" size="2" color="gray">
+                    Tell Tara your dates, your pace, and the things you love. Bring it all together
+                    in one plan.
+                  </Text>
+                  <Button asChild size="3" variant="soft" mt="2">
+                    <Link
+                      to={`/chat?q=${encodeURIComponent(`Help me plan a trip to ${destination.name}`)}`}
+                    >
+                      Let’s make a plan
+                      <ArrowRight size={16} />
+                    </Link>
+                  </Button>
+                </Flex>
+              </Card>
+            </Grid>
+          </section>
+        </Box>
       )}
       {nearby.length > 0 && (
-        <section className="destination-more">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">KEEP THE CURIOSITY GOING</span>
-              <h2>Another place, another possibility.</h2>
-            </div>
-            <Link className="text-link" to="/explore">
-              Explore the collection
-              <ArrowRight size={16} />
-            </Link>
-          </div>
-          <div className="cards-grid">
-            {nearby.map((d) => (
-              <DestinationCard key={d.id} destination={d} />
-            ))}
-          </div>
-        </section>
+        <Box asChild mt="8">
+          <section>
+            <SectionHeading
+              eyebrow="KEEP THE CURIOSITY GOING"
+              title="Another place, another possibility."
+              action={
+                <Button asChild variant="ghost" size="3">
+                  <Link to="/explore">
+                    Explore the collection
+                    <ArrowRight size={16} />
+                  </Link>
+                </Button>
+              }
+            />
+            <Grid columns={cardGrid} gap="5">
+              {nearby.map((d) => (
+                <DestinationCard key={d.id} destination={d} />
+              ))}
+            </Grid>
+          </section>
+        </Box>
       )}
       {selection && <ListingDetail selection={selection} onClose={close} />}
-    </div>
+    </Page>
   );
 }
 
@@ -482,102 +760,56 @@ export function Collection({ kind }: { kind: 'stays' | 'experiences' }) {
   const stays = catalog.stays.filter(visible);
   const experiences = catalog.experiences.filter(visible);
   const count = isStays ? stays.length : experiences.length;
+  const selectedDestination = catalog.destinations.find((d) => d.id === destinationId);
   return (
-    <div className="page-container collection-page">
-      <div className="page-intro">
-        <span className="eyebrow">
-          {isStays ? 'MORE THAN A PLACE TO SLEEP' : 'COLLECT A FEW GOOD STORIES'}
-        </span>
-        <h1>{isStays ? 'Stay somewhere wonderful.' : 'The moments that stay with you.'}</h1>
-        <p>
-          {isStays
+    <Page>
+      <PageIntro
+        eyebrow={isStays ? 'MORE THAN A PLACE TO SLEEP' : 'COLLECT A FEW GOOD STORIES'}
+        title={isStays ? 'Stay somewhere wonderful.' : 'The moments that stay with you.'}
+        lead={
+          isStays
             ? 'A courtyard. A mountain view. A room that feels like part of the journey.'
-            : 'A taste of somewhere new. A different view. A little closer to the places you go.'}
-        </p>
-      </div>
-      <nav className="explore-nav" aria-label="Discover travel">
-        <Link to="/explore">
-          <Globe2 size={17} />
-          Destinations
-        </Link>
-        <Link to="/flights">
-          <Plane size={17} />
-          Flights
-        </Link>
-        <Link
-          className={isStays ? 'active' : ''}
-          to="/stays"
-          aria-current={isStays ? 'page' : undefined}
-        >
-          <BedDouble size={17} />
-          Stays
-        </Link>
-        <Link
-          className={!isStays ? 'active' : ''}
-          to="/experiences"
-          aria-current={!isStays ? 'page' : undefined}
-        >
-          <Sparkles size={17} />
-          Experiences
-        </Link>
-      </nav>
+            : 'A taste of somewhere new. A different view. A little closer to the places you go.'
+        }
+      />
+      <ExploreNav current={isStays ? 'stays' : 'experiences'} />
       {isStays && (
         <HotelSearch destinationId={destinationId === 'all' ? undefined : destinationId} />
       )}
-      <div className="explore-toolbar">
-        <label className="explore-search">
-          <Search size={18} />
-          <input
-            aria-label={`Search ${kind}`}
-            placeholder={
-              isStays ? 'A hideaway, an island, a city…' : 'Food, culture, a little adventure…'
-            }
-            value={query}
-            onChange={(e) => filter('q', e.target.value)}
-          />
-          {query && (
-            <button
-              className="icon-button"
-              aria-label="Clear search"
-              onClick={() => filter('q', '')}
-            >
-              <X size={16} />
-            </button>
-          )}
-        </label>
-        <label className="explore-region">
-          <MapPin size={16} />
-          <span className="sr-only">Filter by destination</span>
-          <select value={destinationId} onChange={(e) => filter('destination', e.target.value)}>
-            <option value="all">All destinations</option>
-            {catalog.destinations.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="collection-count">
-        <span aria-live="polite">
-          {count}{' '}
-          {isStays ? (count === 1 ? 'stay' : 'stays') : count === 1 ? 'experience' : 'experiences'}{' '}
-          to inspire you
-        </span>
-        {(query || destinationId !== 'all') && (
-          <button onClick={() => setParams({})}>
-            Reset filters
-            <X size={13} />
-          </button>
-        )}
-      </div>
-      <p className="collection-disclosure">
+      <Box mt={isStays ? '5' : '0'}>
+        <FilterBar
+          searchLabel={`Search ${kind}`}
+          placeholder={
+            isStays ? 'A hideaway, an island, a city…' : 'Food, culture, a little adventure…'
+          }
+          query={query}
+          onQuery={(value) => filter('q', value)}
+          selectLabel="Filter by destination"
+          selectIcon={<MapPin size={16} />}
+          selectValue={destinationId}
+          selectText={selectedDestination ? selectedDestination.name : 'All destinations'}
+          options={[
+            { value: 'all', label: 'All destinations' },
+            ...catalog.destinations.map((d) => ({ value: d.id, label: d.name })),
+          ]}
+          onSelect={(value) => filter('destination', value)}
+        />
+      </Box>
+      <ResultCount
+        label={kind === 'stays' ? 'Places to stay' : 'Experiences'}
+        onReset={query || destinationId !== 'all' ? () => setParams({}) : undefined}
+      >
+        {count}{' '}
+        {isStays ? (count === 1 ? 'stay' : 'stays') : count === 1 ? 'experience' : 'experiences'} to
+        inspire you
+      </ResultCount>
+      <Text as="p" size="1" color="gray" mb="4">
         {isStays
           ? 'An inspiration collection of fictional stays. Photos illustrate a style; prices are estimates, not live room rates.'
           : 'Curated itinerary ideas with indicative prices. These are sample experiences, not bookable tours.'}
-      </p>
+      </Text>
       {count ? (
-        <div className="cards-grid explore-grid">
+        <Grid columns={cardGrid} gap="5">
           {isStays
             ? stays.map((s) => (
                 <StayCard
@@ -593,20 +825,17 @@ export function Collection({ kind }: { kind: 'stays' | 'experiences' }) {
                   onSelect={() => setSelection({ kind: 'experience', item: e })}
                 />
               ))}
-        </div>
+        </Grid>
       ) : (
-        <div className="explore-empty">
-          <Search size={28} />
-          <h2>Let’s try a different direction.</h2>
-          <p>Clear a filter or try another search to find your next idea.</p>
-          <button className="button button-secondary" onClick={() => setParams({})}>
-            Show all {kind}
-            <ArrowRight size={16} />
-          </button>
-        </div>
+        <EmptyState
+          title="Let’s try a different direction."
+          description="Clear a filter or try another search to find your next idea."
+          action={`Show all ${kind}`}
+          onAction={() => setParams({})}
+        />
       )}
       {selection && <ListingDetail selection={selection} onClose={close} />}
-    </div>
+    </Page>
   );
 }
 
@@ -623,101 +852,113 @@ export function Saved() {
     { value: 'experience' as const, label: 'Experiences', icon: Sparkles },
   ];
   return (
-    <div className="page-container saved-page">
-      <div className="page-intro">
-        <span className="eyebrow">A LITTLE INSPIRATION, KEPT CLOSE</span>
-        <h1>Your someday starts here.</h1>
-        <p>The places you love. The things you want to do. Save them now, make a story later.</p>
-      </div>
+    <Page>
+      <PageIntro
+        eyebrow="A LITTLE INSPIRATION, KEPT CLOSE"
+        title="Your someday starts here."
+        lead="The places you love. The things you want to do. Save them now, make a story later."
+      />
       {!user && saved.length > 0 && (
-        <div className="saved-account-note">
-          <Heart size={19} />
-          <span>
+        <Callout.Root color="blue" mt="5">
+          <Callout.Icon>
+            <Heart size={19} />
+          </Callout.Icon>
+          <Callout.Text>
             Your wishlist is saved in this browser. Create an account to keep it with you.
-          </span>
-          <button className="text-link" onClick={openAuth}>
-            Sign in or join
-            <ArrowRight size={15} />
-          </button>
-        </div>
+          </Callout.Text>
+          <Box>
+            <Button variant="soft" size="3" onClick={openAuth}>
+              Sign in or join
+              <ArrowRight size={15} />
+            </Button>
+          </Box>
+        </Callout.Root>
       )}
-      <div className="vibe-filters saved-tabs" role="group" aria-label="Filter wishlist">
-        {tabs.map(({ value, label, icon: Icon }) => (
-          <button
-            key={value}
-            className={tab === value ? 'active' : ''}
-            aria-pressed={tab === value}
-            onClick={() => setTab(value)}
-          >
-            <Icon size={15} />
-            {label}
-            <span className="saved-tab-count">
-              {value === 'all' ? saved.length : saved.filter((s) => s.type === value).length}
-            </span>
-          </button>
-        ))}
-      </div>
-      {items.length ? (
-        <div className="cards-grid explore-grid">
-          {items.map((item) => {
-            if (item.type === 'destination') {
-              const d = catalog.destinations.find((d) => d.id === item.itemId);
-              return d ? <DestinationCard key={item.id} destination={d} /> : null;
-            }
-            if (item.type === 'stay') {
-              const s = catalog.stays.find((s) => s.id === item.itemId);
-              return s ? (
-                <StayCard
+      <Box mt="5" maxWidth="100%" style={{ overflowX: 'auto' }}>
+        <SegmentedControl.Root
+          size="3"
+          value={tab}
+          onValueChange={(value) => setTab(value as 'all' | 'destination' | 'stay' | 'experience')}
+          aria-label="Filter wishlist"
+        >
+          {tabs.map(({ value, label, icon: Icon }) => (
+            <SegmentedControl.Item key={value} value={value} aria-pressed={tab === value}>
+              <Flex align="center" gap="2">
+                <Icon size={15} />
+                {label}
+                <Badge color="gray" variant="soft" radius="full">
+                  {value === 'all' ? saved.length : saved.filter((s) => s.type === value).length}
+                </Badge>
+              </Flex>
+            </SegmentedControl.Item>
+          ))}
+        </SegmentedControl.Root>
+      </Box>
+      <Box mt="5">
+        {items.length ? (
+          <Grid columns={cardGrid} gap="5">
+            {items.map((item) => {
+              if (item.type === 'destination') {
+                const d = catalog.destinations.find((d) => d.id === item.itemId);
+                return d ? <DestinationCard key={item.id} destination={d} /> : null;
+              }
+              if (item.type === 'stay') {
+                const s = catalog.stays.find((s) => s.id === item.itemId);
+                return s ? (
+                  <StayCard
+                    key={item.id}
+                    stay={s}
+                    onSelect={() => setSelection({ kind: 'stay', item: s })}
+                  />
+                ) : null;
+              }
+              const e = catalog.experiences.find((e) => e.id === item.itemId);
+              return e ? (
+                <ExperienceCard
                   key={item.id}
-                  stay={s}
-                  onSelect={() => setSelection({ kind: 'stay', item: s })}
+                  experience={e}
+                  onSelect={() => setSelection({ kind: 'experience', item: e })}
                 />
               ) : null;
+            })}
+          </Grid>
+        ) : (
+          <EmptyState
+            title={
+              tab === 'all'
+                ? 'A blank page, full of possibility.'
+                : 'A little room for inspiration.'
             }
-            const e = catalog.experiences.find((e) => e.id === item.itemId);
-            return e ? (
-              <ExperienceCard
-                key={item.id}
-                experience={e}
-                onSelect={() => setSelection({ kind: 'experience', item: e })}
-              />
-            ) : null;
-          })}
-        </div>
-      ) : (
-        <EmptyState
-          title={
-            tab === 'all' ? 'A blank page, full of possibility.' : 'A little room for inspiration.'
-          }
-          description={
-            tab === 'all'
-              ? 'Tap the heart on a place, stay, or experience that catches your eye. It will be waiting for you here.'
-              : `Your saved ${tab === 'destination' ? 'destinations' : `${tab}s`} will appear here. Find something that feels like you.`
-          }
-          action={
-            tab === 'stay'
-              ? 'Explore stays'
-              : tab === 'experience'
-                ? 'Explore experiences'
-                : 'Find your next somewhere'
-          }
-          to={tab === 'stay' ? '/stays' : tab === 'experience' ? '/experiences' : '/explore'}
-        />
-      )}
+            description={
+              tab === 'all'
+                ? 'Tap the heart on a place, stay, or experience that catches your eye. It will be waiting for you here.'
+                : `Your saved ${tab === 'destination' ? 'destinations' : `${tab}s`} will appear here. Find something that feels like you.`
+            }
+            action={
+              tab === 'stay'
+                ? 'Explore stays'
+                : tab === 'experience'
+                  ? 'Explore experiences'
+                  : 'Find your next somewhere'
+            }
+            to={tab === 'stay' ? '/stays' : tab === 'experience' ? '/experiences' : '/explore'}
+          />
+        )}
+      </Box>
       {selection && <ListingDetail selection={selection} onClose={close} />}
-    </div>
+    </Page>
   );
 }
 
 export function NotFound() {
   return (
-    <div className="page-container not-found-page">
+    <Page>
       <EmptyState
         title="A little off the beaten path."
         description="This page isn’t here, but there’s a whole world waiting to be explored."
         action="Back to discovering"
         to="/explore"
       />
-    </div>
+    </Page>
   );
 }

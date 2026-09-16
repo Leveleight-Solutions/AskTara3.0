@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import 'dotenv/config';
+
+// The dev server reads WEB_PORT from .env, so the suite must follow it. Without this the
+// default 5173 can silently hit an unrelated Vite server and test the wrong application,
+// because reuseExistingServer treats whatever answers on that port as ours.
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${process.env.WEB_PORT || 5173}`;
 
 export default defineConfig({
   testDir: './tests',
@@ -10,7 +16,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173',
+    baseURL,
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -29,7 +35,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173',
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

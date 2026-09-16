@@ -25,9 +25,10 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
       unwanted.push(new URL(request.url()).pathname);
   });
   try {
-    await page.goto('/studio');
-    await expect(page.getByLabel('Client request or planning notes')).toBeVisible();
-    await page.getByLabel('Client request or planning notes').fill(fictionalBrief);
+    await page.goto('/');
+    const brief = page.getByRole('textbox', { name: 'Tell Tara about your trip' });
+    await expect(brief).toBeVisible();
+    await brief.fill(fictionalBrief);
     const createdPromise = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
@@ -39,7 +40,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
         /\/api\/studio\/workspaces\/[^/]+\/review$/.test(new URL(response.url()).pathname),
       { timeout: 225_000 },
     );
-    await page.getByRole('button', { name: 'Start a workspace', exact: true }).click();
+    await page.getByRole('button', { name: 'Start planning your trip' }).click();
     const created = await createdPromise;
     expect(created.status()).toBe(201);
     workspaceId = ((await created.json()) as { workspace: StudioWorkspace }).workspace.id;

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import type { Trip } from '../shared/types';
+import { choose } from './ui-helpers';
 
 test('an inspiration idea becomes a protected stop in the selected existing trip', async ({
   page,
@@ -37,10 +38,13 @@ test('an inspiration idea becomes a protected stop in the selected existing trip
   await expect(listing).toContainText('curated itinerary idea');
   await listing.getByRole('button', { name: 'Add to an existing trip', exact: true }).click();
   const adding = page.getByRole('dialog', { name: 'Make room for this idea', exact: true });
-  await expect(adding.getByRole('combobox', { name: 'Choose a trip', exact: true })).toHaveValue(
-    tripId,
+  // Radix Select exposes its selection as trigger text, not as a form value.
+  await expect(adding.getByRole('combobox', { name: 'Choose a trip', exact: true })).toBeVisible();
+  await choose(
+    page,
+    adding.getByRole('combobox', { name: 'Choose a day', exact: true }),
+    /^Day 1 /,
   );
-  await adding.getByRole('combobox', { name: 'Choose a day', exact: true }).selectOption('1');
   await adding.getByLabel('Start time', { exact: true }).fill('10:00');
 
   // The same addition flow must remain usable in a narrow viewport.

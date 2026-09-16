@@ -1,10 +1,23 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultConsultation } from '../shared/consultation';
 import { defaultTravelProfile } from '../shared/account';
 import type { Trip } from '../shared/types';
 
+/** Radix Select has no native <select>: open the trigger, then pick the option by its label. */
+async function choose(page: Page, trigger: Locator, option: string) {
+  await trigger.click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+  await expect(trigger).toHaveText(option);
+}
 const tripId = '30000000-0000-4000-8000-000000000001';
+/** Radix DataList renders each budget row as <div><dt>label</dt><dd>value</dd></div>. */
+const budgetRow = (page: Page, label: string) =>
+  page
+    .getByTestId('budget-breakdown')
+    .locator('dt')
+    .filter({ hasText: label })
+    .locator('xpath=following-sibling::dd[1]');
 const timestamp = '2026-09-13T12:00:00Z';
 function consultationTrip(): Trip {
   const consultation = defaultConsultation();
@@ -149,8 +162,8 @@ for (const mobile of [false, true]) {
     const trip = consultationTrip();
     const fixture = await mockConsultation(page, trip);
     await page.goto(`/chat/${tripId}`);
-    if (mobile) await page.getByRole('button', { name: 'Your itinerary', exact: true }).click();
-    const summary = page.locator('.consultation-summary');
+    if (mobile) await page.getByRole('tab', { name: 'Your itinerary', exact: true }).click();
+    const summary = page.getByTestId('consultation-summary');
     await expect(summary.getByRole('heading', { name: 'Let’s plan London.' })).toBeVisible();
     await expect(summary).not.toContainText('2 travellers');
     await expect(summary).not.toContainText('5 days');
@@ -160,11 +173,11 @@ for (const mobile of [false, true]) {
     await expect(dialog.getByLabel('Number of days', { exact: true })).toHaveValue('');
     await expect(dialog.getByLabel('Travelers', { exact: true })).toHaveValue('');
     await expect(dialog.getByLabel('Total group budget (AUD)', { exact: true })).toHaveValue('');
-    await expect(dialog.getByRole('combobox', { name: 'Flights', exact: true })).toHaveValue(
-      'unknown',
+    await expect(dialog.getByRole('combobox', { name: 'Flights', exact: true })).toHaveText(
+      'Not discussed',
     );
-    await expect(dialog.getByRole('combobox', { name: 'Accommodation', exact: true })).toHaveValue(
-      'unknown',
+    await expect(dialog.getByRole('combobox', { name: 'Accommodation', exact: true })).toHaveText(
+      'Not discussed',
     );
     await dialog.getByLabel('Trip name', { exact: true }).fill('London, with room to explore');
     await dialog.getByRole('button', { name: 'Save trip details' }).click();
@@ -172,10 +185,12 @@ for (const mobile of [false, true]) {
     expect(fixture.patches).toEqual([{ title: 'London, with room to explore', revision: 1 }]);
     await page.getByRole('button', { name: 'Edit trip details' }).click();
     dialog = page.getByRole('dialog', { name: 'Make it your kind of trip' });
-    await dialog.getByRole('combobox', { name: 'Flights', exact: true }).selectOption('requested');
-    await dialog
-      .getByRole('combobox', { name: 'Accommodation', exact: true })
-      .selectOption('already_booked');
+    await choose(page, dialog.getByRole('combobox', { name: 'Flights', exact: true }), 'Need help');
+    await choose(
+      page,
+      dialog.getByRole('combobox', { name: 'Accommodation', exact: true }),
+      'Already booked',
+    );
     await dialog.getByLabel('From airport', { exact: true }).fill('SYD');
     await dialog.getByLabel('To airport', { exact: true }).fill('LHR');
     await dialog.getByLabel('Number of days', { exact: true }).fill('8');
@@ -200,7 +215,7 @@ for (const mobile of [false, true]) {
       },
     });
     await page.reload();
-    if (mobile) await page.getByRole('button', { name: 'Your itinerary', exact: true }).click();
+    if (mobile) await page.getByRole('tab', { name: 'Your itinerary', exact: true }).click();
     await expect(summary).toContainText('8 days');
     await expect(summary).toContainText('3 travellers');
     await expect(summary).toContainText('A$12,000 AUD');
@@ -213,7 +228,7 @@ for (const mobile of [false, true]) {
       path: testInfo.outputPath(`consultation-${mobile ? 'mobile' : 'desktop'}.png`),
       fullPage: true,
     });
-    if (mobile) await page.getByRole('button', { name: 'Chat with Tara', exact: true }).click();
+    if (mobile) await page.getByRole('tab', { name: 'Chat with Tara', exact: true }).click();
     await expect(
       page.getByRole('button', { name: 'Find flights for me', exact: true }),
     ).toHaveCount(0);
@@ -244,7 +259,7 @@ test('saved draft cards do not present seeded dates, length or party as customer
   const trip = consultationTrip();
   const fixture = await mockConsultation(page, trip);
   await page.goto('/trips');
-  const card = page.locator('.trip-card');
+  const card = page.getByRole('article');
   await expect(card).toContainText('Length to discuss');
   await expect(card).toContainText('Party to discuss');
   await expect(card).toContainText('Dates to discuss');
@@ -267,7 +282,7 @@ test('a family trip never turns children into adult hotel search guests', async 
   ];
   const fixture = await mockConsultation(page, trip);
   await page.goto(`/chat/${tripId}`);
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await expect(
     page.getByText(
       'Family room pricing isn’t supported yet; your itinerary can still include children.',
@@ -298,7 +313,11 @@ test('explicitly clearing a service preference is recorded as a form decision, w
   await page.goto(`/chat/${tripId}`);
   await page.getByRole('button', { name: 'Edit trip details' }).click();
   const dialog = page.getByRole('dialog', { name: 'Make it your kind of trip' });
-  await dialog.getByRole('combobox', { name: 'Flights', exact: true }).selectOption('unknown');
+  await choose(
+    page,
+    dialog.getByRole('combobox', { name: 'Flights', exact: true }),
+    'Not discussed',
+  );
   await dialog.getByRole('button', { name: 'Save trip details' }).click();
   await expect(dialog).toHaveCount(0);
   expect(fixture.patches[0]).toMatchObject({
@@ -342,30 +361,30 @@ test('detailed research is outside concise chat and AUD targets remain separate 
       exact: true,
     }),
   ).toBeVisible();
-  const disclosure = page.locator('.concierge-message-details');
-  await expect(disclosure.getByRole('link', { name: 'official access guide' })).not.toBeVisible();
+  const disclosure = page
+    .locator('details')
+    .filter({ has: page.getByText('Read the full response', { exact: true }) });
+  await expect(disclosure).toBeVisible();
+  // The collapsed link is real markup, just outside the accessibility tree until it opens.
+  const collapsedLink = disclosure.getByRole('link', {
+    name: 'official access guide',
+    includeHidden: true,
+  });
+  await expect(collapsedLink).toBeAttached();
+  await expect(collapsedLink).not.toBeVisible();
   await page.getByText('Read the full response', { exact: true }).click();
   await expect(disclosure.getByRole('link', { name: 'official access guide' })).toHaveAttribute(
     'href',
     'https://example.org/access',
   );
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await expect(
-    page.locator('.research-summary').getByRole('link', { name: 'London guide' }),
+    page.getByTestId('research-summary').getByRole('link', { name: 'London guide' }),
   ).toHaveAttribute('href', 'https://example.org/london');
-  const budget = page.locator('.planning-review .budget-breakdown');
-  await expect(
-    budget
-      .locator('div')
-      .filter({ has: page.getByText('Accommodation', { exact: true }) })
-      .locator('strong'),
-  ).toHaveText('Not discussed');
-  await expect(
-    budget
-      .locator('div')
-      .filter({ has: page.getByText('Flights', { exact: true }) })
-      .locator('strong'),
-  ).toHaveText('Not discussed');
+  const budget = page.getByTestId('budget-breakdown');
+  await expect(budget).toBeVisible();
+  await expect(budgetRow(page, 'Accommodation')).toHaveText('Not discussed');
+  await expect(budgetRow(page, 'Flights')).toHaveText('Not discussed');
   await expect(budget).toContainText('$400 USD');
   await expect(budget).toContainText('A$12,000 AUD');
   await expect(budget).toContainText('No exchange-rate conversion has been applied');
@@ -393,16 +412,11 @@ test('service budget rows distinguish missing quotes, separate arrangements and 
   };
   const fixture = await mockConsultation(page, trip);
   await page.goto(`/chat/${tripId}`);
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
-  const budget = page.locator('.planning-review .budget-breakdown');
-  const accommodation = budget
-    .locator('div')
-    .filter({ has: page.getByText('Accommodation', { exact: true }) })
-    .locator('strong');
-  const flights = budget
-    .locator('div')
-    .filter({ has: page.getByText('Flights', { exact: true }) })
-    .locator('strong');
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
+  const budget = page.getByTestId('budget-breakdown');
+  await expect(budget).toBeVisible();
+  const accommodation = budgetRow(page, 'Accommodation');
+  const flights = budgetRow(page, 'Flights');
   await expect(accommodation).toHaveText('Not priced');
   await expect(flights).toHaveText('Arranged separately');
   await expect(accommodation).not.toContainText('$0');
@@ -418,7 +432,7 @@ test('service budget rows distinguish missing quotes, separate arrangements and 
   };
   trip.planning!.budget.flights = 650;
   await page.reload();
-  await page.getByRole('button', { name: 'Stays & details', exact: true }).click();
+  await page.getByRole('tab', { name: 'Stays & details', exact: true }).click();
   await expect(accommodation).toHaveText('Not in scope');
   await expect(flights).toHaveText('$650');
   expect(fixture.unexpected).toEqual([]);
