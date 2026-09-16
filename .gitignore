@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/
+test-results/
+playwright-report/
+.DS_Store
+
+# Local tools, runtime state and credentials
+.codex/
+.agents/
+.railway/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+*.p12
+coverage/
+
+# Private project notes and generated third-party research captures
+docs/CLIENT_MEETING_ALIGNMENT.md
+docs/screenshots/odessia-itinerary/
+docs/screenshots/reference.png

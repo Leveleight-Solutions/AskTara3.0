@@ -1,0 +1,59 @@
+/* The design language is @radix-ui/themes; its stylesheet is imported before this file in
+   main.tsx. Everything below is what Radix does not cover. Do not reintroduce app styling
+   here — style with Radix props, and reach for Radix scale variables (--gray-*, --accent-*,
+   --space-*, --radius-*) only when a prop genuinely cannot express it. */
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+
+/* Router <Link>s render bare <a> elements, so without this they fall back to the browser's blue
+   underlined default. Radix's own <Link> component styles itself through .rt-Link, which outranks
+   this element selector, so its underline behaviour is unaffected. */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Vertical chrome above #main-content, for panels that fill the rest of the viewport
+   (src/pages/Planner.tsx and the Home hero both subtract it from 100dvh).
+
+   Navigation is a sidebar beside the content, not a bar above it, so on desktop there is
+   nothing above main and this is 0. Below Radix's md breakpoint the sidebar collapses to a
+   drawer and a sticky mobile bar takes its place: MOBILE_BAR_HEIGHT (64px) in App.tsx plus its
+   1px bottom border. Keep this in step with that constant. */
+:root {
+  --app-header-height: 65px;
+}
+@media (min-width: 1024px) {
+  :root {
+    --app-header-height: 0px;
+  }
+}
+
+/* Radix's stock placeholder composites to about 3.76:1 on a panel — under the 4.5:1 floor. Step
+   11 is Radix's own "low-contrast text" step and is designed to clear it. This matters more since
+   the home hero was reduced to a heading and a single field, where the placeholder is the only
+   guidance on screen.
+
+   Scoped to .rt-reset deliberately: that is the selector Radix itself uses for the placeholder, so
+   a bare ::placeholder rule loses on specificity. This file is imported after the Radix stylesheet,
+   so matching its specificity is enough to win. */
+.rt-reset::placeholder {
+  color: var(--gray-a11);
+  opacity: 1;
+}
+
+/* Broader than the per-animation handling Radix does for its own components. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
