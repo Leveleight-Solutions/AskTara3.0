@@ -4,13 +4,13 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  CalendarDays,
   Check,
   ChevronRight,
   CircleAlert,
   CircleDashed,
   GripVertical,
   Lock,
-  MapPin,
   Maximize2,
   MessageCircle,
   Minimize2,
@@ -18,8 +18,10 @@ import {
   PanelsTopLeft,
   Plus,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
+  Users,
 } from 'lucide-react';
 import {
   Badge,
@@ -28,7 +30,6 @@ import {
   Callout,
   Card,
   Checkbox,
-  DataList,
   Flex,
   Grid,
   Heading,
@@ -43,7 +44,6 @@ import {
   TextArea,
   TextField,
   Tooltip,
-  VisuallyHidden,
 } from '@radix-ui/themes';
 import { api, ApiError, money, readableDate } from '../api';
 import { useApp } from '../context';
@@ -53,12 +53,15 @@ import { useComposerLayout } from '../components/useComposerLayout';
 import { StudioImportComposer, type StudioImportMode } from '../components/StudioImportComposer';
 import StudioProposalControls from '../components/StudioProposalControls';
 import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
+import { useRowHover } from '../components/SidebarNavItem';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { onStudioWorkspaceEvent } from '../studioEvents';
 import { ChatTurn } from '../components/ChatTurn';
 import MarkdownText from '../components/MarkdownText';
 import type {
   StudioAgency,
+  StudioQualification,
+  StudioQuestion,
   StudioBrief,
   StudioClient,
   StudioItem,
@@ -161,42 +164,6 @@ function StudioTopBar({
             {!gateOpen && ' · Accept the structure to unlock services'}
           </Text>
         </Flex>
-        <Box asChild flexShrink="0" display={{ initial: 'none', md: 'block' }}>
-          <nav aria-label="Workspace stages">
-            <Flex asChild align="center" gap="2">
-              <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-                {stageLabels.map((label, index) => {
-                  const current = index === stageIndex;
-                  const locked = !gateOpen && index >= 2;
-                  return (
-                    <Flex asChild key={label} align="center" gap="2">
-                      <li aria-current={current ? 'step' : undefined}>
-                        {index > 0 && (
-                          <Text size="1" aria-hidden="true" style={{ color: 'var(--gray-a8)' }}>
-                            /
-                          </Text>
-                        )}
-                        <Text
-                          size="2"
-                          weight={current ? 'medium' : 'regular'}
-                          style={{
-                            whiteSpace: 'nowrap',
-                            /* Locked stages are not greyed further: a paler grey fails text
-                               contrast, and the sentence under the title already explains it. */
-                            color: current ? 'var(--gray-12)' : 'var(--gray-11)',
-                          }}
-                        >
-                          {label}
-                          {locked && <VisuallyHidden>, locked</VisuallyHidden>}
-                        </Text>
-                      </li>
-                    </Flex>
-                  );
-                })}
-              </ol>
-            </Flex>
-          </nav>
-        </Box>
       </header>
     </Flex>
   );
@@ -1099,6 +1066,132 @@ export default function Studio() {
     </Box>
   );
 }
+/* The server builds each fact as a display string, which keeps its shape simple but leaves dates
+   as ISO and money as a bare code and number. Presentation belongs here, where the app's own
+   formatters live, so the card reads the way the rest of the app does rather than the way the
+   record is stored. Anything unrecognised is passed through untouched. */
+function factValue(id: string, value: string): string {
+  if (id === 'startDate' || id === 'endDate') return readableDate(value) || value;
+  if (id === 'route') return value.split(' → ').map(titleCase).join(' → ');
+  if (id === 'budget') {
+    const [currency, amount] = value.split(' ');
+    const total = Number(amount);
+    return currency && Number.isFinite(total) ? money(total, currency) : value;
+  }
+  if (id === 'hotelStandard') return /^\d+$/.test(value.trim()) ? `${value.trim()}-star` : value;
+  if (id === 'hotelLocation' || id === 'cabin') return titleCase(value);
+  return value;
+}
+const titleCase = (value: string) =>
+  value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase()).trim();
+
+/* One open question. The question and its reason are a single thing to act on, so the whole row
+   is the target: the old ghost button highlighted only the question text and left the reason
+   sitting outside the tint, which read as a stray box rather than a row.
+
+   The wash is the neutral grey `SidebarNavItem` uses, not an accent one — this app reserves the
+   accent tint for "you are here", and a hovered question is not a selected question. */
+function QuestionRow({ question, onAsk }: { question: StudioQuestion; onAsk: () => void }) {
+  const { hovered, handlers } = useRowHover();
+  return (
+    <Reset>
+      <button
+        type="button"
+        {...handlers}
+        onClick={onAsk}
+        style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
+      >
+        <Flex
+          align="start"
+          gap="3"
+          p="2"
+          style={{
+            borderRadius: 'var(--radius-3)',
+            backgroundColor: hovered ? 'var(--gray-a3)' : 'transparent',
+            transition: 'background-color 120ms ease-out',
+          }}
+        >
+          <Box flexGrow="1" minWidth="0">
+            <Text as="div" size="2" weight="medium" style={{ color: 'var(--accent-11)' }}>
+              {question.label}
+            </Text>
+            <Text as="div" size="1" color="gray" mt="1">
+              {question.reason}
+            </Text>
+          </Box>
+          {/* Says what the click does. These read as links but they do not navigate — they put
+              the question in the composer for the agent to answer. */}
+          <Box
+            flexShrink="0"
+            mt="1"
+            style={{
+              color: hovered ? 'var(--gray-11)' : 'var(--gray-8)',
+              transition: 'color 120ms ease-out',
+            }}
+          >
+            <MessageCircle size={14} aria-hidden="true" />
+          </Box>
+        </Flex>
+      </button>
+    </Reset>
+  );
+}
+
+/* Twelve facts read as a list of twelve unrelated things. Three groups read as what an agent
+   actually holds in their head: when the trip is, who is going, and what they like. The icons are
+   the ones the home page already uses for dates and party, so the vocabulary is one app's, not
+   this card's. Anything the map does not name falls into trip details rather than disappearing. */
+const FACT_GROUPS = [
+  {
+    id: 'trip',
+    label: 'Trip details',
+    icon: CalendarDays,
+    ids: ['route', 'startDate', 'dates', 'endDate', 'nights', 'budget'],
+  },
+  { id: 'party', label: 'Travellers', icon: Users, ids: ['adults', 'children', 'childAges'] },
+  {
+    id: 'preferences',
+    label: 'Preferences',
+    icon: SlidersHorizontal,
+    ids: ['hotelStandard', 'hotelLocation', 'cabin', 'preferences'],
+  },
+];
+const groupedFacts = (known: StudioQualification['known']) => {
+  const placed = new Set(FACT_GROUPS.flatMap((group) => group.ids));
+  return FACT_GROUPS.map((group) => ({
+    ...group,
+    facts: known.filter(
+      (fact) => group.ids.includes(fact.id) || (group.id === 'trip' && !placed.has(fact.id)),
+    ),
+  })).filter((group) => group.facts.length);
+};
+
+/* The one line the collapsed card has to earn its place with: where, when, and who. Counts are
+   spelled out — "3 · 3" is not a party, and the labels are the half that carries the meaning once
+   the table they came from is closed. */
+function briefSummary(known: StudioQualification['known']): string {
+  const value = (id: string) => known.find((fact) => fact.id === id)?.value;
+  const parts: string[] = [];
+  const route = value('route');
+  if (route) parts.push(factValue('route', route));
+  const start = value('startDate');
+  const end = value('endDate');
+  const nights = value('nights');
+  if (start && end) parts.push(`${readableDate(start)} – ${readableDate(end)}`);
+  else if (nights) parts.push(nights);
+  else if (start) parts.push(readableDate(start));
+  else if (value('dates')) parts.push('Flexible dates');
+  const party: string[] = [];
+  const adults = Number(value('adults'));
+  const children = Number(value('children'));
+  if (Number.isFinite(adults) && adults > 0)
+    party.push(`${adults} adult${adults === 1 ? '' : 's'}`);
+  if (Number.isFinite(children) && children > 0)
+    party.push(`${children} ${children === 1 ? 'child' : 'children'}`);
+  if (party.length) parts.push(party.join(', '));
+  return parts.join(' · ');
+}
+
 function BriefReview({
   workspace,
   onAnswer,
@@ -1109,32 +1202,135 @@ function BriefReview({
   onEdit: () => void;
 }) {
   const { qualification } = workspace;
+  /* Nothing left to ask and nothing left to fill in: the card has become a receipt, so it steps
+     out of the way of the route below it and keeps a line you can open when you want to check
+     something. The same move the questions list already makes once the structure is accepted. */
+  const settled = !qualification.questions.length && qualification.score >= 100;
+  const summary = briefSummary(qualification.known);
+  const facts = !!qualification.known.length && (
+    /* One column left most of a wide canvas empty; grouped columns turn twelve rows into three
+       short lists an agent can scan by heading. The tick is a sibling of the label and value, not
+       a child of the label — inside it, it indented the label by its own width while the value
+       stayed flush, giving every entry a ragged left edge. */
+    <Grid columns={{ initial: '1', md: '2', lg: '3' }} gapX="6" gapY="5" mt="4">
+      {groupedFacts(qualification.known).map((group) => (
+        <Box asChild key={group.id}>
+          <section aria-label={group.label}>
+            <Flex align="center" gap="2" mb="1">
+              <Box flexShrink="0" style={{ color: 'var(--gray-11)' }}>
+                <group.icon size={15} aria-hidden="true" />
+              </Box>
+              <Text size="2" weight="medium">
+                {group.label}
+              </Text>
+            </Flex>
+            <Flex asChild direction="column">
+              <dl style={{ margin: 0 }}>
+                {group.facts.map((fact, index) => (
+                  <Flex
+                    key={fact.id}
+                    asChild
+                    gap="2"
+                    align="start"
+                    py="2"
+                    style={{ borderTop: index ? '1px solid var(--gray-a3)' : undefined }}
+                  >
+                    {/* A <div> wrapping each dt/dd pair is valid inside a <dl> and is what lets
+                        the tick sit beside the pair instead of inside the term. */}
+                    <div>
+                      <Flex
+                        align="center"
+                        justify="center"
+                        flexShrink="0"
+                        mt="1"
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: '100%',
+                          background: 'var(--green-a3)',
+                          color: 'var(--green-11)',
+                        }}
+                      >
+                        <Check size={10} strokeWidth={3} aria-hidden="true" />
+                      </Flex>
+                      <Box minWidth="0">
+                        <Text size="1" color="gray" asChild>
+                          <dt>{fact.label}</dt>
+                        </Text>
+                        <Text size="2" weight="medium" asChild>
+                          <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
+                            {factValue(fact.id, fact.value)}
+                          </dd>
+                        </Text>
+                      </Box>
+                    </div>
+                  </Flex>
+                ))}
+              </dl>
+            </Flex>
+          </section>
+        </Box>
+      ))}
+    </Grid>
+  );
+  const header = (
+    <Flex align="center" justify="between" gap="3" wrap="wrap">
+      <Box>
+        <Text size="1" color="gray">
+          Brief review
+        </Text>
+        <Heading as="h2" size={settled ? '4' : '6'} mt="1">
+          {qualification.score >= 80
+            ? 'A clear starting point.'
+            : qualification.score >= 40
+              ? 'Taking shape.'
+              : 'Let’s find the starting point.'}
+        </Heading>
+      </Box>
+      <Flex align="center" gap="3">
+        <Badge
+          size="2"
+          variant="soft"
+          color={qualification.score >= 80 ? 'green' : qualification.score >= 40 ? 'blue' : 'gray'}
+        >
+          {qualification.score}% complete
+        </Badge>
+      </Flex>
+    </Flex>
+  );
+  if (settled)
+    return (
+      <Card asChild size="3" mb="4">
+        <section aria-label="Brief review">
+          <Reset>
+            <details>
+              <Reset>
+                <summary style={{ cursor: 'pointer' }}>
+                  {header}
+                  {!!summary && (
+                    <Text as="p" size="2" color="gray" mt="1">
+                      {summary}
+                    </Text>
+                  )}
+                </summary>
+              </Reset>
+              {facts}
+              <Box mt="4">
+                <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
+                  Edit brief details <Settings2 size={13} />
+                </Button>
+              </Box>
+            </details>
+          </Reset>
+        </section>
+      </Card>
+    );
   return (
     <Card asChild size="3" mb="4">
       <section aria-label="Brief review">
-        <Flex align="start" justify="between" gap="3" wrap="wrap">
-          <Box>
-            <Text size="1" color="gray">
-              Brief review
-            </Text>
-            <Heading as="h2" size="6" mt="1">
-              {qualification.score >= 80
-                ? 'A clear starting point.'
-                : qualification.score >= 40
-                  ? 'Taking shape.'
-                  : 'Let’s find the starting point.'}
-            </Heading>
-          </Box>
-          <Badge
-            size="2"
-            variant="soft"
-            color={
-              qualification.score >= 80 ? 'green' : qualification.score >= 40 ? 'blue' : 'gray'
-            }
-          >
-            {qualification.score}% complete
-          </Badge>
-        </Flex>
+        {header}
+        {/* Only while there is distance left to show. At 100% a full accent bar is the loudest
+            thing on a card whose whole message is that there is nothing to do. */}
         <Box mt="3">
           <Progress
             size="3"
@@ -1143,25 +1339,7 @@ function BriefReview({
             aria-label="Brief completeness"
           />
         </Box>
-        {!!qualification.known.length && (
-          <DataList.Root mt="4" orientation={{ initial: 'vertical', sm: 'horizontal' }}>
-            {qualification.known.map((fact) => (
-              <DataList.Item key={fact.id}>
-                <DataList.Label minWidth="140px">
-                  <Flex align="center" gap="1">
-                    <Check size={13} aria-hidden="true" />
-                    {fact.label}
-                  </Flex>
-                </DataList.Label>
-                <DataList.Value>
-                  <Text size="2" style={{ overflowWrap: 'anywhere' }}>
-                    {fact.value}
-                  </Text>
-                </DataList.Value>
-              </DataList.Item>
-            ))}
-          </DataList.Root>
-        )}
+        {facts}
         {!!qualification.questions.length && (
           <Box mt="4">
             <Reset>
@@ -1176,35 +1354,23 @@ function BriefReview({
                   </summary>
                 </Reset>
                 {/* The list's own `margin: 0` reset beats Radix's `mt` utility class, so the
-                    space below the summary has to be set inline. It clears the ghost buttons'
-                    own negative margins, which would otherwise let the first question's hover
-                    box overlap the summary above it. */}
-                <Grid asChild gap="5">
+                    space below the summary has to be set inline. Two columns halve a run that
+                    reached seven questions in a single narrow strip. */}
+                <Grid asChild columns={{ initial: '1', md: '2' }} gapX="4" gapY="1">
                   <ul
                     style={{
                       listStyle: 'none',
                       margin: 0,
-                      marginTop: 'var(--space-5)',
+                      marginTop: 'var(--space-3)',
                       padding: 0,
                     }}
                   >
                     {qualification.questions.map((question) => (
                       <li key={question.id} style={{ listStyle: 'none' }}>
-                        <Flex direction="column" align="start" gap="1">
-                          <Button
-                            size="3"
-                            variant="ghost"
-                            onClick={() => {
-                              onAnswer(`${question.label}\n`);
-                              document.getElementById('studio-message')?.focus();
-                            }}
-                          >
-                            {question.label}
-                          </Button>
-                          <Text size="1" color="gray">
-                            {question.reason}
-                          </Text>
-                        </Flex>
+                        <QuestionRow
+                          question={question}
+                          onAsk={() => onAnswer(`${question.label}\n`)}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -1266,19 +1432,16 @@ function RouteEditor({
   return (
     <Box asChild>
       <section aria-label="Route structure">
-        <Flex align="center" justify="between" gap="3" mb="4" wrap="wrap">
-          <Box>
-            <Heading as="h2" size="6">
-              The shape of the journey
-            </Heading>
-            <Text as="p" size="2" color="gray" mt="1">
-              {stops.length
-                ? `${stops.length} destinations · ${totalNights} nights${stops.some((s) => s.nights === null) ? ' confirmed so far' : ''}`
-                : 'Destinations, dates and how they connect.'}
-            </Text>
-          </Box>
-          <MapPin size={24} aria-hidden="true" />
-        </Flex>
+        <Box mb="4">
+          <Heading as="h2" size="6">
+            The shape of the journey
+          </Heading>
+          <Text as="p" size="2" color="gray" mt="1">
+            {stops.length
+              ? `${stops.length} destinations · ${totalNights} nights${stops.some((s) => s.nights === null) ? ' confirmed so far' : ''}`
+              : 'Destinations, dates and how they connect.'}
+          </Text>
+        </Box>
         {!stops.length && (
           <Card size="3" variant="surface">
             <Flex direction="column" align="center" gap="3" py="5">
