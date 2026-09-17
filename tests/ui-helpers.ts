@@ -27,8 +27,10 @@ export async function expectChosen(trigger: Locator, optionLabel: string | RegEx
  * `DropdownMenu`. Its entries are `menuitem`s, not buttons, and reaching one is two clicks rather
  * than one, so every spec goes through here instead of re-deriving the shape.
  *
- * Note this is NOT the same control as the "Manage account" button in the sidebar foot, or the
- * "Travel preferences" button inside the account dialog — both of those are still plain buttons.
+ * The first three open their section of the settings page (/settings/...), not a dialog.
+ *
+ * Note this is NOT the same control as the "Manage account" button in the sidebar foot, which is
+ * still a plain button.
  */
 export async function chooseSetting(page: Page, itemName: string) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();

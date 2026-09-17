@@ -18,7 +18,6 @@ import {
 } from '@radix-ui/themes';
 import { api } from '../api';
 import { useApp } from '../context';
-import { Modal } from './ui';
 import {
   defaultTravelProfile,
   dietaryPreferenceOptions,
@@ -67,7 +66,11 @@ function OptionChip({
   );
 }
 
-export function PreferencesDialog({ onClose }: { onClose: () => void }) {
+/**
+ * The Travel preferences section of the settings page. It was a dialog; it is now page content, so
+ * saving keeps the form on screen (with a confirmation toast) instead of closing it.
+ */
+export function PreferencesSettings() {
   const { profile, refreshProfile, user, toast } = useApp();
   const [value, setValue] = useState<TravelProfile>(profile || defaultTravelProfile);
   const [busy, setBusy] = useState(false);
@@ -84,7 +87,6 @@ export function PreferencesDialog({ onClose }: { onClose: () => void }) {
       await api('/profile', { method: 'PATCH', body: JSON.stringify(preferences) });
       await refreshProfile();
       toast('Your preferences are saved for new trips.');
-      onClose();
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -92,8 +94,8 @@ export function PreferencesDialog({ onClose }: { onClose: () => void }) {
     }
   }
   return (
-    <Modal title="Your kind of travel" onClose={onClose}>
-      <Text as="p" size="2" color="gray" mt="2" mb="4">
+    <>
+      <Text as="p" size="2" color="gray" mb="4">
         Tara uses these as a starting point for new trips. You can ask for something different at
         any time.{' '}
         {user
@@ -304,20 +306,17 @@ export function PreferencesDialog({ onClose }: { onClose: () => void }) {
           </Button>
         </Flex>
       </form>
-    </Modal>
+    </>
   );
 }
 
-export function AccountDialog({
-  onClose,
+/** The Account section of the settings page: name, password, sessions, export and deletion. */
+export function AccountSettings({
   onDeleted,
   onSessionChange,
-  onPreferences,
 }: {
-  onClose: () => void;
   onDeleted: () => Promise<void>;
   onSessionChange: () => void;
-  onPreferences: () => void;
 }) {
   const { user, setUser, toast } = useApp();
   const [details, setDetails] = useState<AccountDetails | null>(null);
@@ -370,310 +369,300 @@ export function AccountDialog({
     toast('Your travel data is ready to download.');
   }
   return (
-    <Modal title="Your account" onClose={onClose}>
-      <Flex direction="column" gap="5" mt="3">
+    <Flex direction="column" gap="5">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void perform('name', async () => {
+            const response = await api<{ user: User }>('/account', {
+              method: 'PATCH',
+              body: JSON.stringify({ name }),
+            });
+            setUser(response.user);
+            toast('Your name has been updated.');
+          });
+        }}
+      >
+        <Flex direction="column" gap="3" align="start">
+          <Text as="p" size="2" color="gray" style={{ overflowWrap: 'anywhere' }}>
+            {user?.email}
+          </Text>
+          <Box width="100%">
+            <label>
+              <Text as="div" size="2" weight="medium" mb="1">
+                Your name
+              </Text>
+              <TextField.Root
+                size="3"
+                required
+                maxLength={80}
+                autoComplete="name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+          </Box>
+          <Button size="3" variant="soft" loading={busy === 'name'} disabled={Boolean(busy)}>
+            {busy === 'name' ? 'Saving…' : 'Save name'}
+            <Check size={15} />
+          </Button>
+        </Flex>
+      </form>
+      <Separator size="4" />
+      <section aria-labelledby="account-password-heading">
+        <Heading as="h2" size="4" id="account-password-heading" mb="2">
+          Change password
+        </Heading>
+        <Text as="p" size="2" color="gray" mb="3">
+          Updating your password signs out other sessions and stops active planning requests.
+        </Text>
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void perform('name', async () => {
-              const response = await api<{ user: User }>('/account', {
-                method: 'PATCH',
-                body: JSON.stringify({ name }),
+            void perform('password', async () => {
+              await api('/account/password', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword, newPassword }),
               });
-              setUser(response.user);
-              toast('Your name has been updated.');
+              setCurrentPassword('');
+              setNewPassword('');
+              setDetails((current) => (current ? { ...current, otherSessions: 0 } : current));
+              onSessionChange();
+              toast('Password updated. Other sessions are signed out.');
             });
           }}
         >
           <Flex direction="column" gap="3" align="start">
-            <Text as="p" size="2" color="gray" style={{ overflowWrap: 'anywhere' }}>
-              {user?.email}
-            </Text>
-            <Button type="button" variant="soft" color="gray" size="3" onClick={onPreferences}>
-              Travel preferences
-            </Button>
             <Box width="100%">
               <label>
                 <Text as="div" size="2" weight="medium" mb="1">
-                  Your name
+                  Current password
+                </Text>
+                <TextField.Root
+                  size="3"
+                  type="password"
+                  required
+                  maxLength={128}
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                />
+              </label>
+            </Box>
+            <Box width="100%">
+              <label>
+                <Text as="div" size="2" weight="medium" mb="1">
+                  New password
+                </Text>
+                <TextField.Root
+                  size="3"
+                  type="password"
+                  required
+                  minLength={8}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                />
+              </label>
+            </Box>
+            <Button size="3" variant="soft" loading={busy === 'password'} disabled={Boolean(busy)}>
+              {busy === 'password' ? 'Updating…' : 'Update password'}
+              <ShieldCheck size={15} />
+            </Button>
+          </Flex>
+        </form>
+      </section>
+      <Separator size="4" />
+      <section aria-labelledby="account-sessions-heading">
+        <Heading as="h2" size="4" id="account-sessions-heading" mb="2">
+          Your signed-in sessions
+        </Heading>
+        <Text as="p" size="2" color="gray" mb="3">
+          {details
+            ? `${details.otherSessions} other active ${details.otherSessions === 1 ? 'session' : 'sessions'}.`
+            : 'Loading session details…'}{' '}
+          This session stays signed in.
+        </Text>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void perform('sessions', async () => {
+              await api('/account/sessions/revoke', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword: revokePassword }),
+              });
+              setRevokePassword('');
+              setDetails((current) => (current ? { ...current, otherSessions: 0 } : current));
+              toast('Other sessions have been signed out.');
+            });
+          }}
+        >
+          <Flex direction="column" gap="3" align="start">
+            <Box width="100%">
+              <label>
+                <Text as="div" size="2" weight="medium" mb="1">
+                  Password to sign out other sessions
                 </Text>
                 <TextField.Root
                   size="3"
                   required
-                  maxLength={80}
-                  autoComplete="name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  type="password"
+                  maxLength={128}
+                  autoComplete="current-password"
+                  value={revokePassword}
+                  onChange={(event) => setRevokePassword(event.target.value)}
                 />
               </label>
             </Box>
-            <Button size="3" variant="soft" loading={busy === 'name'} disabled={Boolean(busy)}>
-              {busy === 'name' ? 'Saving…' : 'Save name'}
-              <Check size={15} />
+            <Button
+              size="3"
+              variant="soft"
+              loading={busy === 'sessions'}
+              disabled={Boolean(busy) || !details?.otherSessions}
+            >
+              {busy === 'sessions' ? 'Signing out…' : 'Sign out other sessions'}
             </Button>
           </Flex>
         </form>
-        <Separator size="4" />
-        <section aria-labelledby="account-password-heading">
-          <Heading as="h3" size="4" id="account-password-heading" mb="2">
-            Change password
-          </Heading>
-          <Text as="p" size="2" color="gray" mb="3">
-            Updating your password signs out other sessions and stops active planning requests.
-          </Text>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void perform('password', async () => {
-                await api('/account/password', {
-                  method: 'POST',
-                  body: JSON.stringify({ currentPassword, newPassword }),
-                });
-                setCurrentPassword('');
-                setNewPassword('');
-                setDetails((current) => (current ? { ...current, otherSessions: 0 } : current));
-                onSessionChange();
-                toast('Password updated. Other sessions are signed out.');
-              });
-            }}
-          >
-            <Flex direction="column" gap="3" align="start">
-              <Box width="100%">
-                <label>
-                  <Text as="div" size="2" weight="medium" mb="1">
-                    Current password
-                  </Text>
-                  <TextField.Root
-                    size="3"
-                    type="password"
-                    required
-                    maxLength={128}
-                    autoComplete="current-password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                  />
-                </label>
-              </Box>
-              <Box width="100%">
-                <label>
-                  <Text as="div" size="2" weight="medium" mb="1">
-                    New password
-                  </Text>
-                  <TextField.Root
-                    size="3"
-                    type="password"
-                    required
-                    minLength={8}
-                    maxLength={128}
-                    autoComplete="new-password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                  />
-                </label>
-              </Box>
-              <Button
-                size="3"
-                variant="soft"
-                loading={busy === 'password'}
-                disabled={Boolean(busy)}
-              >
-                {busy === 'password' ? 'Updating…' : 'Update password'}
-                <ShieldCheck size={15} />
-              </Button>
-            </Flex>
-          </form>
-        </section>
-        <Separator size="4" />
-        <section aria-labelledby="account-sessions-heading">
-          <Heading as="h3" size="4" id="account-sessions-heading" mb="2">
-            Your signed-in sessions
-          </Heading>
-          <Text as="p" size="2" color="gray" mb="3">
-            {details
-              ? `${details.otherSessions} other active ${details.otherSessions === 1 ? 'session' : 'sessions'}.`
-              : 'Loading session details…'}{' '}
-            This session stays signed in.
-          </Text>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void perform('sessions', async () => {
-                await api('/account/sessions/revoke', {
-                  method: 'POST',
-                  body: JSON.stringify({ currentPassword: revokePassword }),
-                });
-                setRevokePassword('');
-                setDetails((current) => (current ? { ...current, otherSessions: 0 } : current));
-                toast('Other sessions have been signed out.');
-              });
-            }}
-          >
-            <Flex direction="column" gap="3" align="start">
-              <Box width="100%">
-                <label>
-                  <Text as="div" size="2" weight="medium" mb="1">
-                    Password to sign out other sessions
-                  </Text>
-                  <TextField.Root
-                    size="3"
-                    required
-                    type="password"
-                    maxLength={128}
-                    autoComplete="current-password"
-                    value={revokePassword}
-                    onChange={(event) => setRevokePassword(event.target.value)}
-                  />
-                </label>
-              </Box>
-              <Button
-                size="3"
-                variant="soft"
-                loading={busy === 'sessions'}
-                disabled={Boolean(busy) || !details?.otherSessions}
-              >
-                {busy === 'sessions' ? 'Signing out…' : 'Sign out other sessions'}
-              </Button>
-            </Flex>
-          </form>
-        </section>
-        <Separator size="4" />
-        <section aria-labelledby="account-data-heading">
-          <Heading as="h3" size="4" id="account-data-heading" mb="2">
-            Your travel data
-          </Heading>
-          <Text as="p" size="2" color="gray" mb="3">
-            Download your profile, trips, conversations, itinerary history and wishlist as a JSON
-            file.
-          </Text>
-          <Button
-            size="3"
-            variant="soft"
-            loading={busy === 'export'}
-            disabled={Boolean(busy)}
-            onClick={() => void perform('export', exportData)}
-          >
-            <Download size={15} />
-            {busy === 'export' ? 'Preparing…' : 'Download my data'}
-          </Button>
-        </section>
-        <Separator size="4" />
-        <section aria-labelledby="account-delete-heading">
-          <Heading as="h3" size="4" id="account-delete-heading" mb="2">
-            Delete account
-          </Heading>
-          <Text as="p" size="2" color="gray" mb="3">
-            Permanently removes your account, preferences, trips, conversations, saved items and
-            itinerary history. Shared links stop working and all sessions are signed out.
-          </Text>
-          <Button
-            size="3"
-            variant="soft"
-            color="red"
-            disabled={Boolean(busy)}
-            onClick={() => setDeleting(true)}
-          >
-            Delete my account
-          </Button>
-          {/* Destructive and irreversible: password + typed DELETE confirmation stay required. */}
-          <AlertDialog.Root
-            open={deleting}
-            onOpenChange={(open) => {
-              if (open || busy) return;
-              setDeleting(false);
-              setDeletePassword('');
-              setConfirmation('');
-            }}
-          >
-            <AlertDialog.Content maxWidth="480px">
-              <AlertDialog.Title>Delete your account?</AlertDialog.Title>
-              <AlertDialog.Description size="2" color="gray">
-                Permanently removes your account, preferences, trips, conversations, saved items and
-                itinerary history. Shared links stop working and all sessions are signed out.
-              </AlertDialog.Description>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void perform('delete', async () => {
-                    await api('/account', {
-                      method: 'DELETE',
-                      body: JSON.stringify({ currentPassword: deletePassword, confirmation }),
-                    });
-                    setDeletePassword('');
-                    await onDeleted();
+      </section>
+      <Separator size="4" />
+      <section aria-labelledby="account-data-heading">
+        <Heading as="h2" size="4" id="account-data-heading" mb="2">
+          Your travel data
+        </Heading>
+        <Text as="p" size="2" color="gray" mb="3">
+          Download your profile, trips, conversations, itinerary history and wishlist as a JSON
+          file.
+        </Text>
+        <Button
+          size="3"
+          variant="soft"
+          loading={busy === 'export'}
+          disabled={Boolean(busy)}
+          onClick={() => void perform('export', exportData)}
+        >
+          <Download size={15} />
+          {busy === 'export' ? 'Preparing…' : 'Download my data'}
+        </Button>
+      </section>
+      <Separator size="4" />
+      <section aria-labelledby="account-delete-heading">
+        <Heading as="h2" size="4" id="account-delete-heading" mb="2">
+          Delete account
+        </Heading>
+        <Text as="p" size="2" color="gray" mb="3">
+          Permanently removes your account, preferences, trips, conversations, saved items and
+          itinerary history. Shared links stop working and all sessions are signed out.
+        </Text>
+        <Button
+          size="3"
+          variant="soft"
+          color="red"
+          disabled={Boolean(busy)}
+          onClick={() => setDeleting(true)}
+        >
+          Delete my account
+        </Button>
+        {/* Destructive and irreversible: password + typed DELETE confirmation stay required. */}
+        <AlertDialog.Root
+          open={deleting}
+          onOpenChange={(open) => {
+            if (open || busy) return;
+            setDeleting(false);
+            setDeletePassword('');
+            setConfirmation('');
+          }}
+        >
+          <AlertDialog.Content maxWidth="480px">
+            <AlertDialog.Title>Delete your account?</AlertDialog.Title>
+            <AlertDialog.Description size="2" color="gray">
+              Permanently removes your account, preferences, trips, conversations, saved items and
+              itinerary history. Shared links stop working and all sessions are signed out.
+            </AlertDialog.Description>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void perform('delete', async () => {
+                  await api('/account', {
+                    method: 'DELETE',
+                    body: JSON.stringify({ currentPassword: deletePassword, confirmation }),
                   });
-                }}
-              >
-                <Flex direction="column" gap="3" mt="4">
-                  <label>
-                    <Text as="div" size="2" weight="medium" mb="1">
-                      Password to delete account
-                    </Text>
-                    <TextField.Root
-                      size="3"
-                      type="password"
-                      required
-                      maxLength={128}
-                      autoComplete="current-password"
-                      value={deletePassword}
-                      onChange={(event) => setDeletePassword(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <Text as="div" size="2" weight="medium" mb="1">
-                      Type DELETE to confirm
-                    </Text>
-                    <TextField.Root
-                      size="3"
-                      required
-                      value={confirmation}
-                      autoComplete="off"
-                      pattern="DELETE"
-                      onChange={(event) => setConfirmation(event.target.value)}
-                    />
-                  </label>
-                  {error && (
-                    <Callout.Root color="red" role="alert" size="1">
-                      <Callout.Text>{error}</Callout.Text>
-                    </Callout.Root>
-                  )}
-                  <Flex gap="3" wrap="wrap" justify="end" mt="2">
-                    <AlertDialog.Cancel>
-                      <Button
-                        type="button"
-                        size="3"
-                        variant="soft"
-                        color="gray"
-                        disabled={Boolean(busy)}
-                        onClick={() => {
-                          setDeleting(false);
-                          setDeletePassword('');
-                          setConfirmation('');
-                        }}
-                      >
-                        Keep my account
-                      </Button>
-                    </AlertDialog.Cancel>
+                  setDeletePassword('');
+                  await onDeleted();
+                });
+              }}
+            >
+              <Flex direction="column" gap="3" mt="4">
+                <label>
+                  <Text as="div" size="2" weight="medium" mb="1">
+                    Password to delete account
+                  </Text>
+                  <TextField.Root
+                    size="3"
+                    type="password"
+                    required
+                    maxLength={128}
+                    autoComplete="current-password"
+                    value={deletePassword}
+                    onChange={(event) => setDeletePassword(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <Text as="div" size="2" weight="medium" mb="1">
+                    Type DELETE to confirm
+                  </Text>
+                  <TextField.Root
+                    size="3"
+                    required
+                    value={confirmation}
+                    autoComplete="off"
+                    pattern="DELETE"
+                    onChange={(event) => setConfirmation(event.target.value)}
+                  />
+                </label>
+                {error && (
+                  <Callout.Root color="red" role="alert" size="1">
+                    <Callout.Text>{error}</Callout.Text>
+                  </Callout.Root>
+                )}
+                <Flex gap="3" wrap="wrap" justify="end" mt="2">
+                  <AlertDialog.Cancel>
                     <Button
+                      type="button"
                       size="3"
-                      color="red"
-                      loading={busy === 'delete'}
-                      disabled={Boolean(busy) || confirmation !== 'DELETE'}
+                      variant="soft"
+                      color="gray"
+                      disabled={Boolean(busy)}
+                      onClick={() => {
+                        setDeleting(false);
+                        setDeletePassword('');
+                        setConfirmation('');
+                      }}
                     >
-                      {busy === 'delete' ? 'Deleting…' : 'Permanently delete account'}
-                      <Trash2 size={15} />
+                      Keep my account
                     </Button>
-                  </Flex>
+                  </AlertDialog.Cancel>
+                  <Button
+                    size="3"
+                    color="red"
+                    loading={busy === 'delete'}
+                    disabled={Boolean(busy) || confirmation !== 'DELETE'}
+                  >
+                    {busy === 'delete' ? 'Deleting…' : 'Permanently delete account'}
+                    <Trash2 size={15} />
+                  </Button>
                 </Flex>
-              </form>
-            </AlertDialog.Content>
-          </AlertDialog.Root>
-        </section>
-        {error && !deleting && (
-          <Callout.Root color="red" role="alert" size="1">
-            <Callout.Text>{error}</Callout.Text>
-          </Callout.Root>
-        )}
-      </Flex>
-    </Modal>
+              </Flex>
+            </form>
+          </AlertDialog.Content>
+        </AlertDialog.Root>
+      </section>
+      {error && !deleting && (
+        <Callout.Root color="red" role="alert" size="1">
+          <Callout.Text>{error}</Callout.Text>
+        </Callout.Root>
+      )}
+    </Flex>
   );
 }

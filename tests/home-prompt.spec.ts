@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { newStudioWorkspace } from '../server/studio-store';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
 import { defaultStudioAgency } from '../shared/studio';
@@ -7,9 +8,11 @@ test('home sends explicit trip details unchanged and uses form details only when
   page,
 }) => {
   const workspaceId = '7b1f2c3d-4e5a-4b6c-8d9e-0f1a2b3c4d5e';
-  const workspace = { id: workspaceId, revision: 0 };
-  /* Submitting the composer now creates the workspace and posts the brief to /review, so what the
-     app "did with the prompt" is a request body rather than a query string. Every /review body is
+  const workspace = { ...newStudioWorkspace(), id: workspaceId, revision: 0 };
+  /* Submitting the composer creates the workspace and hands the brief to it through `?q=`; the
+     workspace is what posts /review, so the composer no longer waits out the model. That makes
+     what the app "did with the prompt" a request body from the destination rather than a query
+     string — the workspace has to be fetchable for it to get there at all. Every /review body is
      kept so the assertions below can read the message the app actually sent, and check that it
      sent exactly one. */
   const reviews: { message?: string }[] = [];
@@ -21,6 +24,8 @@ test('home sends explicit trip details unchanged and uses form details only when
     // creation on POST, and the two return different shapes.
     if (method === 'POST' && path === '/api/studio/workspaces')
       return route.fulfill({ status: 201, json: { workspace } });
+    if (method === 'GET' && path === `/api/studio/workspaces/${workspaceId}`)
+      return route.fulfill({ status: 200, json: { workspace } });
     if (method === 'POST' && path === `/api/studio/workspaces/${workspaceId}/review`) {
       reviews.push(request.postDataJSON() as { message?: string });
       return route.fulfill({ status: 200, json: { workspace } });
@@ -73,12 +78,14 @@ test('home sends explicit trip details unchanged and uses form details only when
     }
     await page.getByRole('textbox', { name: 'Tell Tara about your trip' }).fill(prompt);
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
+    /* The carried brief is dropped from the URL once the workspace has sent it, so settling on
+       the bare path is also the signal that the hand-off completed exactly once. */
     await expect(page).toHaveURL(new RegExp(`/studio/${workspaceId}$`));
     /* The assertion the whole spec exists for: an explicitly detailed brief is sent to the server
        word for word, and the chips' answers are folded in only where the brief left a gap. Read
        off the request body rather than the URL, so it is what was sent that is checked and not
        what happened to be displayed on the way. */
-    expect(reviews).toHaveLength(1);
+    await expect.poll(() => reviews.length).toBe(1);
     expect(reviews[0].message).toBe(expected);
   }
 });

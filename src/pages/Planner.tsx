@@ -75,6 +75,8 @@ import { useFreshPlaces } from '../useFreshPlaces';
 import ItineraryMap from '../components/ItineraryMap';
 import MarkdownText, { safeWebUrl } from '../components/MarkdownText';
 import ConciergeMessage from '../components/ConciergeMessage';
+import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
+import { ChatTurn, TaraAvatar } from '../components/ChatTurn';
 import ConsultationSummary, { consultationBudget } from '../components/ConsultationSummary';
 import HotelSearch from '../components/HotelSearch';
 
@@ -1312,7 +1314,7 @@ export function Planner() {
   const [error, setError] = useState('');
   const [pending, setPending] = useState('');
   const [warning, setWarning] = useState('');
-  const [mobileTab, setMobileTab] = useState<'chat' | 'plan'>('chat');
+  const [mobileTab, setMobileTab] = useState<PaneTab>('primary');
   const [retryPrompt, setRetryPrompt] = useState('');
   const consultationQuestions = (trip?.planning?.questions || [])
     .filter((question) => {
@@ -1552,517 +1554,427 @@ export function Planner() {
     const suggestion = params.get('q');
     if (id && suggestion) {
       setPrompt(suggestion.slice(0, 4000));
-      setMobileTab('chat');
+      setMobileTab('primary');
     }
   }, [id, params]);
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [trip?.messages.length, pending, busy]);
   return (
-    <Flex
-      direction="column"
-      style={{ height: 'calc(100dvh - var(--app-header-height))', minHeight: 0 }}
-    >
-      <Box display={{ initial: 'block', md: 'none' }} flexShrink="0">
-        <Tabs.Root
-          value={mobileTab}
-          onValueChange={(value) => setMobileTab(value as 'chat' | 'plan')}
-        >
-          <Tabs.List size="2" justify="center">
-            <Tabs.Trigger value="chat">
-              <Flex align="center" gap="2">
-                <MessageCircle size={15} />
-                Chat with Tara
-              </Flex>
-            </Tabs.Trigger>
-            <Tabs.Trigger value="plan">
-              <Flex align="center" gap="2">
-                <List size={15} />
-                Your itinerary
-                {trip?.itinerary.length ? (
-                  <Badge color="gray" variant="soft">
-                    {trip.days}
-                  </Badge>
-                ) : null}
-              </Flex>
-            </Tabs.Trigger>
-          </Tabs.List>
-        </Tabs.Root>
-      </Box>
-      <Grid
-        columns={{ initial: '1', md: 'minmax(350px, 43%) minmax(0, 57%)' }}
-        flexGrow="1"
-        style={{ minHeight: 0, width: '100%' }}
-      >
-        <Flex
-          asChild
-          direction="column"
-          minHeight="0"
-          minWidth="0"
-          display={{ initial: mobileTab === 'plan' ? 'none' : 'flex', md: 'flex' }}
-          style={{ borderRight: '1px solid var(--gray-a5)' }}
-        >
-          <section>
-            <Flex
-              align="center"
-              gap="3"
-              p="3"
-              flexShrink="0"
-              style={{ borderBottom: '1px solid var(--gray-a5)' }}
+    <SplitWorkspace
+      tab={mobileTab}
+      onTabChange={setMobileTab}
+      tabs={{
+        primary: { label: 'Chat with Tara', icon: <MessageCircle size={15} /> },
+        secondary: {
+          label: 'Your itinerary',
+          icon: <List size={15} />,
+          badge: trip?.itinerary.length ? (
+            <Badge color="gray" variant="soft">
+              {trip.days}
+            </Badge>
+          ) : null,
+        },
+      }}
+      tabsLabel="Trip planner panes"
+      primaryLabel="Conversation with Tara"
+      primaryBodyTestId="chat-messages"
+      primaryHeader={
+        <Flex align="center" gap="3" p="3" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
+          <Flex
+            align="center"
+            justify="center"
+            flexShrink="0"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 'var(--radius-3)',
+              background: 'var(--accent-3)',
+              color: 'var(--accent-11)',
+            }}
+          >
+            <TaraMark size={24} />
+          </Flex>
+          <Flex direction="column" gap="1" align="start" flexGrow="1" minWidth="0">
+            <Heading size="2" as="h2">
+              Your travel concierge
+            </Heading>
+            <Badge color={integrations.ai ? 'green' : 'gray'} variant="soft">
+              {integrations.ai ? 'Ready for a little adventure' : 'Curated planning mode'}
+            </Badge>
+          </Flex>
+          <IconButton asChild size="3" variant="soft" color="gray">
+            <Link
+              to="/chat"
+              aria-label="Start a new conversation"
+              onClick={(e) => {
+                if (busy) e.preventDefault();
+              }}
             >
-              <Flex
-                align="center"
-                justify="center"
-                flexShrink="0"
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 'var(--radius-3)',
-                  background: 'var(--accent-3)',
-                  color: 'var(--accent-11)',
-                }}
-              >
-                <TaraMark size={24} />
-              </Flex>
-              <Flex direction="column" gap="1" align="start" flexGrow="1" minWidth="0">
-                <Heading size="2" as="h2">
-                  Your travel concierge
-                </Heading>
-                <Badge color={integrations.ai ? 'green' : 'gray'} variant="soft">
-                  {integrations.ai ? 'Ready for a little adventure' : 'Curated planning mode'}
-                </Badge>
-              </Flex>
-              <IconButton asChild size="3" variant="soft" color="gray">
-                <Link
-                  to="/chat"
-                  aria-label="Start a new conversation"
-                  onClick={(e) => {
-                    if (busy) e.preventDefault();
-                  }}
-                >
-                  <Plus size={19} />
-                </Link>
-              </IconButton>
-            </Flex>
-            <Box
-              flexGrow="1"
-              p="4"
-              data-testid="chat-messages"
-              style={{ overflowY: 'auto', minHeight: 0 }}
-            >
-              {loading ? (
-                <Spinner label="Unpacking your plans…" />
-              ) : !trip?.messages.length && !pending && !busy ? (
-                <Flex
-                  direction="column"
-                  align="start"
-                  gap="3"
-                  py="5"
-                  style={{ maxWidth: 440, margin: '0 auto' }}
-                >
-                  <Box style={{ color: 'var(--accent-11)' }}>
-                    <TaraMark size={41} />
-                  </Box>
-                  <Text size="1" color="gray" weight="medium">
-                    A LITTLE HELLO FROM TARA
-                  </Text>
-                  <Heading size="8" as="h1">
-                    Where are we
-                    <br />
-                    <Em>dreaming of?</Em>
-                  </Heading>
-                  <Text as="p" size="3" color="gray">
-                    Tell me about the trip you can’t stop thinking about. A place, a feeling, or
-                    just a little need to get away.
-                  </Text>
-                  <Flex direction="column" gap="2" width="100%" my="2">
-                    {[
-                      '5 days in Kyoto, with plenty of food and culture',
-                      'A slow week on the Amalfi Coast for two',
-                      'A 4 day adventure in Hunza Valley',
-                    ].map((q) => (
-                      <Button
-                        key={q}
-                        size="3"
-                        variant="soft"
-                        color="gray"
-                        style={{ width: '100%', justifyContent: 'space-between' }}
-                        onClick={() => void send(q)}
-                      >
-                        {q}
-                        <ArrowUp size={14} />
-                      </Button>
-                    ))}
-                  </Flex>
-                  <Text as="p" size="1" color="gray">
-                    {integrations.ai
-                      ? 'Your plans come together here, one conversation at a time.'
-                      : `Planning from ${catalog.destinations.length} curated destinations. Tell Tara where you’d like to go.`}
-                  </Text>
-                </Flex>
-              ) : (
-                <Flex direction="column" gap="4">
-                  {trip?.messages.map((message) => (
-                    <Flex
-                      key={message.id}
-                      gap="2"
-                      align="start"
-                      justify={message.role === 'assistant' ? 'start' : 'end'}
-                    >
-                      {message.role === 'assistant' && (
-                        <Flex
-                          align="center"
-                          justify="center"
-                          flexShrink="0"
-                          mt="4"
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: '100%',
-                            background: 'var(--accent-3)',
-                            color: 'var(--accent-11)',
-                          }}
-                        >
-                          <TaraMark size={18} />
-                        </Flex>
-                      )}
-                      <Flex
-                        direction="column"
-                        gap="1"
-                        align={message.role === 'assistant' ? 'start' : 'end'}
-                        minWidth="0"
-                        style={{ maxWidth: message.role === 'assistant' ? '100%' : '85%' }}
-                      >
-                        <Text size="1" color="gray" weight="medium">
-                          {message.role === 'assistant' ? 'Tara' : 'You'}
-                        </Text>
-                        <Card
-                          data-testid={`${message.role}-message`}
-                          variant={message.role === 'assistant' ? 'surface' : 'classic'}
-                        >
-                          {message.role === 'assistant' ? (
-                            <ConciergeMessage text={message.content} />
-                          ) : (
-                            <MarkdownText text={message.content} />
-                          )}
-                        </Card>
-                        {message.role === 'assistant' &&
-                          message.id === trip.messages.at(-1)?.id &&
-                          !busy && (
-                            <Flex direction="column" gap="2" mt="1" align="start">
-                              {consultationQuestions
-                                .filter((question) => question.suggestions.length)
-                                .map((question) => (
-                                  <Box
-                                    key={question.field}
-                                    role="group"
-                                    aria-label={question.question}
-                                  >
-                                    <Text as="p" size="1" color="gray" mb="1">
-                                      {question.field === 'hotels'
-                                        ? 'Accommodation'
-                                        : question.field === 'flight_dates'
-                                          ? 'Flight dates'
-                                          : question.field.charAt(0).toUpperCase() +
-                                            question.field.slice(1)}
-                                    </Text>
-                                    <Flex gap="2" wrap="wrap">
-                                      {question.suggestions.slice(0, 4).map((suggestion) => (
-                                        <Button
-                                          key={suggestion}
-                                          type="button"
-                                          size="3"
-                                          variant="soft"
-                                          onClick={() => void send(suggestion)}
-                                        >
-                                          {suggestion}
-                                        </Button>
-                                      ))}
-                                    </Flex>
-                                  </Box>
-                                ))}
-                            </Flex>
-                          )}
-                        {message.role === 'assistant' &&
-                          message.id === trip.messages.at(-1)?.id &&
-                          !trip.itinerary.length &&
-                          getConsultation(trip).facts.destination?.valueState !== 'specified' && (
-                            <Flex gap="2" wrap="wrap" mt="1">
-                              {tripDestinations(trip)
-                                .filter((d) => message.content.includes(d.name))
-                                .slice(0, 4)
-                                .map((d) => (
-                                  <Button
-                                    key={d.id}
-                                    size="3"
-                                    variant="soft"
-                                    color="gray"
-                                    disabled={busy}
-                                    onClick={() => void send(`Let's go to ${d.name}`)}
-                                  >
-                                    <img
-                                      src={d.image}
-                                      alt=""
-                                      style={{
-                                        width: 22,
-                                        height: 22,
-                                        borderRadius: 'var(--radius-1)',
-                                        objectFit: 'cover',
-                                      }}
-                                    />
-                                    {d.name}
-                                    <ArrowRight size={13} />
-                                  </Button>
-                                ))}
-                            </Flex>
-                          )}
-                        {message.role === 'assistant' &&
-                          message.id === trip.messages.at(-1)?.id &&
-                          trip.itinerary.length > 0 && (
-                            <Box display={{ initial: 'block', md: 'none' }} mt="1">
-                              <Button size="3" variant="soft" onClick={() => setMobileTab('plan')}>
-                                Take a look at your itinerary
-                                <ArrowRight size={14} />
-                              </Button>
-                            </Box>
-                          )}
-                      </Flex>
-                    </Flex>
-                  ))}
-                  {pending && (
-                    <Flex gap="2" align="start" justify="end">
-                      <Flex direction="column" gap="1" align="end" style={{ maxWidth: '85%' }}>
-                        <Text size="1" color="gray" weight="medium">
-                          You
-                        </Text>
-                        <Card variant="classic">
-                          <Text as="p" size="2">
-                            {pending}
-                          </Text>
-                        </Card>
-                      </Flex>
-                    </Flex>
-                  )}
-                  {busy && (
-                    <Flex gap="2" align="start">
-                      <Flex
-                        align="center"
-                        justify="center"
-                        flexShrink="0"
-                        mt="4"
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: '100%',
-                          background: 'var(--accent-3)',
-                          color: 'var(--accent-11)',
-                        }}
-                      >
-                        <TaraMark size={18} />
-                      </Flex>
-                      <Flex direction="column" gap="1" align="start" flexGrow="1" minWidth="0">
-                        <Text size="1" color="gray" weight="medium">
-                          Tara
-                        </Text>
-                        <PlanningProgress
-                          run={run}
-                          cancelling={cancelling}
-                          onCancel={() => void cancel().catch((e) => toast(e.message))}
-                        />
-                      </Flex>
-                    </Flex>
-                  )}
-                </Flex>
-              )}
-              {error && (
-                <Callout.Root color="red" role="alert" mt="3">
-                  <Callout.Icon>
-                    <TriangleAlert size={16} />
-                  </Callout.Icon>
-                  <Callout.Text>{error}</Callout.Text>
-                  {retryPrompt && (
-                    <Box>
-                      <Button
-                        size="3"
-                        variant="soft"
-                        color="red"
-                        onClick={() => void send(retryPrompt)}
-                      >
-                        Try again <ArrowRight size={12} />
-                      </Button>
-                    </Box>
-                  )}
-                </Callout.Root>
-              )}
-              <div ref={messagesEnd} />
-            </Box>
+              <Plus size={19} />
+            </Link>
+          </IconButton>
+        </Flex>
+      }
+      primary={
+        <>
+          {loading ? (
+            <Spinner label="Unpacking your plans…" />
+          ) : !trip?.messages.length && !pending && !busy ? (
             <Flex
               direction="column"
-              gap="2"
-              p="3"
-              flexShrink="0"
-              style={{ borderTop: '1px solid var(--gray-a5)' }}
+              align="start"
+              gap="3"
+              py="5"
+              style={{ maxWidth: 440, margin: '0 auto' }}
             >
-              {trip?.itinerary.length && !busy && !consultationQuestions.length ? (
-                <Flex gap="2" wrap="wrap">
+              <Box style={{ color: 'var(--accent-11)' }}>
+                <TaraMark size={41} />
+              </Box>
+              <Text size="1" color="gray" weight="medium">
+                A LITTLE HELLO FROM TARA
+              </Text>
+              <Heading size="8" as="h1">
+                Where are we
+                <br />
+                <Em>dreaming of?</Em>
+              </Heading>
+              <Text as="p" size="3" color="gray">
+                Tell me about the trip you can’t stop thinking about. A place, a feeling, or just a
+                little need to get away.
+              </Text>
+              <Flex direction="column" gap="2" width="100%" my="2">
+                {[
+                  '5 days in Kyoto, with plenty of food and culture',
+                  'A slow week on the Amalfi Coast for two',
+                  'A 4 day adventure in Hunza Valley',
+                ].map((q) => (
                   <Button
+                    key={q}
                     size="3"
                     variant="soft"
                     color="gray"
-                    onClick={() => void send('Make it slower and more relaxing')}
+                    style={{ width: '100%', justifyContent: 'space-between' }}
+                    onClick={() => void send(q)}
                   >
-                    A slower pace
+                    {q}
+                    <ArrowUp size={14} />
                   </Button>
-                  <Button
-                    size="3"
-                    variant="soft"
-                    color="gray"
-                    onClick={() => void send('Make the trip more budget friendly')}
-                  >
-                    A smaller budget
-                  </Button>
-                  <Button
-                    size="3"
-                    variant="soft"
-                    color="gray"
-                    onClick={() => void send('Add more food and culture')}
-                  >
-                    Follow the food
-                  </Button>
-                </Flex>
-              ) : null}
-              {trip &&
-              !trip.itinerary.length &&
-              trip.planning?.questions.length &&
-              !consultationQuestions.length &&
-              !busy &&
-              !loading ? (
-                <Flex gap="2" wrap="wrap">
-                  <Button
-                    size="3"
-                    variant="soft"
-                    onClick={() =>
-                      void send('Continue planning with the trip details I’ve provided.')
-                    }
-                  >
-                    Continue planning <ArrowRight size={12} />
-                  </Button>
-                </Flex>
-              ) : null}
-              <Flex
-                asChild
-                align="end"
-                gap="2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void send(prompt);
-                }}
-              >
-                <form>
-                  <Box flexGrow="1" minWidth="0">
-                    <TextArea
-                      size="3"
-                      aria-label="Message Tara"
-                      placeholder={
-                        trip
-                          ? 'A little more adventure? A change of plan?'
-                          : 'Tell Tara a little about your next trip…'
-                      }
-                      value={prompt}
-                      maxLength={4000}
-                      rows={2}
-                      disabled={busy || loading}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          e.currentTarget.form?.requestSubmit();
-                        }
-                      }}
-                    />
-                  </Box>
-                  <IconButton
-                    type="submit"
-                    size="3"
-                    loading={busy}
-                    disabled={busy || loading || !prompt.trim()}
-                    aria-label="Send message"
-                  >
-                    <ArrowUp size={18} />
-                  </IconButton>
-                </form>
+                ))}
               </Flex>
               <Text as="p" size="1" color="gray">
-                {warning
-                  ? warning
-                  : integrations.ai
-                    ? 'Plans are suggestions. Prices and availability need confirmation.'
-                    : 'Curated local planner · Estimated costs · No bookings made'}
+                {integrations.ai
+                  ? 'Your plans come together here, one conversation at a time.'
+                  : `Planning from ${catalog.destinations.length} curated destinations. Tell Tara where you’d like to go.`}
               </Text>
             </Flex>
-          </section>
-        </Flex>
-        <Box
-          asChild
-          minWidth="0"
-          display={{ initial: mobileTab === 'chat' ? 'none' : 'block', md: 'block' }}
-          style={{ overflowY: 'auto', background: 'var(--gray-2)' }}
-        >
-          <section aria-label="Your trip itinerary">
-            {trip ? (
-              <ItineraryView trip={trip} onUpdate={setTrip} disabled={busy} />
-            ) : (
-              <Flex
-                direction="column"
-                align="center"
-                justify="center"
-                gap="3"
-                py="9"
-                px="4"
-                height="100%"
-                style={{ minHeight: 550, textAlign: 'center' }}
-              >
-                <Flex align="center" gap="2" style={{ color: 'var(--accent-9)' }}>
-                  <Globe2 size={72} strokeWidth={0.8} />
-                  <Sparkles size={28} strokeWidth={1} />
-                </Flex>
-                <Text size="1" color="gray" weight="medium">
-                  THE BEST PART IS STILL AHEAD
-                </Text>
-                <Heading size="7" as="h2" align="center">
-                  Your next chapter,
-                  <br />
-                  coming together.
-                </Heading>
-                <Text as="p" size="2" color="gray" align="center">
-                  Your personal itinerary, thoughtful little details,
-                  <br />
-                  and everything in between will live right here.
-                </Text>
-                <Flex gap="2" mt="2" wrap="wrap" justify="center">
-                  {catalog.destinations.slice(0, 3).map((d) => (
-                    <img
-                      key={d.id}
-                      src={d.image}
-                      alt={d.name}
-                      style={{
-                        width: 84,
-                        height: 84,
-                        objectFit: 'cover',
-                        borderRadius: 'var(--radius-3)',
-                      }}
+          ) : (
+            <Flex direction="column" gap="4">
+              {trip?.messages.map((message) => (
+                <ChatTurn
+                  key={message.id}
+                  role={message.role === 'assistant' ? 'assistant' : 'user'}
+                  testId={`${message.role}-message`}
+                  after={
+                    <>
+                      {message.role === 'assistant' &&
+                        message.id === trip.messages.at(-1)?.id &&
+                        !busy && (
+                          <Flex direction="column" gap="2" mt="1" align="start">
+                            {consultationQuestions
+                              .filter((question) => question.suggestions.length)
+                              .map((question) => (
+                                <Box
+                                  key={question.field}
+                                  role="group"
+                                  aria-label={question.question}
+                                >
+                                  <Text as="p" size="1" color="gray" mb="1">
+                                    {question.field === 'hotels'
+                                      ? 'Accommodation'
+                                      : question.field === 'flight_dates'
+                                        ? 'Flight dates'
+                                        : question.field.charAt(0).toUpperCase() +
+                                          question.field.slice(1)}
+                                  </Text>
+                                  <Flex gap="2" wrap="wrap">
+                                    {question.suggestions.slice(0, 4).map((suggestion) => (
+                                      <Button
+                                        key={suggestion}
+                                        type="button"
+                                        size="3"
+                                        variant="soft"
+                                        onClick={() => void send(suggestion)}
+                                      >
+                                        {suggestion}
+                                      </Button>
+                                    ))}
+                                  </Flex>
+                                </Box>
+                              ))}
+                          </Flex>
+                        )}
+                      {message.role === 'assistant' &&
+                        message.id === trip.messages.at(-1)?.id &&
+                        !trip.itinerary.length &&
+                        getConsultation(trip).facts.destination?.valueState !== 'specified' && (
+                          <Flex gap="2" wrap="wrap" mt="1">
+                            {tripDestinations(trip)
+                              .filter((d) => message.content.includes(d.name))
+                              .slice(0, 4)
+                              .map((d) => (
+                                <Button
+                                  key={d.id}
+                                  size="3"
+                                  variant="soft"
+                                  color="gray"
+                                  disabled={busy}
+                                  onClick={() => void send(`Let's go to ${d.name}`)}
+                                >
+                                  <img
+                                    src={d.image}
+                                    alt=""
+                                    style={{
+                                      width: 22,
+                                      height: 22,
+                                      borderRadius: 'var(--radius-1)',
+                                      objectFit: 'cover',
+                                    }}
+                                  />
+                                  {d.name}
+                                  <ArrowRight size={13} />
+                                </Button>
+                              ))}
+                          </Flex>
+                        )}
+                      {message.role === 'assistant' &&
+                        message.id === trip.messages.at(-1)?.id &&
+                        trip.itinerary.length > 0 && (
+                          <Box display={{ initial: 'block', md: 'none' }} mt="1">
+                            <Button
+                              size="3"
+                              variant="soft"
+                              onClick={() => setMobileTab('secondary')}
+                            >
+                              Take a look at your itinerary
+                              <ArrowRight size={14} />
+                            </Button>
+                          </Box>
+                        )}
+                    </>
+                  }
+                >
+                  {message.role === 'assistant' ? (
+                    <ConciergeMessage text={message.content} />
+                  ) : (
+                    <MarkdownText text={message.content} />
+                  )}
+                </ChatTurn>
+              ))}
+              {pending && (
+                <ChatTurn role="user">
+                  <Text as="p" size="2">
+                    {pending}
+                  </Text>
+                </ChatTurn>
+              )}
+              {busy && (
+                <Flex gap="2" align="start">
+                  <TaraAvatar />
+                  <Flex direction="column" gap="1" align="start" flexGrow="1" minWidth="0">
+                    <PlanningProgress
+                      run={run}
+                      cancelling={cancelling}
+                      onCancel={() => void cancel().catch((e) => toast(e.message))}
                     />
-                  ))}
+                  </Flex>
                 </Flex>
-                <Text size="1" color="gray">
-                  A little inspiration. A lot to look forward to.
-                </Text>
+              )}
+            </Flex>
+          )}
+          {error && (
+            <Callout.Root color="red" role="alert" mt="3">
+              <Callout.Icon>
+                <TriangleAlert size={16} />
+              </Callout.Icon>
+              <Callout.Text>{error}</Callout.Text>
+              {retryPrompt && (
+                <Box>
+                  <Button
+                    size="3"
+                    variant="soft"
+                    color="red"
+                    onClick={() => void send(retryPrompt)}
+                  >
+                    Try again <ArrowRight size={12} />
+                  </Button>
+                </Box>
+              )}
+            </Callout.Root>
+          )}
+          <div ref={messagesEnd} />
+        </>
+      }
+      primaryFooter={
+        <Flex
+          direction="column"
+          gap="2"
+          p="3"
+          flexShrink="0"
+          style={{ borderTop: '1px solid var(--gray-a5)' }}
+        >
+          {trip?.itinerary.length && !busy && !consultationQuestions.length ? (
+            <Flex gap="2" wrap="wrap">
+              <Button
+                size="3"
+                variant="soft"
+                color="gray"
+                onClick={() => void send('Make it slower and more relaxing')}
+              >
+                A slower pace
+              </Button>
+              <Button
+                size="3"
+                variant="soft"
+                color="gray"
+                onClick={() => void send('Make the trip more budget friendly')}
+              >
+                A smaller budget
+              </Button>
+              <Button
+                size="3"
+                variant="soft"
+                color="gray"
+                onClick={() => void send('Add more food and culture')}
+              >
+                Follow the food
+              </Button>
+            </Flex>
+          ) : null}
+          {trip &&
+          !trip.itinerary.length &&
+          trip.planning?.questions.length &&
+          !consultationQuestions.length &&
+          !busy &&
+          !loading ? (
+            <Flex gap="2" wrap="wrap">
+              <Button
+                size="3"
+                variant="soft"
+                onClick={() => void send('Continue planning with the trip details I’ve provided.')}
+              >
+                Continue planning <ArrowRight size={12} />
+              </Button>
+            </Flex>
+          ) : null}
+          <Flex
+            asChild
+            align="end"
+            gap="2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send(prompt);
+            }}
+          >
+            <form>
+              <Box flexGrow="1" minWidth="0">
+                <TextArea
+                  size="3"
+                  aria-label="Message Tara"
+                  placeholder={
+                    trip
+                      ? 'A little more adventure? A change of plan?'
+                      : 'Tell Tara a little about your next trip…'
+                  }
+                  value={prompt}
+                  maxLength={4000}
+                  rows={2}
+                  disabled={busy || loading}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                />
+              </Box>
+              <IconButton
+                type="submit"
+                size="3"
+                loading={busy}
+                disabled={busy || loading || !prompt.trim()}
+                aria-label="Send message"
+              >
+                <ArrowUp size={18} />
+              </IconButton>
+            </form>
+          </Flex>
+          <Text as="p" size="1" color="gray">
+            {warning
+              ? warning
+              : integrations.ai
+                ? 'Plans are suggestions. Prices and availability need confirmation.'
+                : 'Curated local planner · Estimated costs · No bookings made'}
+          </Text>
+        </Flex>
+      }
+      secondaryLabel="Your trip itinerary"
+      secondary={
+        <>
+          {trip ? (
+            <ItineraryView trip={trip} onUpdate={setTrip} disabled={busy} />
+          ) : (
+            <Flex
+              direction="column"
+              align="center"
+              justify="center"
+              gap="3"
+              py="9"
+              px="4"
+              height="100%"
+              style={{ minHeight: 550, textAlign: 'center' }}
+            >
+              <Flex align="center" gap="2" style={{ color: 'var(--accent-9)' }}>
+                <Globe2 size={72} strokeWidth={0.8} />
+                <Sparkles size={28} strokeWidth={1} />
               </Flex>
-            )}
-          </section>
-        </Box>
-      </Grid>
-    </Flex>
+              <Text size="1" color="gray" weight="medium">
+                THE BEST PART IS STILL AHEAD
+              </Text>
+              <Heading size="7" as="h2" align="center">
+                Your next chapter,
+                <br />
+                coming together.
+              </Heading>
+              <Text as="p" size="2" color="gray" align="center">
+                Your personal itinerary, thoughtful little details,
+                <br />
+                and everything in between will live right here.
+              </Text>
+              <Flex gap="2" mt="2" wrap="wrap" justify="center">
+                {catalog.destinations.slice(0, 3).map((d) => (
+                  <img
+                    key={d.id}
+                    src={d.image}
+                    alt={d.name}
+                    style={{
+                      width: 84,
+                      height: 84,
+                      objectFit: 'cover',
+                      borderRadius: 'var(--radius-3)',
+                    }}
+                  />
+                ))}
+              </Flex>
+              <Text size="1" color="gray">
+                A little inspiration. A lot to look forward to.
+              </Text>
+            </Flex>
+          )}
+        </>
+      }
+    />
   );
 }
 

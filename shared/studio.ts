@@ -128,6 +128,8 @@ export interface StudioWorkspace {
   proposal: { token: string; publishedAt: string; revision: number } | null;
   createdAt: string;
   updatedAt: string;
+  /** When it was pinned to the top of the recent list; stored beside the document, not in it. */
+  pinnedAt?: string | null;
 }
 export interface StudioClient {
   name: string;

@@ -29,6 +29,23 @@ export function initializeStudioStorage(db: DatabaseSync) {
       structure TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL
     );
   `);
+  /* Pinning is a sidebar preference, not an edit to the proposal: it lives in its own column so
+     it never bumps the revision (an open Studio tab would then hit a save conflict) or the
+     updated_at the recent list is ordered by. Added in place for databases created before it. */
+  const columns = db.prepare('PRAGMA table_info(studio_workspaces)').all();
+  if (!columns.some((column) => column.name === 'pinned_at'))
+    db.exec('ALTER TABLE studio_workspaces ADD COLUMN pinned_at TEXT');
+}
+/** Rows carry `pinned_at` beside the JSON document; it is merged in on read, never stored in it. */
+function readWorkspace(row: Record<string, unknown>): StudioWorkspace {
+  return {
+    ...(JSON.parse(String(row.data)) as StudioWorkspace),
+    pinnedAt: row.pinned_at ? String(row.pinned_at) : null,
+  };
+}
+function documentOf(workspace: StudioWorkspace): string {
+  const { pinnedAt: _pinnedAt, ...document } = workspace;
+  return JSON.stringify(document);
 }
 export function newStudioWorkspace(): StudioWorkspace {
   const now = new Date().toISOString();
@@ -74,9 +91,9 @@ export class StudioStore {
   constructor(public readonly db: DatabaseSync) {}
   get(ownerId: string, id: string): StudioWorkspace | undefined {
     const row = this.db
-      .prepare('SELECT data FROM studio_workspaces WHERE id = ? AND owner_id = ?')
+      .prepare('SELECT data, pinned_at FROM studio_workspaces WHERE id = ? AND owner_id = ?')
       .get(id, ownerId);
-    return row ? (JSON.parse(String(row.data)) as StudioWorkspace) : undefined;
+    return row ? readWorkspace(row) : undefined;
   }
   require(ownerId: string, id: string, revision?: number): StudioWorkspace {
     const workspace = this.get(ownerId, id);
@@ -89,26 +106,29 @@ export class StudioStore {
       );
     return workspace;
   }
+  /** Pinned first (most recently pinned on top), then everything else newest-updated first. */
   list(ownerId: string): StudioWorkspace[] {
     return this.db
       .prepare(
-        'SELECT data FROM studio_workspaces WHERE owner_id = ? ORDER BY updated_at DESC LIMIT 200',
+        `SELECT data, pinned_at FROM studio_workspaces WHERE owner_id = ?
+         ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC LIMIT 200`,
       )
       .all(ownerId)
-      .map((row) => JSON.parse(String(row.data)) as StudioWorkspace);
+      .map(readWorkspace);
+  }
+  setPinned(ownerId: string, id: string, pinned: boolean): StudioWorkspace {
+    this.require(ownerId, id);
+    this.db
+      .prepare('UPDATE studio_workspaces SET pinned_at=? WHERE id=? AND owner_id=?')
+      .run(pinned ? new Date().toISOString() : null, id, ownerId);
+    return this.require(ownerId, id);
   }
   create(ownerId: string, workspace = newStudioWorkspace()): StudioWorkspace {
     this.db
       .prepare(
         'INSERT INTO studio_workspaces (id,owner_id,revision,data,updated_at) VALUES (?,?,?,?,?)',
       )
-      .run(
-        workspace.id,
-        ownerId,
-        workspace.revision,
-        JSON.stringify(workspace),
-        workspace.updatedAt,
-      );
+      .run(workspace.id, ownerId, workspace.revision, documentOf(workspace), workspace.updatedAt);
     return workspace;
   }
   /** A single CAS statement; may be called inside a publication transaction. */
@@ -124,7 +144,7 @@ export class StudioStore {
       )
       .run(
         next.revision,
-        JSON.stringify(next),
+        documentOf(next),
         next.updatedAt,
         workspace.id,
         ownerId,

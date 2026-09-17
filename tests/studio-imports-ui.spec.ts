@@ -71,11 +71,18 @@ async function mockStudioImports(page: Page, accepted = false) {
   return { workspace, previews, saves, arrangements };
 }
 
+// Every way a source can arrive now sits behind the composer's + menu, the same control the
+// home page opens with, so a source affordance is chosen rather than clicked directly.
+async function chooseSource(page: Page, name: string) {
+  await page.getByRole('button', { name: 'Bring in a source' }).click();
+  await page.getByRole('menuitem', { name }).click();
+}
+
 test('pasted email or PNR is editable before private save and never auto-extracts arrangements', async ({
   page,
 }) => {
   const { workspace, previews, saves, arrangements } = await mockStudioImports(page);
-  await page.getByRole('button', { name: 'Paste email / PNR' }).click();
+  await chooseSource(page, 'Paste an email or PNR');
   await page
     .getByLabel('Client email, PNR or travel notes')
     .fill('PNR ABC123\nParis 3 nights, year to confirm.');
@@ -137,9 +144,11 @@ test('microphone denial leaves the typed brief available and sends no audio', as
     });
   });
   const { previews, saves } = await mockStudioImports(page);
-  await page.getByRole('button', { name: 'Dictate', exact: true }).click();
+  await chooseSource(page, 'Dictate');
   await expect(page.getByRole('alert')).toContainText('Microphone access was not available');
-  await expect(page.getByRole('button', { name: 'Paste email / PNR' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Bring in a source' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Paste an email or PNR' })).toBeEnabled();
+  await page.keyboard.press('Escape');
   expect(previews).toHaveLength(0);
   expect(saves).toHaveLength(0);
 });

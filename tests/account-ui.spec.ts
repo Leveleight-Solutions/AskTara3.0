@@ -8,7 +8,8 @@ test('preferences move from a guest into an account, and account name, password 
   const email = `profile-${Date.now()}@example.com`;
   await page.goto('/');
   await chooseSetting(page, 'Travel preferences');
-  let preferences = page.getByRole('dialog', { name: 'Your kind of travel' });
+  await expect(page).toHaveURL(/\/settings\/preferences$/);
+  const preferences = page.getByRole('main');
   await choose(
     page,
     preferences.getByRole('combobox', { name: 'Your pace' }),
@@ -26,16 +27,13 @@ test('preferences move from a guest into an account, and account name, password 
   await preferences.getByLabel('Home airport (optional)').fill('KHI');
   await preferences.getByLabel('Nationality (optional)').fill('PK');
   await preferences.getByRole('button', { name: 'Save preferences' }).click();
-  await expect(preferences).not.toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Your preferences are saved');
   await page.reload();
-  await chooseSetting(page, 'Travel preferences');
-  preferences = page.getByRole('dialog', { name: 'Your kind of travel' });
   await expectChosen(
     preferences.getByRole('combobox', { name: 'Your pace' }),
     'Slow and unhurried',
   );
   await expect(preferences.getByLabel('Food', { exact: true })).toBeChecked();
-  await preferences.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('button', { name: 'Create an account', exact: true }).click();
   const auth = page.getByRole('dialog');
@@ -45,20 +43,16 @@ test('preferences move from a guest into an account, and account name, password 
   await auth.getByRole('button', { name: 'Create your account' }).click();
   await expect(auth).not.toBeVisible();
   await page.getByRole('button', { name: 'Manage account', exact: true }).click();
-  let account = page.getByRole('dialog', { name: 'Your account' });
-  await account.getByRole('button', { name: 'Travel preferences', exact: true }).click();
-  preferences = page.getByRole('dialog', { name: 'Your kind of travel' });
+  await expect(page).toHaveURL(/\/settings\/account$/);
+  const settingsTabs = page.getByRole('navigation', { name: 'Settings sections' });
+  await settingsTabs.getByRole('link', { name: 'Preferences', exact: true }).click();
   await expect(preferences.getByLabel('Home airport (optional)')).toHaveValue('KHI');
   await expect(preferences).toContainText('across devices');
   await preferences.screenshot({ path: 'docs/screenshots/account-preferences.png' });
-  await preferences.getByRole('button', { name: 'Close dialog' }).click();
-  await page.getByRole('button', { name: 'Manage account', exact: true }).click();
-  account = page.getByRole('dialog', { name: 'Your account' });
+  await settingsTabs.getByRole('link', { name: 'Account', exact: true }).click();
+  const account = page.getByRole('main');
   await account.getByLabel('Your name').fill('Avery Traveler');
   await account.getByRole('button', { name: 'Save name' }).click();
-  // Radix Dialog marks background content aria-hidden while a modal is open, so the header is
-  // (correctly) out of the accessibility tree here. Assert via the test id, which is not
-  // a11y-tree based, rather than weakening what is being checked.
   await expect(page.getByTestId('account-button')).toContainText('Avery');
   const downloadPromise = page.waitForEvent('download');
   await account.getByRole('button', { name: 'Download my data' }).click();
@@ -74,7 +68,6 @@ test('preferences move from a guest into an account, and account name, password 
   await account.getByLabel('New password', { exact: true }).fill('updated-password-123');
   await account.getByRole('button', { name: 'Update password', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Password updated');
-  await account.getByRole('button', { name: 'Close dialog' }).click();
   await chooseSetting(page, 'Sign out');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByLabel('Email address').fill(email);
@@ -106,7 +99,8 @@ test('mobile account management revokes other sessions and confirms deletion', a
       .getByRole('navigation', { name: 'Mobile navigation' })
       .getByRole('button', { name: 'Manage account', exact: true })
       .click();
-    const account = page.getByRole('dialog', { name: 'Your account' });
+    await expect(page).toHaveURL(/\/settings\/account$/);
+    const account = page.getByRole('main');
     await expect(account).toContainText('1 other active session.');
     await account.getByLabel('Password to sign out other sessions').fill(credentials.password);
     await account.getByRole('button', { name: 'Sign out other sessions', exact: true }).click();
@@ -125,7 +119,7 @@ test('mobile account management revokes other sessions and confirms deletion', a
       .getByRole('button', { name: 'Permanently delete account', exact: true })
       .click();
     await expect(confirmDelete).not.toBeVisible();
-    await expect(account).not.toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
     expect(
       (await page.request.get('/api/session').then((response) => response.json())).user,
     ).toBeNull();
