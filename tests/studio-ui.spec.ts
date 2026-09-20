@@ -278,6 +278,10 @@ test('route reorder adjusts dates while explicitly fixed arrivals remain pinned 
   workspace.stage = 'structure';
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
+  // Below the md breakpoint the workspace shows one pane at a time and opens on the
+  // conversation, so the canvas has to be asked for before its controls exist.
+  await expect(page.getByRole('tab', { name: 'Chat with Tara' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Working canvas' }).click();
   await page.getByRole('button', { name: 'Move Amsterdam up' }).click();
   await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Amsterdam');
   await expect(page.getByLabel('Arrival in Amsterdam', { exact: true })).toHaveValue('2027-06-01');

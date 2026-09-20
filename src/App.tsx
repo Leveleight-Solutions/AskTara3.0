@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Compass,
@@ -16,14 +16,13 @@ import {
   Luggage,
   PanelLeftClose,
   PanelLeftOpen,
-  Settings2,
+  Settings,
   SlidersHorizontal,
   Building2,
   TicketCheck,
 } from 'lucide-react';
 import {
   Avatar,
-  Badge,
   Box,
   Button,
   Callout,
@@ -41,16 +40,17 @@ import {
 import { api } from './api';
 import type { Catalog, IntegrationStatus, SavedItem, User } from '../shared/types';
 import { AppContext } from './context';
-import { Modal, Spinner, TaraMark } from './components/ui';
+import { Modal, TaraMark } from './components/ui';
 import Home from './pages/Home';
 import { Explore, DestinationDetail, Collection, Saved, NotFound } from './pages/Explore';
 import { Planner, Trips, SharedTrip } from './pages/Planner';
 import Flights from './pages/Flights';
 import { Bookings, NewBooking, BookingDetail } from './pages/Bookings';
-import { AccountDialog, PreferencesDialog } from './components/AccountDialogs';
 import type { TravelProfile } from '../shared/account';
-import type { StudioAgency, StudioWorkspace } from '../shared/studio';
-import { AgencySettings } from './components/StudioProposalControls';
+import { SettingsPage } from './pages/Settings';
+import { TopLoadingBar, useRouteLoading } from './components/TopLoadingBar';
+import { RecentProposalList, useRecentProposals } from './components/RecentProposals';
+import { NAV_ITEM_HEIGHT, SidebarNavItem, rowFill, useRowHover } from './components/SidebarNavItem';
 import Studio from './pages/Studio';
 import StudioProposal from './pages/StudioProposal';
 
@@ -165,16 +165,6 @@ function AuthDialog({
     </Modal>
   );
 }
-/**
- * The Agency settings dialog is fetched on demand, so it has four states rather than a boolean:
- * shut, waiting on `GET /studio/agency`, holding the failure, or holding the record the form edits.
- */
-type AgencyDialogState =
-  | { status: 'closed' }
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; agency: StudioAgency };
-
 export default function App() {
   const location = useLocation();
   if (location.pathname.startsWith('/proposal/'))
@@ -207,9 +197,6 @@ function ConnectedApp() {
     mode: 'local',
   });
   const [auth, setAuth] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
-  const [prefs, setPrefs] = useState(false);
-  const [agencyDialog, setAgencyDialog] = useState<AgencyDialogState>({ status: 'closed' });
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsedPreference);
   const [toastMessage, setToast] = useState('');
@@ -274,21 +261,6 @@ function ConnectedApp() {
     writeCollapsedPreference(collapsed);
   }, [collapsed]);
   const closeAuth = useCallback(() => setAuth(false), []);
-  const closePrefs = useCallback(() => setPrefs(false), []);
-  const closeAgency = useCallback(() => setAgencyDialog({ status: 'closed' }), []);
-  /* The agency record belongs to Studio, not to every page, so the shell does not load it on
-     start: the menu item fetches it when it is chosen, and the dialog carries the wait and the
-     failure itself rather than opening on an empty form. */
-  const openAgency = useCallback(async () => {
-    setAgencyDialog({ status: 'loading' });
-    try {
-      const result = await api<{ agency: StudioAgency }>('/studio/agency');
-      setAgencyDialog({ status: 'ready', agency: result.agency });
-    } catch (cause) {
-      setAgencyDialog({ status: 'error', message: (cause as Error).message });
-    }
-  }, []);
-  const closeAccount = useCallback(() => setAccountOpen(false), []);
   async function toggleSave(type: SavedItem['type'], itemId: string) {
     const key = `${type}:${itemId}`;
     if (pendingSaves.current.has(key)) return;
@@ -309,14 +281,25 @@ function ConnectedApp() {
       pendingSaves.current.delete(key);
     }
   }
+  /* Signed out and sent home first, so the settings page never re-renders against an account that
+     no longer exists. */
+  async function accountDeleted() {
+    ownerChanged();
+    setUser(null);
+    setProfile(null);
+    navigate('/');
+    await Promise.all([refreshSaved(), refreshProfile()]);
+    toast('Your account and saved travel data have been deleted.');
+  }
   async function logout() {
     try {
       await api('/auth/logout', { method: 'POST' });
       ownerChanged();
       setUser(null);
       setProfile(null);
-      await Promise.all([refreshSaved(), refreshProfile()]);
+      // Home first: signing out on an account-only page would otherwise flash its sign-in prompt.
       navigate('/');
+      await Promise.all([refreshSaved(), refreshProfile()]);
       toast('You have been signed out.');
     } catch (e) {
       toast((e as Error).message);
@@ -324,6 +307,9 @@ function ConnectedApp() {
   }
   const isPlanner =
     location.pathname.startsWith('/chat') || location.pathname.startsWith('/studio');
+  /* Home is a single full-screen hero, like Gemini's start page; a footer under it would only add
+     a scroll to a page that has nothing below the fold. */
+  const showFooter = !isPlanner && location.pathname !== '/';
   return (
     <AppContext.Provider
       value={{
@@ -353,9 +339,9 @@ function ConnectedApp() {
           sessionReady={sessionReady}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((value) => !value)}
-          onAccount={() => setAccountOpen(true)}
-          onPreferences={() => setPrefs(true)}
-          onAgencySettings={() => void openAgency()}
+          onAccount={() => navigate('/settings/account')}
+          onPreferences={() => navigate('/settings/preferences')}
+          onAgencySettings={() => navigate('/settings/agency')}
           onSignIn={() => setAuth(true)}
           onSignOut={() => void logout()}
         />
@@ -447,10 +433,7 @@ function ConnectedApp() {
                       size="3"
                       aria-label="Manage account"
                       style={{ width: '100%', justifyContent: 'flex-start' }}
-                      onClick={() => {
-                        setMobile(false);
-                        setAccountOpen(true);
-                      }}
+                      onClick={() => navigate('/settings/account')}
                     >
                       <UserRound size={18} />
                       Manage account
@@ -464,12 +447,9 @@ function ConnectedApp() {
                     size="3"
                     aria-label="Travel preferences"
                     style={{ width: '100%', justifyContent: 'flex-start' }}
-                    onClick={() => {
-                      setMobile(false);
-                      setPrefs(true);
-                    }}
+                    onClick={() => navigate('/settings/preferences')}
                   >
-                    <Settings2 size={18} />
+                    <SlidersHorizontal size={18} />
                     Travel preferences
                   </Button>
                   {user ? (
@@ -540,12 +520,29 @@ function ConnectedApp() {
                   <Route path="/chat" element={<Planner />} />
                   <Route path="/chat/:id" element={<Planner />} />
                   <Route path="/shared/:token" element={<SharedTrip />} />
+                  <Route
+                    path="/settings"
+                    element={<Navigate to="/settings/preferences" replace />}
+                  />
+                  {(['preferences', 'agency', 'account'] as const).map((section) => (
+                    <Route
+                      key={section}
+                      path={`/settings/${section}`}
+                      element={
+                        <SettingsPage
+                          section={section}
+                          onSessionChange={ownerChanged}
+                          onAccountDeleted={accountDeleted}
+                        />
+                      }
+                    />
+                  ))}
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               )}
             </main>
           </Box>
-          {!isPlanner && (
+          {showFooter && (
             <Box
               asChild
               px={{ initial: '4', md: '6' }}
@@ -600,6 +597,7 @@ function ConnectedApp() {
           )}
         </Flex>
       </Flex>
+      <TopLoadingBar />
       {toastMessage && (
         <Box
           position="fixed"
@@ -649,49 +647,6 @@ function ConnectedApp() {
           }}
         />
       )}
-      {prefs && <PreferencesDialog onClose={closePrefs} />}
-      {agencyDialog.status !== 'closed' && (
-        <Modal title="Agency settings" onClose={closeAgency} wide>
-          {agencyDialog.status === 'loading' && <Spinner label="Opening your agency settings…" />}
-          {agencyDialog.status === 'error' && (
-            <Flex direction="column" align="start" gap="3" py="4">
-              <Callout.Root color="red" size="1">
-                <Callout.Text>{agencyDialog.message}</Callout.Text>
-              </Callout.Root>
-              <Button size="3" onClick={() => void openAgency()}>
-                Try again
-                <ArrowRight size={16} />
-              </Button>
-            </Flex>
-          )}
-          {agencyDialog.status === 'ready' && (
-            <AgencySettings
-              agency={agencyDialog.agency}
-              onAgencyUpdate={(agency) => setAgencyDialog({ status: 'ready', agency })}
-              onError={toast}
-            />
-          )}
-        </Modal>
-      )}
-      {accountOpen && user && (
-        <AccountDialog
-          onClose={closeAccount}
-          onPreferences={() => {
-            setAccountOpen(false);
-            setPrefs(true);
-          }}
-          onSessionChange={ownerChanged}
-          onDeleted={async () => {
-            ownerChanged();
-            setUser(null);
-            setAccountOpen(false);
-            setProfile(null);
-            navigate('/');
-            await Promise.all([refreshSaved(), refreshProfile()]);
-            toast('Your account and saved travel data have been deleted.');
-          }}
-        />
-      )}
     </AppContext.Provider>
   );
 }
@@ -723,6 +678,7 @@ function useSlowWait() {
  */
 function ShellLoading() {
   const slow = useSlowWait();
+  useRouteLoading(true);
   return (
     <Flex
       align="center"
@@ -785,12 +741,9 @@ function ShellError({ message, onRetry }: { message: string; onRetry: () => void
  * styles.css must equal there.
  */
 const MOBILE_BAR_HEIGHT = 64;
-const NAV_ITEM_HEIGHT = 40;
 const SIDEBAR_WIDTH = 272;
 const SIDEBAR_COLLAPSED_WIDTH = 72;
 
-/** Five is enough to recognise last week's work and short enough to scan without a scroll. */
-const RECENT_LIMIT = 5;
 const SIDEBAR_STORAGE_KEY = 'asktara:sidebar-collapsed';
 
 /**
@@ -811,50 +764,6 @@ function writeCollapsedPreference(collapsed: boolean) {
   } catch {
     /* A browser that refuses storage still gets a working toggle, just not a remembered one. */
   }
-}
-
-type RecentProposals =
-  | { status: 'loading' }
-  | { status: 'error' }
-  | { status: 'ready'; items: { id: string; title: string }[] };
-
-/**
- * Recent holds proposal workspaces, not trips: the panel's primary action creates a workspace, so
- * the list underneath it is the trail that action leaves, which is exactly the relationship
- * Gemini's Recent has to New chat. The endpoint already returns them newest-updated first. Studio
- * is the only place a workspace is created or renamed, so re-reading on each Studio navigation
- * keeps the list honest without polling from every other route.
- */
-function useRecentProposals(signedIn: boolean, ownerVersion: number): RecentProposals {
-  const location = useLocation();
-  const studioKey = location.pathname.startsWith('/studio') ? location.pathname : '';
-  const [state, setState] = useState<RecentProposals>({ status: 'loading' });
-  useEffect(() => {
-    if (!signedIn) {
-      setState({ status: 'ready', items: [] });
-      return;
-    }
-    let cancelled = false;
-    setState({ status: 'loading' });
-    api<{ workspaces: StudioWorkspace[] }>('/studio/workspaces')
-      .then((result) => {
-        if (cancelled) return;
-        setState({
-          status: 'ready',
-          items: result.workspaces.slice(0, RECENT_LIMIT).map((workspace) => ({
-            id: workspace.id,
-            title: workspace.title.trim() || 'Untitled proposal',
-          })),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: 'error' });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [signedIn, ownerVersion, studioKey]);
-  return state;
 }
 
 /**
@@ -931,12 +840,17 @@ function Sidebar({
             the navigation and the foot still read as four things without the voids between them
             doing the work. */}
         <Flex direction="column" gap="2" p="3" height="100%">
+          {/* The brand gets more air below it than the other blocks (8px gap + 12px = 20px): at
+              the same 8px the logo read as crowded against the primary action. The action then
+              sits a little closer to the navigation (12px) than to the brand, so it groups with
+              what it acts on. */}
           <Flex
             direction={collapsed ? 'column' : 'row'}
             align="center"
             justify="between"
             gap="2"
             flexShrink="0"
+            mb="3"
           >
             {collapsed ? (
               /* Collapsed, the mark is the way back out: pointing at it — or focusing it —
@@ -1036,7 +950,7 @@ function Sidebar({
           )}
           {/* The one region that gives way when the viewport is short, so the brand, the primary
               action and the account stay put at both ends. */}
-          <Box flexGrow="1" style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+          <Box flexGrow="1" mt="1" style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             {/* No gap: the rows stack and each row's own 40px does the separating. See
                 SidebarNavItem for why that is still the right call against the target rule. */}
             <Flex asChild direction="column" gap="0">
@@ -1077,39 +991,7 @@ function Sidebar({
                 />
               </nav>
             </Flex>
-            {user && !collapsed && (
-              /* The break above the section label is what separates Recent from the navigation
-                 now that neither list has gaps inside it; the label itself stays a step smaller
-                 than the rows beneath it so it reads as their heading, not as one of them. */
-              <Box mt="3">
-                <Box px="3" pb="1">
-                  <Text as="div" size="1" weight="medium" color="gray">
-                    Recent proposals
-                  </Text>
-                </Box>
-                <Flex direction="column" gap="0">
-                  {recent.status === 'loading' && (
-                    <SidebarNote>Looking up your recent work…</SidebarNote>
-                  )}
-                  {recent.status === 'error' && (
-                    <SidebarNote>Recent proposals could not be loaded.</SidebarNote>
-                  )}
-                  {recent.status === 'ready' && recent.items.length === 0 && (
-                    <SidebarNote>No proposals yet — the ones you create appear here.</SidebarNote>
-                  )}
-                  {recent.status === 'ready' &&
-                    recent.items.map((item) => (
-                      <SidebarNavItem
-                        key={item.id}
-                        to={`/studio/${item.id}`}
-                        label={item.title}
-                        collapsed={false}
-                        end
-                      />
-                    ))}
-                </Flex>
-              </Box>
-            )}
+            {user && !collapsed && <RecentProposalList recent={recent} />}
           </Box>
           {/* Held back with the primary action: the foot is a different shape signed in and
               signed out, so drawing the wrong one first would move the panel under the pointer. */}
@@ -1253,46 +1135,31 @@ function SidebarSettingsMenu({
   onAccount: () => void;
   onSignOut: () => void;
 }) {
-  /* Every item here opens a dialog, and the shared Modal returns focus to whatever held it when
-     it mounted. A menu item is gone by then, so the gear is put back under focus on the next
-     frame — once the menu has finished unmounting — and only then does the dialog open. Closing
-     it therefore lands back on the control that opened it, as it did when these were buttons. */
-  const trigger = useRef<HTMLButtonElement>(null);
-  const afterClose = (open: () => void) => () =>
-    requestAnimationFrame(() => {
-      trigger.current?.focus();
-      open();
-    });
+  /* The first three items go to their section of the settings page (src/pages/Settings.tsx),
+     so they are navigations, not dialogs. */
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger>
-        <IconButton
-          ref={trigger}
-          variant="soft"
-          color="gray"
-          size="3"
-          aria-label="Settings"
-          title="Settings"
-        >
-          <Settings2 size={18} />
+        <IconButton variant="soft" color="gray" size="3" aria-label="Settings" title="Settings">
+          <Settings size={18} />
         </IconButton>
       </DropdownMenu.Trigger>
       {/* Anchored to the trigger's leading edge so the menu reads the same way on the 272px panel
           and on the 72px rail; Radix flips it above the foot when there is no room below. */}
       <DropdownMenu.Content size="2" align="start">
-        <DropdownMenu.Item onSelect={afterClose(onPreferences)}>
+        <DropdownMenu.Item onSelect={onPreferences}>
           <SlidersHorizontal size={15} aria-hidden="true" /> Travel preferences
         </DropdownMenu.Item>
         {signedIn && (
           <>
-            <DropdownMenu.Item onSelect={afterClose(onAgencySettings)}>
+            <DropdownMenu.Item onSelect={onAgencySettings}>
               <Building2 size={15} aria-hidden="true" /> Agency settings
             </DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={afterClose(onAccount)}>
+            <DropdownMenu.Item onSelect={onAccount}>
               <UserRound size={15} aria-hidden="true" /> Manage account
             </DropdownMenu.Item>
             <DropdownMenu.Separator />
-            <DropdownMenu.Item color="red" onSelect={afterClose(onSignOut)}>
+            <DropdownMenu.Item color="red" onSelect={onSignOut}>
               <LogOut size={15} aria-hidden="true" /> Sign out
             </DropdownMenu.Item>
           </>
@@ -1302,93 +1169,10 @@ function SidebarSettingsMenu({
   );
 }
 
-/** One line of panel prose — the loading, empty and error voices of Recent. */
-function SidebarNote({ children }: { children: ReactNode }) {
-  return (
-    /* Its own vertical padding, because the list it sits in no longer has a gap to give it. */
-    <Box px="3" py="1">
-      <Text as="div" size="1" color="gray">
-        {children}
-      </Text>
-    </Box>
-  );
-}
-
-/**
- * A panel row: 40px tall, stacked directly against its neighbours with no gap between them.
- *
- * The project holds targets to >=40px with >=8px of separation, and these rows deliberately have
- * none. That rule exists to stop mis-taps between small adjacent targets; WCAG 2.5.8 is met by a
- * target's own size, and a full-width row 40px tall and 248px wide is an unambiguous one — there
- * is no sliver of it that a thumb could mistake for its neighbour. Stacked full-width list rows
- * are the standard pattern, and the gap was what made the panel read airy.
- *
- * This applies to full-width stacked rows and nothing else. Every other control in the panel —
- * the account button beside the settings gear, the collapse toggle, the icon buttons on the
- * collapsed rail — still keeps 40px with 8px between them.
- *
- * The active state is a filled, outlined pill plus a heavier weight — the outline and the
- * weight carry it if the tint is not perceived, and every token flips with the appearance.
- * Collapsed, the label leaves the page but not the accessibility tree: it becomes the row's
- * `aria-label` and its tooltip, so the name a test or a screen reader hears is unchanged.
- */
-function SidebarNavItem({
-  to,
-  icon,
-  label,
-  collapsed,
-  badge,
-  end,
-}: {
-  to: string;
-  icon?: ReactNode;
-  label: string;
-  collapsed: boolean;
-  badge?: number;
-  end?: boolean;
-}) {
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      aria-label={collapsed ? label : undefined}
-      title={collapsed ? label : undefined}
-      style={{ textDecoration: 'none' }}
-    >
-      {({ isActive }) => (
-        <Flex
-          align="center"
-          justify={collapsed ? 'center' : 'between'}
-          gap="2"
-          px={collapsed ? '0' : '3'}
-          style={{
-            height: NAV_ITEM_HEIGHT,
-            borderRadius: 'var(--radius-4)',
-            background: isActive ? 'var(--accent-4)' : 'transparent',
-            boxShadow: isActive ? 'inset 0 0 0 1px var(--accent-a7)' : undefined,
-            color: isActive ? 'var(--accent-11)' : 'var(--gray-11)',
-            fontSize: 'var(--font-size-2)',
-            fontWeight: isActive ? 600 : 400,
-          }}
-        >
-          <Flex align="center" gap="3" minWidth="0">
-            {icon}
-            {!collapsed && <Text truncate>{label}</Text>}
-          </Flex>
-          {!collapsed && badge !== undefined && badge > 0 && (
-            <Badge radius="full" variant="solid" style={{ flexShrink: 0 }}>
-              {badge}
-            </Badge>
-          )}
-        </Flex>
-      )}
-    </NavLink>
-  );
-}
-
 function MobileNavItem({ to, icon, label }: { to: string; icon: ReactNode; label: string }) {
+  const { hovered, handlers } = useRowHover();
   return (
-    <NavLink to={to} style={{ textDecoration: 'none' }}>
+    <NavLink {...handlers} to={to} style={{ textDecoration: 'none' }}>
       {({ isActive }) => (
         <Flex
           align="center"
@@ -1397,7 +1181,8 @@ function MobileNavItem({ to, icon, label }: { to: string; icon: ReactNode; label
           style={{
             minHeight: NAV_ITEM_HEIGHT,
             borderRadius: 'var(--radius-3)',
-            background: isActive ? 'var(--accent-4)' : 'transparent',
+            backgroundColor: rowFill(isActive, hovered),
+            transition: 'background-color 120ms ease-out',
             boxShadow: isActive ? 'inset 0 0 0 1px var(--accent-a7)' : undefined,
             color: isActive ? 'var(--accent-11)' : 'var(--gray-12)',
             /* 14px, matching the panel's rows: the drawer is the same navigation at a narrower

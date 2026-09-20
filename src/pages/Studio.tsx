@@ -4,19 +4,24 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  CalendarDays,
   Check,
   ChevronRight,
   CircleAlert,
   CircleDashed,
   GripVertical,
   Lock,
-  MapPin,
+  Maximize2,
+  MessageCircle,
+  Minimize2,
   Minus,
+  PanelsTopLeft,
   Plus,
-  Send,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
+  Users,
 } from 'lucide-react';
 import {
   Badge,
@@ -25,7 +30,6 @@ import {
   Callout,
   Card,
   Checkbox,
-  DataList,
   Flex,
   Grid,
   Heading,
@@ -34,18 +38,30 @@ import {
   Reset,
   Select,
   Separator,
+  Spinner as InlineSpinner,
   Tabs,
   Text,
   TextArea,
   TextField,
+  Tooltip,
 } from '@radix-ui/themes';
 import { api, ApiError, money, readableDate } from '../api';
 import { useApp } from '../context';
 import { Modal, Spinner, TaraMark } from '../components/ui';
+import { useRouteLoading } from '../components/TopLoadingBar';
+import { useComposerLayout } from '../components/useComposerLayout';
 import { StudioImportComposer, type StudioImportMode } from '../components/StudioImportComposer';
-import StudioProposalControls, { AgencySettings } from '../components/StudioProposalControls';
+import StudioProposalControls from '../components/StudioProposalControls';
+import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
+import { useRowHover } from '../components/SidebarNavItem';
+import { AuroraBackground } from '../components/AuroraBackground';
+import { onStudioWorkspaceEvent } from '../studioEvents';
+import { ChatTurn } from '../components/ChatTurn';
+import MarkdownText from '../components/MarkdownText';
 import type {
   StudioAgency,
+  StudioQualification,
+  StudioQuestion,
   StudioBrief,
   StudioClient,
   StudioItem,
@@ -111,6 +127,48 @@ function StructureGateBadge({ accepted, size = '2' }: { accepted: boolean; size?
   );
 }
 
+/* The workspace chrome, compressed into one row so the panes below get the rest of the viewport.
+   Deliberately plain: the stages are words, not a coloured stepper, with the current one darker,
+   and the structure gate is explained in a sentence under the title instead of a status tag. The stages stay an ordered list in a <nav> with
+   `aria-current="step"`, so they still read as steps to assistive tech. */
+function StudioTopBar({
+  workspace,
+  stageIndex,
+}: {
+  workspace: StudioWorkspace;
+  stageIndex: number;
+}) {
+  const gateOpen = workspace.structureAccepted;
+  return (
+    <Flex
+      asChild
+      align="center"
+      gap="4"
+      px={{ initial: '3', md: '4' }}
+      py="2"
+      style={{ borderBottom: '1px solid var(--gray-a5)' }}
+    >
+      {/* A <header> inside <main> is not a banner landmark, so this adds no second banner. */}
+      <header>
+        <IconButton asChild size="2" variant="ghost" color="gray">
+          <Link to="/studio" aria-label="Back to Agent Studio">
+            <ArrowLeft size={16} />
+          </Link>
+        </IconButton>
+        <Flex direction="column" minWidth="0" flexGrow="1">
+          <Heading as="h1" size="3" truncate>
+            {workspace.title}
+          </Heading>
+          <Text size="1" color="gray" truncate>
+            Step {stageIndex + 1} of {stageLabels.length}: {stageLabels[stageIndex]}
+            {!gateOpen && ' · Accept the structure to unlock services'}
+          </Text>
+        </Flex>
+      </header>
+    </Flex>
+  );
+}
+
 export default function Studio() {
   const { id } = useParams();
   const [search] = useSearchParams();
@@ -128,10 +186,20 @@ export default function Studio() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState(search.get('q') || '');
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const composer = useComposerLayout(message);
   const [deleting, setDeleting] = useState<StudioWorkspace | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('structure');
+  const [pane, setPane] = useState<PaneTab>('primary');
+  /* The turn the agent has just sent, held locally until the server echoes it back. Nothing in
+     this app streams, and a brief review can run for a minute or more, so without this the pane
+     simply sits there and the agent cannot tell whether the send landed. */
+  const [pendingTurn, setPendingTurn] = useState('');
+  const logEnd = useRef<HTMLDivElement>(null);
+  const [importRequest, setImportRequest] = useState<{
+    mode: StudioImportMode;
+    nonce: number;
+  } | null>(null);
   const epoch = useRef(0);
   /* The composer moved to the home page, so this index has no field a carried brief could seed.
      Forward rather than silently dropping the text — older links and bookmarks still exist. */
@@ -142,37 +210,72 @@ export default function Studio() {
   }, [id, search, navigate]);
   const latestWorkspace = useRef(workspace);
   latestWorkspace.current = workspace;
+  /* Which account the page's current content, clients and agency belong to. Moving between
+     proposals keeps all three: the open proposal stays on screen, dimmed and inert, until the next
+     one arrives and replaces it in a single render — clearing it first blanked the page to a
+     spinner and back on every click. A different account starts from nothing. */
+  const loadedOwner = useRef<number | null>(null);
+  const [switching, setSwitching] = useState(false);
+  useRouteLoading(loading || switching);
   useEffect(() => {
     const current = ++epoch.current;
-    setLoading(true);
-    setError((location.state as { reviewError?: string } | null)?.reviewError || '');
-    setBusy('');
-    setRouteDirty(false);
-    setWorkspace(null);
-    setWorkspaces([]);
-    setClients([]);
-    setMessage(search.get('q') || '');
+    const sameOwner = loadedOwner.current === ownerVersion;
+    const carriedError = (location.state as { reviewError?: string } | null)?.reviewError || '';
+    const carriedMessage = search.get('q') || '';
+    if (sameOwner) {
+      setSwitching(true);
+    } else {
+      setLoading(true);
+      setError(carriedError);
+      setBusy('');
+      setRouteDirty(false);
+      setWorkspace(null);
+      setWorkspaces([]);
+      setClients([]);
+      setMessage(carriedMessage);
+    }
     void Promise.all([
       id
         ? api<{ workspace: StudioWorkspace }>(`/studio/workspaces/${id}`)
         : api<{ workspaces: StudioWorkspace[] }>('/studio/workspaces'),
-      api<{ clients: StudioClient[] }>('/studio/clients'),
-      api<{ agency: StudioAgency }>('/studio/agency'),
+      // Clients and the agency belong to the account, not the proposal.
+      sameOwner ? null : api<{ clients: StudioClient[] }>('/studio/clients'),
+      sameOwner ? null : api<{ agency: StudioAgency }>('/studio/agency'),
     ])
       .then(([result, clientResult, agencyResult]) => {
         if (current !== epoch.current) return;
         if ('workspace' in result) {
           setWorkspace(result.workspace);
+          setWorkspaces([]);
           setActiveTab(result.workspace.structureAccepted ? 'services' : 'structure');
-        } else setWorkspaces(result.workspaces);
-        setClients(clientResult.clients);
-        setAgency(agencyResult.agency);
+        } else {
+          setWorkspace(null);
+          setWorkspaces(result.workspaces);
+        }
+        if (clientResult) setClients(clientResult.clients);
+        if (agencyResult) setAgency(agencyResult.agency);
+        loadedOwner.current = ownerVersion;
+        if (sameOwner) {
+          setError(carriedError);
+          setBusy('');
+          setRouteDirty(false);
+          setMessage(carriedMessage);
+        }
       })
       .catch((cause: Error) => {
-        if (current === epoch.current) setError(cause.message);
+        if (current !== epoch.current) return;
+        /* A failed switch must not leave the previous proposal on screen under the new address,
+           where an edit would land on the wrong one. */
+        if (sameOwner) {
+          setWorkspace(null);
+          setWorkspaces([]);
+        }
+        setError(cause.message);
       })
       .finally(() => {
-        if (current === epoch.current) setLoading(false);
+        if (current !== epoch.current) return;
+        setLoading(false);
+        setSwitching(false);
       });
     return () => {
       epoch.current++;
@@ -231,15 +334,58 @@ export default function Studio() {
         'Your changes could not be saved. Check the workspace message and try again.',
       );
   };
+  /* One turn, from either source: the agent pressing send, or a brief carried in from the home
+     page. Shows the turn and empties the composer straight away, and hands the words back if it
+     fails, so a failed send never costs the agent what they typed. */
+  async function sendToTara(text: string) {
+    const submittedEpoch = epoch.current;
+    setPendingTurn(text);
+    setMessage('');
+    const sent = await act('Reviewing the brief', async () => {
+      const current = latestWorkspace.current;
+      if (!current) return;
+      const requestKey = JSON.stringify({
+        workspace: current.id,
+        revision: current.revision,
+        message: text,
+      });
+      const requestId = requestIds.current.get(requestKey) || crypto.randomUUID();
+      requestIds.current.set(requestKey, requestId);
+      await mutate('/review', { message: text, requestId });
+      requestIds.current.delete(requestKey);
+    });
+    if (submittedEpoch !== epoch.current) return;
+    setPendingTurn('');
+    if (!sent) setMessage(text);
+  }
+  /* A brief typed on the home page arrives as `?q=`. The home composer navigates the moment the
+     workspace exists rather than waiting out the review, so the review runs here, where there is a
+     conversation to show it in. Fired once per workspace, and the parameter is dropped straight
+     away so a refresh does not send it again. */
+  const autoReviewed = useRef('');
+  useEffect(() => {
+    if (!id || !workspace || loading) return;
+    const carried = search.get('q');
+    if (!carried || autoReviewed.current === id) return;
+    autoReviewed.current = id;
+    navigate(`/studio/${id}`, { replace: true });
+    void sendToTara(carried);
+  }, [id, workspace, loading, search, navigate]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if ((!message.trim() && !workspace?.imports.length) || routeDirty) return;
-    const submittedEpoch = epoch.current;
     const text =
       message.trim() ||
       'Review the imported client information and tell me which details need clarification.';
-    await act('Reviewing the brief', async () => {
-      if (!workspace) {
+    if (workspace) {
+      void sendToTara(text);
+      return;
+    }
+    const submittedEpoch = epoch.current;
+    setPendingTurn(text);
+    setMessage('');
+    const sent = await act('Reviewing the brief', async () => {
+      {
         const result = await api<{ workspace: StudioWorkspace }>('/studio/workspaces', {
           method: 'POST',
           body: '{}',
@@ -263,58 +409,570 @@ export default function Studio() {
         }
         return;
       }
-      const requestKey = JSON.stringify({
-        workspace: workspace.id,
-        revision: workspace.revision,
-        message: text,
-      });
-      const requestId = requestIds.current.get(requestKey) || crypto.randomUUID();
-      requestIds.current.set(requestKey, requestId);
-      await mutate('/review', { message: text, requestId });
-      requestIds.current.delete(requestKey);
-      if (submittedEpoch === epoch.current) setMessage('');
     });
+    if (submittedEpoch !== epoch.current) return;
+    setPendingTurn('');
+    if (!sent) setMessage(text);
   }
   useEffect(() => {
     if (workspace && !workspace.structureAccepted) setActiveTab('structure');
   }, [workspace?.structureAccepted]);
+  /* The log fills the pane now rather than a 430px box, so the newest turn has to be brought to
+     the agent the way the concierge planner does it. */
+  useEffect(() => {
+    logEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [workspace?.messages.length, pendingTurn]);
+  /* Below md only one pane is on screen. A canvas action that drives the composer has to bring the
+     conversation back first — focusing or scrolling to a display:none element does nothing. */
+  function askTara(text: string) {
+    setMessage(text);
+    setPane('primary');
+    requestAnimationFrame(() => document.getElementById('studio-message')?.focus());
+  }
+  function revealImportComposer() {
+    setPane('primary');
+    setImportRequest((current) => ({ mode: 'text', nonce: (current?.nonce ?? 0) + 1 }));
+  }
   const receivedWorkspace = (next: StudioWorkspace) => {
     if (latestWorkspace.current?.id !== next.id || next.revision < latestWorkspace.current.revision)
       return;
     setWorkspace(next);
     setError('');
   };
+  /* Renames, pins and deletes made from the sidebar's Recent menu (src/studioEvents.ts). Taking
+     the renamed workspace keeps this view on the latest revision, so its next save does not
+     conflict; a deleted one drops out of the index. */
+  useEffect(
+    () =>
+      onStudioWorkspaceEvent((event) => {
+        if (event.type === 'deleted') {
+          setWorkspaces((list) => list.filter((item) => item.id !== event.id));
+          return;
+        }
+        const next = event.workspace;
+        const current = latestWorkspace.current;
+        if (current?.id === next.id && next.revision >= current.revision) setWorkspace(next);
+        setWorkspaces((list) => list.map((item) => (item.id === next.id ? next : item)));
+      }),
+    [],
+  );
   if (loading)
     return (
-      <Flex align="center" justify="center" style={{ minHeight: '60vh' }}>
-        <Spinner label="Opening your agent workspace…" />
+      <Flex
+        align="center"
+        justify="center"
+        position={id ? 'relative' : 'static'}
+        style={
+          id
+            ? { height: 'calc(100dvh - var(--app-header-height))', minHeight: 0 }
+            : { minHeight: '60vh' }
+        }
+      >
+        {/* Still the hero's gathered glow, because this is the frame right after leaving it — the
+            workspace behind opens it out once there is a workspace to open it into. */}
+        {id && <AuroraBackground />}
+        <Box position="relative" style={{ zIndex: 1 }}>
+          <Spinner label="Opening your agent workspace…" />
+        </Box>
       </Flex>
     );
   /* Exactly one solid Button is live at a time: the chat composer owns it until a route
      exists, then the canvas action for the open tab owns it. */
   const routeStarted = !!workspace?.stops.length;
   const stageIndex = workspace ? Math.max(0, stages.indexOf(workspace.stage)) : 0;
+  const dialogs = (
+    <>
+      {deleting && (
+        <Modal title="Delete this workspace?" onClose={() => setDeleting(null)}>
+          <Text as="p" size="2" color="gray" mb="4">
+            This removes “{deleting.title}”, its private sources and any published proposal link.
+          </Text>
+          <Flex gap="3" wrap="wrap">
+            <Button
+              size="3"
+              color="red"
+              loading={!!busy}
+              disabled={!!busy}
+              onClick={() =>
+                void act('Deleting workspace', async () => {
+                  await api(`/studio/workspaces/${deleting.id}`, { method: 'DELETE' });
+                  setWorkspaces((current) => current.filter((item) => item.id !== deleting.id));
+                  setDeleting(null);
+                })
+              }
+            >
+              <Trash2 size={15} /> Delete workspace
+            </Button>
+            <Button size="3" variant="soft" color="gray" onClick={() => setDeleting(null)}>
+              Keep workspace
+            </Button>
+          </Flex>
+        </Modal>
+      )}
+    </>
+  );
+  /* The workspace is a room you work in: chrome on top, conversation and canvas side by side,
+     each scrolling on its own. The index below is still an ordinary page. */
+  if (id && workspace)
+    return (
+      <>
+        <SplitWorkspace
+          surface="islands"
+          background={<AuroraBackground variant="spread" />}
+          topBar={
+            <>
+              <StudioTopBar workspace={workspace} stageIndex={stageIndex} />
+              {/* Errors come from both panes, so they belong to neither. Outside both scroll
+                  containers this can never be scrolled out of sight. */}
+              {error && (
+                <Box px={{ initial: '3', md: '4' }} pt="3">
+                  <Callout.Root color="red" role="alert" mb="4">
+                    <Callout.Icon>
+                      <CircleAlert size={16} />
+                    </Callout.Icon>
+                    <Flex align="center" justify="between" gap="4" wrap="wrap" width="100%">
+                      <Callout.Text>{error}</Callout.Text>
+                      <Button size="3" variant="soft" color="red" onClick={() => setError('')}>
+                        Dismiss
+                      </Button>
+                    </Flex>
+                  </Callout.Root>
+                </Box>
+              )}
+            </>
+          }
+          tab={pane}
+          onTabChange={setPane}
+          tabsLabel="Workspace panes"
+          tabs={{
+            primary: { label: 'Chat with Tara', icon: <MessageCircle size={15} /> },
+            secondary: { label: 'Working canvas', icon: <PanelsTopLeft size={15} /> },
+          }}
+          columns={{ initial: '1', md: 'minmax(340px, 38%) minmax(0, 62%)' }}
+          primaryAs="aside"
+          primaryLabel="Planning conversation"
+          primaryPadding="3"
+          primary={
+            <Flex direction="column" gap="3">
+              {/* Standing background about the client reads as the head of the conversation, and
+                  has to sit outside the log: inside it, opening it would be announced as a new
+                  message. */}
+              <Flex align="center" justify="between" gap="2">
+                <Text size="2" weight="medium">
+                  {workspace.brief.clientName
+                    ? `Client brief · ${workspace.brief.clientName}`
+                    : 'Client brief'}
+                </Text>
+                <Button
+                  size="1"
+                  variant="ghost"
+                  color="gray"
+                  disabled={!!busy || routeDirty}
+                  onClick={() => setBriefOpen(true)}
+                >
+                  Edit brief <Settings2 size={13} />
+                </Button>
+              </Flex>
+              {!!workspace.brief.clientName && (
+                <>
+                  <Reset>
+                    <details>
+                      <Reset>
+                        <summary style={{ cursor: 'pointer' }}>
+                          <Text size="2" color="gray">
+                            Background
+                          </Text>
+                        </summary>
+                      </Reset>
+                      <Box mt="2">
+                        <Text as="p" size="2" color="gray">
+                          {workspace.brief.context || 'No background context added yet.'}
+                        </Text>
+                        {clients
+                          .filter(
+                            (c) =>
+                              c.name.toLocaleLowerCase() ===
+                              workspace.brief.clientName.toLocaleLowerCase(),
+                          )
+                          .flatMap((c) => c.previousWorkspaces)
+                          .filter((w) => w.id !== workspace.id)
+                          .map((previous) => (
+                            <Text key={previous.id} size="2" asChild>
+                              <Link
+                                to={`/studio/${previous.id}`}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 'var(--space-1)',
+                                  paddingBlock: 'var(--space-2)',
+                                }}
+                              >
+                                {previous.title} <ChevronRight size={12} />
+                              </Link>
+                            </Text>
+                          ))}
+                        <Text as="p" size="1" color="gray" mt="2">
+                          Confirm the travelling party for every new trip.
+                        </Text>
+                      </Box>
+                    </details>
+                  </Reset>
+                </>
+              )}
+              <Box role="log" aria-live="polite" style={{ overflowWrap: 'anywhere' }}>
+                <Flex direction="column" gap="3">
+                  {!workspace.messages.length && !pendingTurn && (
+                    <Text as="p" size="2" color="gray">
+                      Share the client’s request and what you already know. I’ll review it with you
+                      before we build the route.
+                    </Text>
+                  )}
+                  {workspace.messages.map((item) => (
+                    <ChatTurn key={item.id} role={item.role === 'assistant' ? 'assistant' : 'user'}>
+                      {item.role === 'assistant' ? (
+                        /* Tara's replies carry lists and emphasis; they were being printed with
+                           their markdown showing. */
+                        <MarkdownText text={item.content} />
+                      ) : (
+                        <Text as="p" size="2" style={{ whiteSpace: 'pre-wrap' }}>
+                          {item.content}
+                        </Text>
+                      )}
+                    </ChatTurn>
+                  ))}
+                  {pendingTurn && (
+                    <>
+                      <ChatTurn role="user">
+                        <Text as="p" size="2" style={{ whiteSpace: 'pre-wrap' }}>
+                          {pendingTurn}
+                        </Text>
+                      </ChatTurn>
+                      <ChatTurn role="assistant">
+                        <Flex align="center" gap="2">
+                          <InlineSpinner />
+                          <Text as="p" size="2" color="gray">
+                            {busy || 'Reviewing the brief'}…
+                          </Text>
+                        </Flex>
+                      </ChatTurn>
+                    </>
+                  )}
+                </Flex>
+              </Box>
+              <div ref={logEnd} />
+            </Flex>
+          }
+          primaryFooter={
+            /* The whole composer is one pinned unit: the + menu for every way a brief can arrive,
+               the field, and send — the same pill the home page opens with. */
+            <Flex
+              direction="column"
+              gap="2"
+              p="3"
+              style={{ borderTop: '1px solid var(--gray-a5)' }}
+            >
+              {routeDirty && (
+                <Callout.Root color="amber" size="1">
+                  <Callout.Icon>
+                    <CircleAlert size={16} />
+                  </Callout.Icon>
+                  <Callout.Text>
+                    Save or discard the route edits before asking Tara for another change.
+                  </Callout.Text>
+                </Callout.Root>
+              )}
+              <form onSubmit={submit}>
+                <StudioImportComposer
+                  workspace={workspace}
+                  onChange={receivedWorkspace}
+                  disabled={!!busy || routeDirty}
+                  openMode={importRequest}
+                  stacked={composer.stacked}
+                  corner={
+                    <Tooltip content={composer.expanded ? 'Collapse' : 'Expand'}>
+                      <IconButton
+                        type="button"
+                        size="3"
+                        variant="ghost"
+                        color="gray"
+                        radius="full"
+                        aria-label={
+                          composer.expanded ? 'Collapse message box' : 'Expand message box'
+                        }
+                        aria-expanded={composer.expanded}
+                        onClick={() => composer.setExpanded((value) => !value)}
+                        style={{ margin: 0 }}
+                      >
+                        {composer.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                      </IconButton>
+                    </Tooltip>
+                  }
+                  field={
+                    /* One line at rest; useComposerLayout grows it with the text and switches the
+                       pill to the stacked layout once it wraps. Radix gives a size-3 TextArea an
+                       80px minimum height, which is what made the resting field two lines tall. */
+                    <TextArea
+                      ref={composer.field}
+                      size="3"
+                      id="studio-message"
+                      rows={1}
+                      resize="none"
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                      maxLength={16000}
+                      aria-label={
+                        workspace.messages.length
+                          ? 'Reply or refine the route'
+                          : 'Client request or planning notes'
+                      }
+                      /* Short enough to fit the single-line field in the narrow chat column; the
+                         longer wording wrapped and was cut off. */
+                      placeholder={
+                        workspace.messages.length
+                          ? 'Ask Tara for a change…'
+                          : 'Tell Tara about the trip…'
+                      }
+                      disabled={!!busy || routeDirty}
+                      style={{
+                        background: 'transparent',
+                        boxShadow: 'none',
+                        minHeight: 0,
+                        // The pill draws the focus ring (StudioImportComposer).
+                        outline: 'none',
+                      }}
+                    />
+                  }
+                  send={
+                    <IconButton
+                      type="submit"
+                      size="3"
+                      radius="full"
+                      loading={!!busy}
+                      disabled={
+                        !!busy || routeDirty || (!message.trim() && !workspace.imports.length)
+                      }
+                      /* The name still says which turn this is — it is what the agent is told, and
+                       what the suite asserts on. */
+                      aria-label={
+                        !message.trim() && workspace.imports.length
+                          ? 'Review saved sources'
+                          : workspace.messages.length
+                            ? 'Send to Tara'
+                            : 'Review brief'
+                      }
+                    >
+                      <ArrowUp size={20} />
+                    </IconButton>
+                  }
+                />
+              </form>
+            </Flex>
+          }
+          secondaryLabel="Proposal canvas"
+          secondaryPadding="4"
+          /* Tabs.Root has to enclose both bands so the list stays pinned while the content
+             scrolls under it. */
+          secondaryWrap={(bands) => (
+            <Flex asChild direction="column" flexGrow="1" minHeight="0">
+              <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
+                {bands}
+              </Tabs.Root>
+            </Flex>
+          )}
+          secondaryHeader={
+            <Box px="4" pt="3">
+              <Tabs.List aria-label="Plan details">
+                {['structure', 'services', 'recommendations', 'proposal'].map((tab) => {
+                  const gated = tab !== 'structure' && !workspace.structureAccepted;
+                  return (
+                    <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
+                      <Flex align="center" gap="1">
+                        {gated && <Lock size={12} aria-hidden="true" />}
+                        {tab[0].toUpperCase() + tab.slice(1)}
+                      </Flex>
+                    </Tabs.Trigger>
+                  );
+                })}
+              </Tabs.List>
+            </Box>
+          }
+          secondary={
+            <>
+              <BriefReview
+                workspace={workspace}
+                onAnswer={askTara}
+                onEdit={() => {
+                  if (!routeDirty) setBriefOpen(true);
+                  else setError('Save or discard your route edits before editing the brief.');
+                }}
+              />
+              <Tabs.Content value="structure">
+                <RouteEditor
+                  key={`${workspace.id}:${workspace.revision}`}
+                  workspace={workspace}
+                  disabled={!!busy}
+                  onSave={patch}
+                  onDirty={setRouteDirty}
+                />
+                <Card size="3" mt="5">
+                  {workspace.stage === 'brief' || !workspace.stops.length ? (
+                    <Flex direction="column" gap="3" align="start">
+                      <Text as="p" size="2">
+                        {workspace.stops.length
+                          ? 'Continue with this draft route using what you know. Unconfirmed details stay open.'
+                          : 'Tell Tara the destinations you have in mind, or add and save the first stop above.'}
+                      </Text>
+                      <Button
+                        size="3"
+                        variant={routeStarted && !routeDirty ? 'solid' : 'soft'}
+                        loading={!!busy}
+                        disabled={!!busy || routeDirty || !workspace.stops.length}
+                        onClick={() =>
+                          void act('Drafting the route', async () => {
+                            await mutate('/structure', {
+                              skipQualification: workspace.qualification.questions.length > 0,
+                            });
+                          })
+                        }
+                      >
+                        {workspace.qualification.questions.length
+                          ? 'Skip questions and build structure'
+                          : 'Build route structure'}
+                        <Sparkles size={16} />
+                      </Button>
+                    </Flex>
+                  ) : !workspace.structureAccepted ? (
+                    <Flex direction="column" gap="3" align="start">
+                      <StructureGateBadge accepted={false} />
+                      <Text as="p" size="2">
+                        Review the destinations, nights and dates. Accept this structure when you
+                        are ready to add services.
+                      </Text>
+                      <Flex gap="3" wrap="wrap" align="center">
+                        <Button
+                          size="3"
+                          variant={routeDirty ? 'soft' : 'solid'}
+                          loading={!!busy}
+                          disabled={!!busy || routeDirty}
+                          onClick={() =>
+                            void act('Accepting structure', async () => {
+                              await mutate('/accept-structure', {});
+                              setActiveTab('services');
+                            })
+                          }
+                        >
+                          Accept structure <Check size={16} />
+                        </Button>
+                        <Button
+                          size="3"
+                          variant="soft"
+                          color="gray"
+                          disabled={!!busy || routeDirty}
+                          onClick={() =>
+                            askTara(
+                              'Suggest an alternative route using this brief. Keep the confirmed requirements.',
+                            )
+                          }
+                        >
+                          Ask Tara for another route
+                        </Button>
+                      </Flex>
+                    </Flex>
+                  ) : (
+                    <Callout.Root color="green">
+                      <Callout.Icon>
+                        <Check size={17} />
+                      </Callout.Icon>
+                      <Callout.Text>
+                        Structure accepted. Choose the services or recommendations you want to add.
+                      </Callout.Text>
+                    </Callout.Root>
+                  )}
+                </Card>
+              </Tabs.Content>
+              <Tabs.Content value="services">
+                {workspace.structureAccepted && (
+                  <ServicesPanel
+                    workspace={workspace}
+                    disabled={!!busy}
+                    onSave={patch}
+                    onImport={revealImportComposer}
+                    onChange={receivedWorkspace}
+                  />
+                )}
+              </Tabs.Content>
+              <Tabs.Content value="recommendations">
+                {workspace.structureAccepted && (
+                  <RecommendationsPanel
+                    workspace={workspace}
+                    disabled={!!busy}
+                    onSave={patch}
+                    onGenerate={async (body) => {
+                      await act('Researching recommendations', async () => {
+                        await mutate('/recommendations', {
+                          ...body,
+                          requestId: crypto.randomUUID(),
+                        });
+                      });
+                    }}
+                  />
+                )}
+              </Tabs.Content>
+              <Tabs.Content value="proposal">
+                {workspace.structureAccepted && agency && (
+                  <StudioProposalControls
+                    workspace={workspace}
+                    agency={agency}
+                    onUpdate={receivedWorkspace}
+                    onAgencyUpdate={setAgency}
+                    onError={setError}
+                  />
+                )}
+              </Tabs.Content>
+            </>
+          }
+        />
+        {briefOpen && (
+          <BriefDialog
+            workspace={workspace}
+            clients={clients}
+            onClose={() => setBriefOpen(false)}
+            onSave={async (brief, title) => {
+              await patch({ brief, title });
+              setBriefOpen(false);
+            }}
+          />
+        )}
+        {dialogs}
+      </>
+    );
   return (
-    <Box asChild maxWidth="1600px" mx="auto" px={{ initial: '4', sm: '6' }} pt="6" pb="9">
-      <section>
-        <Flex align="start" justify="between" gap="4" wrap="wrap" mb="5">
-          <Box>
-            <Text size="1" color="gray" asChild>
-              <Link
-                to="/studio"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}
-              >
-                <ArrowLeft size={15} /> Agent Studio
-              </Link>
-            </Text>
-            <Heading as="h1" size="7" mt="2">
-              {workspace?.title || 'Every proposal, in one place.'}
-            </Heading>
-          </Box>
-          <Button size="3" variant="soft" color="gray" onClick={() => setSettingsOpen(true)}>
-            <Settings2 size={16} /> Agency settings
-          </Button>
-        </Flex>
+    <Box
+      asChild
+      maxWidth="1600px"
+      mx="auto"
+      px={{ initial: '4', sm: '6' }}
+      pt="6"
+      pb="9"
+      style={{
+        /* Mid-switch the outgoing proposal is still painted, so it is dimmed and made inert:
+           nothing on it can be edited while the next one is on its way. The 120ms delay keeps a
+           fast switch from blinking the page. */
+        opacity: switching ? 0.6 : 1,
+        transition: switching ? 'opacity 160ms ease 120ms' : 'opacity 120ms ease',
+      }}
+    >
+      <section inert={switching} aria-busy={switching || undefined}>
+        {/* Agency settings live on the settings page (/settings/agency), not here. */}
+        <Heading as="h1" size="7" mb="5">
+          Every proposal, in one place.
+        </Heading>
         {error && (
           <Callout.Root color="red" role="alert" mb="4">
             <Callout.Icon>
@@ -328,10 +986,11 @@ export default function Studio() {
             </Flex>
           </Callout.Root>
         )}
-        {!workspace && !id ? (
-          /* The index, and only the index: every proposal an agent has started, with its stage,
-             when it last moved and a way to remove it. A proposal now begins in the one composer
-             on the home page, so this page no longer offers a second one. */
+        {id ? (
+          <Text as="p" size="2" color="gray">
+            This workspace could not be loaded. <Link to="/studio">Return to Agent Studio.</Link>
+          </Text>
+        ) : (
           <Box maxWidth="1040px" mx="auto" my="7">
             <Box asChild>
               <section>
@@ -401,421 +1060,138 @@ export default function Studio() {
               </section>
             </Box>
           </Box>
-        ) : workspace ? (
-          <>
-            <Card size="2" mb="4">
-              <Flex direction="column" gap="3">
-                <Flex align="center" justify="between" gap="3" wrap="wrap">
-                  <Text size="2" weight="medium">
-                    Step {stageIndex + 1} of {stageLabels.length} · {stageLabels[stageIndex]}
-                  </Text>
-                  <StructureGateBadge accepted={workspace.structureAccepted} />
-                </Flex>
-                <Flex asChild align="center" gap="2" wrap="wrap">
-                  <nav aria-label="Workspace stages">
-                    {stageLabels.map((label, index) => {
-                      const current = workspace.stage === stages[index];
-                      const done = index < stageIndex;
-                      return (
-                        <Flex
-                          key={label}
-                          align="center"
-                          gap="2"
-                          aria-current={current ? 'step' : undefined}
-                        >
-                          <Badge
-                            size="2"
-                            variant={current ? 'solid' : 'soft'}
-                            color={done ? 'green' : current ? undefined : 'gray'}
-                          >
-                            {done ? <Check size={12} aria-hidden="true" /> : index + 1} {label}
-                          </Badge>
-                          {index < 4 && <Separator orientation="horizontal" size="1" />}
-                        </Flex>
-                      );
-                    })}
-                  </nav>
-                </Flex>
-              </Flex>
-            </Card>
-            <Grid
-              columns={{ initial: '1', md: 'minmax(290px, 370px) minmax(0, 1fr)' }}
-              gap="5"
-              align="start"
-            >
-              <Box asChild position={{ initial: 'static', md: 'sticky' }} top="5">
-                <aside aria-label="Planning conversation">
-                  <Card size="2">
-                    <Flex direction="column" gap="3">
-                      <Flex align="center" gap="3">
-                        <TaraMark size={23} />
-                        <Box flexGrow="1">
-                          <Heading as="h2" size="3">
-                            Work with Tara
-                          </Heading>
-                          <Text size="1" color="gray">
-                            One layer at a time.
-                          </Text>
-                        </Box>
-                        <IconButton
-                          size="3"
-                          variant="soft"
-                          color="gray"
-                          aria-label="Edit client brief"
-                          onClick={() => setBriefOpen(true)}
-                          disabled={!!busy || routeDirty}
-                        >
-                          <Settings2 size={18} />
-                        </IconButton>
-                      </Flex>
-                      <Separator size="4" />
-                      <Box
-                        role="log"
-                        aria-live="polite"
-                        maxHeight="430px"
-                        overflowY="auto"
-                        style={{ overflowWrap: 'anywhere' }}
-                      >
-                        <Flex direction="column" gap="3">
-                          {!workspace.messages.length && (
-                            <Text as="p" size="2" color="gray">
-                              Share the client’s request and what you already know. I’ll review it
-                              with you before we build the route.
-                            </Text>
-                          )}
-                          {workspace.messages.map((item) => (
-                            <Card
-                              asChild
-                              key={item.id}
-                              size="1"
-                              variant={item.role === 'user' ? 'classic' : 'surface'}
-                              ml={item.role === 'user' ? '4' : '0'}
-                            >
-                              <article>
-                                <Text as="div" size="1" weight="bold" color="gray">
-                                  {item.role === 'assistant' ? 'Tara' : 'You'}
-                                </Text>
-                                <Text as="p" size="2" mt="1" style={{ whiteSpace: 'pre-wrap' }}>
-                                  {item.content}
-                                </Text>
-                              </article>
-                            </Card>
-                          ))}
-                        </Flex>
-                      </Box>
-                      <form onSubmit={submit}>
-                        <Flex direction="column" gap="2">
-                          <Text as="label" htmlFor="studio-message" size="2" weight="medium">
-                            {workspace.messages.length
-                              ? 'Reply or refine the route'
-                              : 'Client request or planning notes'}
-                          </Text>
-                          <TextArea
-                            size="3"
-                            id="studio-message"
-                            rows={4}
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            maxLength={16000}
-                            placeholder="Tell me about the trip, or ask for a change…"
-                            disabled={!!busy || routeDirty}
-                          />
-                          <Button
-                            size="3"
-                            variant={routeStarted ? 'soft' : 'solid'}
-                            loading={!!busy}
-                            disabled={
-                              !!busy || routeDirty || (!message.trim() && !workspace.imports.length)
-                            }
-                          >
-                            {busy ||
-                              (!message.trim() && workspace.imports.length
-                                ? 'Review saved sources'
-                                : workspace.messages.length
-                                  ? 'Send to Tara'
-                                  : 'Review brief')}
-                            <Send size={15} />
-                          </Button>
-                        </Flex>
-                      </form>
-                      {routeDirty && (
-                        <Callout.Root color="amber" size="1">
-                          <Callout.Icon>
-                            <CircleAlert size={16} />
-                          </Callout.Icon>
-                          <Callout.Text>
-                            Save or discard the route edits before asking Tara for another change.
-                          </Callout.Text>
-                        </Callout.Root>
-                      )}
-                      <StudioImportComposer
-                        workspace={workspace}
-                        onChange={receivedWorkspace}
-                        disabled={!!busy || routeDirty}
-                      />
-                      {!!workspace.brief.clientName && (
-                        <>
-                          <Separator size="4" />
-                          <Reset>
-                            <details>
-                              <Reset>
-                                <summary style={{ cursor: 'pointer' }}>
-                                  <Text size="2" weight="medium">
-                                    Client context · {workspace.brief.clientName}
-                                  </Text>
-                                </summary>
-                              </Reset>
-                              <Box mt="2">
-                                <Text as="p" size="2" color="gray">
-                                  {workspace.brief.context || 'No background context added yet.'}
-                                </Text>
-                                {clients
-                                  .filter(
-                                    (c) =>
-                                      c.name.toLocaleLowerCase() ===
-                                      workspace.brief.clientName.toLocaleLowerCase(),
-                                  )
-                                  .flatMap((c) => c.previousWorkspaces)
-                                  .filter((w) => w.id !== workspace.id)
-                                  .map((previous) => (
-                                    <Text key={previous.id} size="2" asChild>
-                                      <Link
-                                        to={`/studio/${previous.id}`}
-                                        style={{
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: 'var(--space-1)',
-                                          paddingBlock: 'var(--space-2)',
-                                        }}
-                                      >
-                                        {previous.title} <ChevronRight size={12} />
-                                      </Link>
-                                    </Text>
-                                  ))}
-                                <Text as="p" size="1" color="gray" mt="2">
-                                  Confirm the travelling party for every new trip.
-                                </Text>
-                              </Box>
-                            </details>
-                          </Reset>
-                        </>
-                      )}
-                    </Flex>
-                  </Card>
-                </aside>
-              </Box>
-              <Box minWidth="0">
-                <BriefReview
-                  workspace={workspace}
-                  onAnswer={setMessage}
-                  onEdit={() => {
-                    if (!routeDirty) setBriefOpen(true);
-                    else setError('Save or discard your route edits before editing the brief.');
-                  }}
-                />
-                <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
-                  <Tabs.List aria-label="Plan details">
-                    {['structure', 'services', 'recommendations', 'proposal'].map((tab) => {
-                      const gated = tab !== 'structure' && !workspace.structureAccepted;
-                      return (
-                        <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
-                          <Flex align="center" gap="1">
-                            {gated && <Lock size={12} aria-hidden="true" />}
-                            {tab[0].toUpperCase() + tab.slice(1)}
-                          </Flex>
-                        </Tabs.Trigger>
-                      );
-                    })}
-                  </Tabs.List>
-                  <Box pt="4">
-                    <Tabs.Content value="structure">
-                      <RouteEditor
-                        key={`${workspace.id}:${workspace.revision}`}
-                        workspace={workspace}
-                        disabled={!!busy}
-                        onSave={patch}
-                        onDirty={setRouteDirty}
-                      />
-                      <Card size="3" mt="5">
-                        {workspace.stage === 'brief' || !workspace.stops.length ? (
-                          <Flex direction="column" gap="3" align="start">
-                            <Text as="p" size="2">
-                              {workspace.stops.length
-                                ? 'Continue with this draft route using what you know. Unconfirmed details stay open.'
-                                : 'Tell Tara the destinations you have in mind, or add and save the first stop above.'}
-                            </Text>
-                            <Button
-                              size="3"
-                              variant={routeStarted && !routeDirty ? 'solid' : 'soft'}
-                              loading={!!busy}
-                              disabled={!!busy || routeDirty || !workspace.stops.length}
-                              onClick={() =>
-                                void act('Drafting the route', async () => {
-                                  await mutate('/structure', {
-                                    skipQualification: workspace.qualification.questions.length > 0,
-                                  });
-                                })
-                              }
-                            >
-                              {workspace.qualification.questions.length
-                                ? 'Skip questions and build structure'
-                                : 'Build route structure'}
-                              <Sparkles size={16} />
-                            </Button>
-                          </Flex>
-                        ) : !workspace.structureAccepted ? (
-                          <Flex direction="column" gap="3" align="start">
-                            <StructureGateBadge accepted={false} />
-                            <Text as="p" size="2">
-                              Review the destinations, nights and dates. Accept this structure when
-                              you are ready to add services.
-                            </Text>
-                            <Flex gap="3" wrap="wrap" align="center">
-                              <Button
-                                size="3"
-                                variant={routeDirty ? 'soft' : 'solid'}
-                                loading={!!busy}
-                                disabled={!!busy || routeDirty}
-                                onClick={() =>
-                                  void act('Accepting structure', async () => {
-                                    await mutate('/accept-structure', {});
-                                    setActiveTab('services');
-                                  })
-                                }
-                              >
-                                Accept structure <Check size={16} />
-                              </Button>
-                              <Button
-                                size="3"
-                                variant="soft"
-                                color="gray"
-                                disabled={!!busy || routeDirty}
-                                onClick={() => {
-                                  setMessage(
-                                    'Suggest an alternative route using this brief. Keep the confirmed requirements.',
-                                  );
-                                  document.getElementById('studio-message')?.focus();
-                                }}
-                              >
-                                Ask Tara for another route
-                              </Button>
-                            </Flex>
-                          </Flex>
-                        ) : (
-                          <Callout.Root color="green">
-                            <Callout.Icon>
-                              <Check size={17} />
-                            </Callout.Icon>
-                            <Callout.Text>
-                              Structure accepted. Choose the services or recommendations you want to
-                              add.
-                            </Callout.Text>
-                          </Callout.Root>
-                        )}
-                      </Card>
-                    </Tabs.Content>
-                    <Tabs.Content value="services">
-                      {workspace.structureAccepted && (
-                        <ServicesPanel
-                          workspace={workspace}
-                          disabled={!!busy}
-                          onSave={patch}
-                          onImport={() =>
-                            document
-                              .getElementById('studio-import-composer')
-                              ?.scrollIntoView({ behavior: 'smooth' })
-                          }
-                          onChange={receivedWorkspace}
-                        />
-                      )}
-                    </Tabs.Content>
-                    <Tabs.Content value="recommendations">
-                      {workspace.structureAccepted && (
-                        <RecommendationsPanel
-                          workspace={workspace}
-                          disabled={!!busy}
-                          onSave={patch}
-                          onGenerate={async (body) => {
-                            await act('Researching recommendations', async () => {
-                              await mutate('/recommendations', {
-                                ...body,
-                                requestId: crypto.randomUUID(),
-                              });
-                            });
-                          }}
-                        />
-                      )}
-                    </Tabs.Content>
-                    <Tabs.Content value="proposal">
-                      {workspace.structureAccepted && agency && (
-                        <StudioProposalControls
-                          workspace={workspace}
-                          agency={agency}
-                          onUpdate={receivedWorkspace}
-                          onAgencyUpdate={setAgency}
-                          onError={setError}
-                        />
-                      )}
-                    </Tabs.Content>
-                  </Box>
-                </Tabs.Root>
-              </Box>
-            </Grid>
-            {briefOpen && (
-              <BriefDialog
-                workspace={workspace}
-                clients={clients}
-                onClose={() => setBriefOpen(false)}
-                onSave={async (brief, title) => {
-                  await patch({ brief, title });
-                  setBriefOpen(false);
-                }}
-              />
-            )}
-          </>
-        ) : (
-          <Text as="p" size="2" color="gray">
-            This workspace could not be loaded. <Link to="/studio">Return to Agent Studio.</Link>
-          </Text>
         )}
-        {deleting && (
-          <Modal title="Delete this workspace?" onClose={() => setDeleting(null)}>
-            <Text as="p" size="2" color="gray" mb="4">
-              This removes “{deleting.title}”, its private sources and any published proposal link.
-            </Text>
-            <Flex gap="3" wrap="wrap">
-              <Button
-                size="3"
-                color="red"
-                loading={!!busy}
-                disabled={!!busy}
-                onClick={() =>
-                  void act('Deleting workspace', async () => {
-                    await api(`/studio/workspaces/${deleting.id}`, { method: 'DELETE' });
-                    setWorkspaces((current) => current.filter((item) => item.id !== deleting.id));
-                    setDeleting(null);
-                  })
-                }
-              >
-                <Trash2 size={15} /> Delete workspace
-              </Button>
-              <Button size="3" variant="soft" color="gray" onClick={() => setDeleting(null)}>
-                Keep workspace
-              </Button>
-            </Flex>
-          </Modal>
-        )}
-        {settingsOpen && (
-          <Modal title="Agency settings" onClose={() => setSettingsOpen(false)} wide>
-            {agency && (
-              <AgencySettings agency={agency} onAgencyUpdate={setAgency} onError={setError} />
-            )}
-          </Modal>
-        )}
+        {dialogs}
       </section>
     </Box>
   );
 }
+/* The server builds each fact as a display string, which keeps its shape simple but leaves dates
+   as ISO and money as a bare code and number. Presentation belongs here, where the app's own
+   formatters live, so the card reads the way the rest of the app does rather than the way the
+   record is stored. Anything unrecognised is passed through untouched. */
+function factValue(id: string, value: string): string {
+  if (id === 'startDate' || id === 'endDate') return readableDate(value) || value;
+  if (id === 'route') return value.split(' → ').map(titleCase).join(' → ');
+  if (id === 'budget') {
+    const [currency, amount] = value.split(' ');
+    const total = Number(amount);
+    return currency && Number.isFinite(total) ? money(total, currency) : value;
+  }
+  if (id === 'hotelStandard') return /^\d+$/.test(value.trim()) ? `${value.trim()}-star` : value;
+  if (id === 'hotelLocation' || id === 'cabin') return titleCase(value);
+  return value;
+}
+const titleCase = (value: string) =>
+  value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase()).trim();
+
+/* One open question. The question and its reason are a single thing to act on, so the whole row
+   is the target: the old ghost button highlighted only the question text and left the reason
+   sitting outside the tint, which read as a stray box rather than a row.
+
+   The wash is the neutral grey `SidebarNavItem` uses, not an accent one — this app reserves the
+   accent tint for "you are here", and a hovered question is not a selected question. */
+function QuestionRow({ question, onAsk }: { question: StudioQuestion; onAsk: () => void }) {
+  const { hovered, handlers } = useRowHover();
+  return (
+    <Reset>
+      <button
+        type="button"
+        {...handlers}
+        onClick={onAsk}
+        style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
+      >
+        <Flex
+          align="start"
+          gap="3"
+          p="2"
+          style={{
+            borderRadius: 'var(--radius-3)',
+            backgroundColor: hovered ? 'var(--gray-a3)' : 'transparent',
+            transition: 'background-color 120ms ease-out',
+          }}
+        >
+          <Box flexGrow="1" minWidth="0">
+            <Text as="div" size="2" weight="medium" style={{ color: 'var(--accent-11)' }}>
+              {question.label}
+            </Text>
+            <Text as="div" size="1" color="gray" mt="1">
+              {question.reason}
+            </Text>
+          </Box>
+          {/* Says what the click does. These read as links but they do not navigate — they put
+              the question in the composer for the agent to answer. */}
+          <Box
+            flexShrink="0"
+            mt="1"
+            style={{
+              color: hovered ? 'var(--gray-11)' : 'var(--gray-8)',
+              transition: 'color 120ms ease-out',
+            }}
+          >
+            <MessageCircle size={14} aria-hidden="true" />
+          </Box>
+        </Flex>
+      </button>
+    </Reset>
+  );
+}
+
+/* Twelve facts read as a list of twelve unrelated things. Three groups read as what an agent
+   actually holds in their head: when the trip is, who is going, and what they like. The icons are
+   the ones the home page already uses for dates and party, so the vocabulary is one app's, not
+   this card's. Anything the map does not name falls into trip details rather than disappearing. */
+const FACT_GROUPS = [
+  {
+    id: 'trip',
+    label: 'Trip details',
+    icon: CalendarDays,
+    ids: ['route', 'startDate', 'dates', 'endDate', 'nights', 'budget'],
+  },
+  { id: 'party', label: 'Travellers', icon: Users, ids: ['adults', 'children', 'childAges'] },
+  {
+    id: 'preferences',
+    label: 'Preferences',
+    icon: SlidersHorizontal,
+    ids: ['hotelStandard', 'hotelLocation', 'cabin', 'preferences'],
+  },
+];
+const groupedFacts = (known: StudioQualification['known']) => {
+  const placed = new Set(FACT_GROUPS.flatMap((group) => group.ids));
+  return FACT_GROUPS.map((group) => ({
+    ...group,
+    facts: known.filter(
+      (fact) => group.ids.includes(fact.id) || (group.id === 'trip' && !placed.has(fact.id)),
+    ),
+  })).filter((group) => group.facts.length);
+};
+
+/* The one line the collapsed card has to earn its place with: where, when, and who. Counts are
+   spelled out — "3 · 3" is not a party, and the labels are the half that carries the meaning once
+   the table they came from is closed. */
+function briefSummary(known: StudioQualification['known']): string {
+  const value = (id: string) => known.find((fact) => fact.id === id)?.value;
+  const parts: string[] = [];
+  const route = value('route');
+  if (route) parts.push(factValue('route', route));
+  const start = value('startDate');
+  const end = value('endDate');
+  const nights = value('nights');
+  if (start && end) parts.push(`${readableDate(start)} – ${readableDate(end)}`);
+  else if (nights) parts.push(nights);
+  else if (start) parts.push(readableDate(start));
+  else if (value('dates')) parts.push('Flexible dates');
+  const party: string[] = [];
+  const adults = Number(value('adults'));
+  const children = Number(value('children'));
+  if (Number.isFinite(adults) && adults > 0)
+    party.push(`${adults} adult${adults === 1 ? '' : 's'}`);
+  if (Number.isFinite(children) && children > 0)
+    party.push(`${children} ${children === 1 ? 'child' : 'children'}`);
+  if (party.length) parts.push(party.join(', '));
+  return parts.join(' · ');
+}
+
 function BriefReview({
   workspace,
   onAnswer,
@@ -826,32 +1202,135 @@ function BriefReview({
   onEdit: () => void;
 }) {
   const { qualification } = workspace;
+  /* Nothing left to ask and nothing left to fill in: the card has become a receipt, so it steps
+     out of the way of the route below it and keeps a line you can open when you want to check
+     something. The same move the questions list already makes once the structure is accepted. */
+  const settled = !qualification.questions.length && qualification.score >= 100;
+  const summary = briefSummary(qualification.known);
+  const facts = !!qualification.known.length && (
+    /* One column left most of a wide canvas empty; grouped columns turn twelve rows into three
+       short lists an agent can scan by heading. The tick is a sibling of the label and value, not
+       a child of the label — inside it, it indented the label by its own width while the value
+       stayed flush, giving every entry a ragged left edge. */
+    <Grid columns={{ initial: '1', md: '2', lg: '3' }} gapX="6" gapY="5" mt="4">
+      {groupedFacts(qualification.known).map((group) => (
+        <Box asChild key={group.id}>
+          <section aria-label={group.label}>
+            <Flex align="center" gap="2" mb="1">
+              <Box flexShrink="0" style={{ color: 'var(--gray-11)' }}>
+                <group.icon size={15} aria-hidden="true" />
+              </Box>
+              <Text size="2" weight="medium">
+                {group.label}
+              </Text>
+            </Flex>
+            <Flex asChild direction="column">
+              <dl style={{ margin: 0 }}>
+                {group.facts.map((fact, index) => (
+                  <Flex
+                    key={fact.id}
+                    asChild
+                    gap="2"
+                    align="start"
+                    py="2"
+                    style={{ borderTop: index ? '1px solid var(--gray-a3)' : undefined }}
+                  >
+                    {/* A <div> wrapping each dt/dd pair is valid inside a <dl> and is what lets
+                        the tick sit beside the pair instead of inside the term. */}
+                    <div>
+                      <Flex
+                        align="center"
+                        justify="center"
+                        flexShrink="0"
+                        mt="1"
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: '100%',
+                          background: 'var(--green-a3)',
+                          color: 'var(--green-11)',
+                        }}
+                      >
+                        <Check size={10} strokeWidth={3} aria-hidden="true" />
+                      </Flex>
+                      <Box minWidth="0">
+                        <Text size="1" color="gray" asChild>
+                          <dt>{fact.label}</dt>
+                        </Text>
+                        <Text size="2" weight="medium" asChild>
+                          <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
+                            {factValue(fact.id, fact.value)}
+                          </dd>
+                        </Text>
+                      </Box>
+                    </div>
+                  </Flex>
+                ))}
+              </dl>
+            </Flex>
+          </section>
+        </Box>
+      ))}
+    </Grid>
+  );
+  const header = (
+    <Flex align="center" justify="between" gap="3" wrap="wrap">
+      <Box>
+        <Text size="1" color="gray">
+          Brief review
+        </Text>
+        <Heading as="h2" size={settled ? '4' : '6'} mt="1">
+          {qualification.score >= 80
+            ? 'A clear starting point.'
+            : qualification.score >= 40
+              ? 'Taking shape.'
+              : 'Let’s find the starting point.'}
+        </Heading>
+      </Box>
+      <Flex align="center" gap="3">
+        <Badge
+          size="2"
+          variant="soft"
+          color={qualification.score >= 80 ? 'green' : qualification.score >= 40 ? 'blue' : 'gray'}
+        >
+          {qualification.score}% complete
+        </Badge>
+      </Flex>
+    </Flex>
+  );
+  if (settled)
+    return (
+      <Card asChild size="3" mb="4">
+        <section aria-label="Brief review">
+          <Reset>
+            <details>
+              <Reset>
+                <summary style={{ cursor: 'pointer' }}>
+                  {header}
+                  {!!summary && (
+                    <Text as="p" size="2" color="gray" mt="1">
+                      {summary}
+                    </Text>
+                  )}
+                </summary>
+              </Reset>
+              {facts}
+              <Box mt="4">
+                <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
+                  Edit brief details <Settings2 size={13} />
+                </Button>
+              </Box>
+            </details>
+          </Reset>
+        </section>
+      </Card>
+    );
   return (
     <Card asChild size="3" mb="4">
       <section aria-label="Brief review">
-        <Flex align="start" justify="between" gap="3" wrap="wrap">
-          <Box>
-            <Text size="1" color="gray">
-              Brief review
-            </Text>
-            <Heading as="h2" size="6" mt="1">
-              {qualification.score >= 80
-                ? 'A clear starting point.'
-                : qualification.score >= 40
-                  ? 'Taking shape.'
-                  : 'Let’s find the starting point.'}
-            </Heading>
-          </Box>
-          <Badge
-            size="2"
-            variant="soft"
-            color={
-              qualification.score >= 80 ? 'green' : qualification.score >= 40 ? 'blue' : 'gray'
-            }
-          >
-            {qualification.score}% complete
-          </Badge>
-        </Flex>
+        {header}
+        {/* Only while there is distance left to show. At 100% a full accent bar is the loudest
+            thing on a card whose whole message is that there is nothing to do. */}
         <Box mt="3">
           <Progress
             size="3"
@@ -860,25 +1339,7 @@ function BriefReview({
             aria-label="Brief completeness"
           />
         </Box>
-        {!!qualification.known.length && (
-          <DataList.Root mt="4" orientation={{ initial: 'vertical', sm: 'horizontal' }}>
-            {qualification.known.map((fact) => (
-              <DataList.Item key={fact.id}>
-                <DataList.Label minWidth="140px">
-                  <Flex align="center" gap="1">
-                    <Check size={13} aria-hidden="true" />
-                    {fact.label}
-                  </Flex>
-                </DataList.Label>
-                <DataList.Value>
-                  <Text size="2" style={{ overflowWrap: 'anywhere' }}>
-                    {fact.value}
-                  </Text>
-                </DataList.Value>
-              </DataList.Item>
-            ))}
-          </DataList.Root>
-        )}
+        {facts}
         {!!qualification.questions.length && (
           <Box mt="4">
             <Reset>
@@ -893,35 +1354,23 @@ function BriefReview({
                   </summary>
                 </Reset>
                 {/* The list's own `margin: 0` reset beats Radix's `mt` utility class, so the
-                    space below the summary has to be set inline. It clears the ghost buttons'
-                    own negative margins, which would otherwise let the first question's hover
-                    box overlap the summary above it. */}
-                <Grid asChild gap="5">
+                    space below the summary has to be set inline. Two columns halve a run that
+                    reached seven questions in a single narrow strip. */}
+                <Grid asChild columns={{ initial: '1', md: '2' }} gapX="4" gapY="1">
                   <ul
                     style={{
                       listStyle: 'none',
                       margin: 0,
-                      marginTop: 'var(--space-5)',
+                      marginTop: 'var(--space-3)',
                       padding: 0,
                     }}
                   >
                     {qualification.questions.map((question) => (
                       <li key={question.id} style={{ listStyle: 'none' }}>
-                        <Flex direction="column" align="start" gap="1">
-                          <Button
-                            size="3"
-                            variant="ghost"
-                            onClick={() => {
-                              onAnswer(`${question.label}\n`);
-                              document.getElementById('studio-message')?.focus();
-                            }}
-                          >
-                            {question.label}
-                          </Button>
-                          <Text size="1" color="gray">
-                            {question.reason}
-                          </Text>
-                        </Flex>
+                        <QuestionRow
+                          question={question}
+                          onAsk={() => onAnswer(`${question.label}\n`)}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -983,19 +1432,16 @@ function RouteEditor({
   return (
     <Box asChild>
       <section aria-label="Route structure">
-        <Flex align="center" justify="between" gap="3" mb="4" wrap="wrap">
-          <Box>
-            <Heading as="h2" size="6">
-              The shape of the journey
-            </Heading>
-            <Text as="p" size="2" color="gray" mt="1">
-              {stops.length
-                ? `${stops.length} destinations · ${totalNights} nights${stops.some((s) => s.nights === null) ? ' confirmed so far' : ''}`
-                : 'Destinations, dates and how they connect.'}
-            </Text>
-          </Box>
-          <MapPin size={24} aria-hidden="true" />
-        </Flex>
+        <Box mb="4">
+          <Heading as="h2" size="6">
+            The shape of the journey
+          </Heading>
+          <Text as="p" size="2" color="gray" mt="1">
+            {stops.length
+              ? `${stops.length} destinations · ${totalNights} nights${stops.some((s) => s.nights === null) ? ' confirmed so far' : ''}`
+              : 'Destinations, dates and how they connect.'}
+          </Text>
+        </Box>
         {!stops.length && (
           <Card size="3" variant="surface">
             <Flex direction="column" align="center" gap="3" py="5">

@@ -108,7 +108,6 @@ export function StartComposer({
   /* The workspace a failed submit already created, so pressing send again resumes it rather than
      leaving an empty workspace behind on every attempt. */
   const created = useRef<StudioWorkspace | null>(null);
-  const requestIds = useRef(new Map<string, string>());
 
   const apply = (change: (previous: HeldSource[]) => HeldSource[]) => {
     held.current = change(held.current);
@@ -256,22 +255,12 @@ export function StartComposer({
         created.current = workspace;
         update(source.id, { saved: true });
       }
-      const key = JSON.stringify({ workspace: workspace.id, revision: workspace.revision, brief });
-      const requestId = requestIds.current.get(key) || crypto.randomUUID();
-      requestIds.current.set(key, requestId);
-      try {
-        await api(`/studio/workspaces/${workspace.id}/review`, {
-          method: 'POST',
-          body: JSON.stringify({ revision: workspace.revision, message: brief, requestId }),
-        });
-        navigate(`/studio/${workspace.id}`);
-      } catch (caught) {
-        /* The workspace and its sources exist, so the canvas is the honest place to land: it keeps
-           the brief in the composer there and shows why the review did not run. */
-        navigate(`/studio/${workspace.id}?q=${encodeURIComponent(brief)}`, {
-          state: { reviewError: (caught as Error).message },
-        });
-      }
+      /* Go the moment the workspace exists, and let the review run in the workspace. Reviewing
+         first meant standing on this page watching a button spin for as long as the model took —
+         a minute is possible — and then swapping the whole screen at once. The workspace already
+         knows how to pick a carried brief up from `?q=`: it shows the turn straight away and waits
+         for Tara there, beside the canvas that is about to fill in. */
+      navigate(`/studio/${workspace.id}?q=${encodeURIComponent(brief)}`);
     } catch (caught) {
       setError(
         caught instanceof Error

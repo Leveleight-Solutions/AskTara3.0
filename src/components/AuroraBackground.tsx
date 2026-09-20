@@ -1,145 +1,118 @@
 import { useEffect, useRef } from 'react';
 import { Box } from '@radix-ui/themes';
+import { useApp } from '../context';
 
 /**
- * A slow, glowing gradient that drifts behind a section.
+ * Gemini-style soft glow behind a section.
  *
- * Three soft radial blobs on the accent scale, heavily blurred and overlapping, each drifting on
- * its own long, prime-ish duration so the composite never visibly loops. Rendered with the Web
- * Animations API rather than CSS classes: `@keyframes` cannot be expressed inline, and the app's
- * convention is that components carry no `className` and the stylesheet holds no app styling.
+ * A pale, near-white ground with a single blurred ellipse of light blue centred behind the
+ * composer — the glow sits under the content rather than washing the whole section, and the edges
+ * stay near-white.
  *
- * Colour comes from the Radix accent alpha scale, so it re-tints with the theme and sits correctly
- * on both light and dark backgrounds without a hardcoded value.
+ * The glow belongs to a signed-in session: when there is an account it grows out from the centre
+ * to its resting size once and then holds still — on arriving at the page signed in, and again the
+ * moment a sign-in completes (sign-in is a dialog, so the page does not remount). Signing out
+ * shrinks it away. Signed-out visitors see the plain ground.
+ *
+ * The glow lives on one oversized layer (200% of the section, centred so it overhangs every edge),
+ * blurred hard so the ellipse has no edge; the overhang keeps the blur's faded rim off-screen.
+ *
+ * Rendered with the Web Animations API rather than a CSS class: `@keyframes` cannot be expressed
+ * inline, and the app's convention is that components carry no `className` and the stylesheet holds
+ * no app styling. The inline style is always the end state, so reduced motion, or a browser without
+ * `element.animate`, simply shows the glow already grown (or already gone).
+ *
+ * The palette is fixed rather than drawn from the Radix accent scale — it is the Gemini blue by
+ * design. The app renders in the light appearance only, which these tints are chosen for.
  */
 
-type Drift = {
-  /** Start position as a share of the container, so the blobs spread rather than stack. */
-  top: string;
-  left: string;
-  /** Capped against the viewport's short edge: a rem-only size is wider than a phone screen,
-   *  which turns the glow into a full-bleed wash instead of a bloom. */
-  size: string;
-  colorVar: string;
-  /** Peak opacity; kept low so text contrast above it is never at risk. */
-  opacity: number;
-  durationMs: number;
-  /** Travel in px. Small relative to the blur radius, which is what makes it read as a glow. */
-  dx: number;
-  dy: number;
-  scale: number;
-};
+/** The page ground the glow fades into. */
+const GROUND = '#f4f7fb';
 
-const BLOBS: Drift[] = [
-  {
-    top: '18%',
-    left: '22%',
-    size: 'min(46rem, 90vmin)',
-    colorVar: '--accent-a5',
-    opacity: 0.85,
-    durationMs: 29000,
-    dx: 90,
-    dy: -60,
-    scale: 1.14,
-  },
-  {
-    top: '34%',
-    left: '58%',
-    size: 'min(38rem, 75vmin)',
-    colorVar: '--accent-a4',
-    opacity: 0.8,
-    durationMs: 37000,
-    dx: -110,
-    dy: 70,
-    scale: 1.2,
-  },
-  {
-    top: '8%',
-    left: '46%',
-    size: 'min(30rem, 60vmin)',
-    colorVar: '--accent-a3',
-    opacity: 0.9,
-    durationMs: 43000,
-    dx: 60,
-    dy: 90,
-    scale: 0.88,
-  },
-];
+/* Radii are shares of the layer (200% of the section), so 23% / 20% is roughly 46% of the
+   section's width and 40% of its height either side of centre. Blue only, fading to transparent. */
+const GLOW = [
+  'radial-gradient(ellipse 23% 20% at 50% 51%,',
+  '#b6dbfb 0%,',
+  '#c2e7ff 30%,',
+  'rgba(194, 231, 255, 0.6) 55%,',
+  'rgba(194, 231, 255, 0.25) 78%,',
+  'rgba(194, 231, 255, 0) 100%)',
+].join(' ');
 
-export function AuroraBackground() {
-  const host = useRef<HTMLDivElement>(null);
+const HIDDEN = { opacity: 0, transform: 'scale(0.35)' };
+/** The hero's resting state: one pool of light, gathered behind the composer. */
+const FOCUSED = { opacity: 1, transform: 'scale(1)' };
+/* The workspace's resting state. Deliberately the same ellipse rather than a different image:
+   opened out far enough that its falloff reaches every edge, it stops reading as a spot behind the
+   middle of the page and becomes an even field. Keeping one light source is also what makes the
+   change between the two tweenable at all — `background-image` cannot be animated, a transform
+   can. Slightly dimmer, because the same colour spread over four times the area is otherwise
+   heavier than the hero's. */
+const SPREAD = { opacity: 0.85, transform: 'scale(2.4)' };
+
+export function AuroraBackground({ variant = 'focused' }: { variant?: 'focused' | 'spread' } = {}) {
+  const { user } = useApp();
+  const signedIn = Boolean(user);
+  const layer = useRef<HTMLDivElement>(null);
+  /* The last session state the effect saw. Shrinking only plays on a real sign-out, so arriving
+     signed out (including StrictMode's second effect pass) never flashes the glow. */
+  const wasSignedIn = useRef(false);
+
+  const spread = variant === 'spread';
 
   useEffect(() => {
-    const root = host.current;
-    if (!root || typeof root.animate !== 'function') return;
+    const signedOutNow = wasSignedIn.current && !signedIn;
+    wasSignedIn.current = signedIn;
+    const el = layer.current;
+    if (!el || typeof el.animate !== 'function') return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
 
-    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-    const animations: Animation[] = [];
-
-    const start = () => {
-      stop();
-      if (query?.matches) return; // Static glow is the reduced-motion fallback, not a blank panel.
-      root.querySelectorAll<HTMLElement>('[data-blob]').forEach((el, index) => {
-        const { dx, dy, scale, durationMs } = BLOBS[index];
-        animations.push(
-          el.animate(
-            [
-              { transform: 'translate3d(0, 0, 0) scale(1)' },
-              { transform: `translate3d(${dx}px, ${dy}px, 0) scale(${scale})` },
-              { transform: 'translate3d(0, 0, 0) scale(1)' },
-            ],
-            {
-              duration: durationMs,
-              iterations: Infinity,
-              easing: 'cubic-bezier(0.4, 0, 0.6, 1)',
-              // Offsetting the start keeps the three from swelling in unison.
-              delay: -index * 4000,
-            },
-          ),
-        );
+    /* Arriving in the workspace, the light opens out from where the hero left it. Because the two
+       pages share one geometry and the hand-off is immediate, the eye reads this as the same glow
+       continuing rather than a second one starting — so it plays once on arrival, not on every
+       change of session. Slower than the islands settling in front of it, so the ground is still
+       moving while the work is already readable. */
+    if (spread) {
+      if (!signedIn) return;
+      const opening = el.animate([FOCUSED, SPREAD], {
+        duration: 1100,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
       });
-    };
+      return () => opening.cancel();
+    }
 
-    const stop = () => {
-      animations.splice(0).forEach((animation) => animation.cancel());
-    };
-
-    start();
-    query?.addEventListener?.('change', start);
-    return () => {
-      query?.removeEventListener?.('change', start);
-      stop();
-    };
-  }, []);
+    if (!signedIn && !signedOutNow) return;
+    const animation = signedIn
+      ? el.animate([HIDDEN, FOCUSED], {
+          duration: 2200,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)', // Fast start, long settle: it swells, then eases to rest.
+        })
+      : el.animate([FOCUSED, HIDDEN], { duration: 500, easing: 'ease-in' });
+    return () => animation.cancel();
+  }, [signedIn, spread]);
 
   return (
     <Box
-      ref={host}
       aria-hidden="true"
       position="absolute"
       inset="0"
       overflow="hidden"
-      style={{ pointerEvents: 'none', zIndex: 0 }}
+      style={{ pointerEvents: 'none', zIndex: 0, background: GROUND }}
     >
-      {BLOBS.map((blob, index) => (
-        <Box
-          key={index}
-          data-blob=""
-          position="absolute"
-          style={{
-            top: blob.top,
-            left: blob.left,
-            width: blob.size,
-            height: blob.size,
-            marginTop: `calc(${blob.size} / -2)`,
-            marginLeft: `calc(${blob.size} / -2)`,
-            opacity: blob.opacity,
-            background: `radial-gradient(circle at center, var(${blob.colorVar}) 0%, transparent 68%)`,
-            filter: 'blur(72px)',
-            willChange: 'transform',
-          }}
-        />
-      ))}
+      <Box
+        ref={layer}
+        position="absolute"
+        style={{
+          top: '-50%',
+          left: '-50%',
+          width: '200%',
+          height: '200%',
+          background: GLOW,
+          filter: 'blur(60px)',
+          ...(signedIn ? (spread ? SPREAD : FOCUSED) : HIDDEN),
+        }}
+      />
     </Box>
   );
 }

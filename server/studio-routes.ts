@@ -225,6 +225,13 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     applyStudioPatch(workspace, body, store.getAgency(session(res).owner_id));
     res.json({ workspace: save(res, workspace, body.revision) });
   });
+  app.put('/api/studio/workspaces/:id/pin', (req, res) => {
+    const { pinned } = z.object({ pinned: z.boolean() }).strict().parse(req.body);
+    requireActiveSession(res);
+    res.json({
+      workspace: store.setPinned(session(res).owner_id, String(req.params.id), pinned),
+    });
+  });
   app.delete('/api/studio/workspaces/:id', (req, res) => {
     requireActiveSession(res);
     owned(req, res);

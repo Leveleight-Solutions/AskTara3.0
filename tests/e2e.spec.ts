@@ -59,7 +59,10 @@ async function noHorizontalOverflow(page: Page) {
 test('discovery filters and wishlist survive a reload and can be undone', async ({ page }) => {
   await home(page);
   await capture(page, 'home-desktop');
-  await page.getByRole('link', { name: 'Explore all destinations' }).click();
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('link', { name: 'Discover', exact: true })
+    .click();
   await expect(page.getByRole('heading', { name: 'Your next somewhere.' })).toBeVisible();
   await page.getByRole('textbox', { name: 'Search destinations' }).fill('Kyoto');
   await expect(page.getByTestId('destination-card')).toHaveCount(1);

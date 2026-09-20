@@ -678,3 +678,38 @@ test('reviewed imported PNR remains private and each source only creates exclude
   assert.equal(publicPreview.body.proposal.items.length, 0);
   assert.doesNotMatch(JSON.stringify(publicPreview.body), /ABC123|Fictional PNR/);
 });
+
+test('pinning orders the recent list without touching the revision or the stored document', async () => {
+  const { app, client } = setup();
+  const stranger = request.agent(app);
+  const older = await create(client);
+  const newer = await create(client);
+  const order = async () =>
+    (await client.get('/api/studio/workspaces').expect(200)).body.workspaces.map(
+      (workspace: StudioWorkspace) => workspace.id,
+    );
+  assert.deepEqual(await order(), [newer.id, older.id]);
+
+  const pinned = (await client.put(path(older, '/pin')).send({ pinned: true }).expect(200)).body
+    .workspace as StudioWorkspace;
+  assert.ok(pinned.pinnedAt);
+  assert.equal(pinned.revision, older.revision);
+  assert.equal(pinned.updatedAt, older.updatedAt);
+  assert.deepEqual(await order(), [older.id, newer.id]);
+
+  // A later edit keeps the pin, and the pin never leaks into the stored JSON document.
+  const renamed = await patch(client, pinned, { title: 'Hendersons, Paris' });
+  assert.equal(renamed.title, 'Hendersons, Paris');
+  assert.ok(renamed.pinnedAt);
+  const stored = app.locals.db
+    .prepare('SELECT data FROM studio_workspaces WHERE id = ?')
+    .get(older.id);
+  assert.equal('pinnedAt' in JSON.parse(String(stored.data)), false);
+
+  await stranger.put(path(older, '/pin')).send({ pinned: false }).expect(404);
+  await client.put(path(older, '/pin')).send({ pinned: 'yes' }).expect(400);
+  const unpinned = (await client.put(path(older, '/pin')).send({ pinned: false }).expect(200)).body
+    .workspace as StudioWorkspace;
+  assert.equal(unpinned.pinnedAt, null);
+  assert.deepEqual(await order(), [older.id, newer.id]);
+});

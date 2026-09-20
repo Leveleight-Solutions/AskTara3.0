@@ -30,6 +30,7 @@ import type {
 import { api, ApiError, readableDate } from '../api';
 import { useApp } from '../context';
 import { EmptyState, Spinner } from '../components/ui';
+import { useRouteLoading } from '../components/TopLoadingBar';
 import {
   BookingError,
   BookingPage,
@@ -450,6 +451,7 @@ export function BookingDetail() {
 function BookingDetailContent({ id }: { id: string }) {
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
+  useRouteLoading(loading);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [uncertain, setUncertain] = useState(false);
@@ -1219,6 +1221,7 @@ export function Bookings() {
   const { ownerVersion } = useApp();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  useRouteLoading(loading);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   useEffect(() => {
