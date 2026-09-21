@@ -83,8 +83,17 @@ a {
    alpha grey stays pale there while the theme's text steps go near-white. That is a fault in the
    hero behind this file, not in the marks on top of it — see the note on the label's colour in
    TripDetailChips.tsx. */
-.chip-bar {
+/* The composer's feedback, when a tray is attached, takes the tray's inset rather than the pill's
+   full width, so the error lines up with the strip directly above it instead of jutting out past
+   both of its edges. One rule for both, so the two can never be inset differently. */
+.chip-bar,
+.composer-feedback {
   width: calc(100% - var(--space-4) * 2);
+}
+.composer-feedback {
+  align-self: center;
+}
+.chip-bar {
   margin-top: calc(var(--space-3) * -1);
   /* The top pays back the 12px tucked behind the pill and adds the gap on top of it; the other
      three sides are that same gap.

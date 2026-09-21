@@ -88,18 +88,24 @@ export default function Home() {
               </Heading>
             </RiseIn>
             {/* The composer and the two details it can borrow are one control: the pill is the
-                primary field and the tray of chips is attached to its underside. No gap, and the
-                same 688px ceiling the composer sets for itself, so the tray can inset itself
-                against the pill's edges rather than guessing at a width. */}
-            <Flex direction="column" align="center" width="100%" maxWidth="688px">
-              <StartComposer
-                key={carriedBrief}
-                heroAnchor
-                initialMessage={carriedBrief}
-                prepareMessage={(text) => buildTripPrompt(text, { party, dates })}
-              />
-              <TripDetailChips party={party} onParty={setParty} dates={dates} onDates={setDates} />
-            </Flex>
+                primary field and the tray of chips is attached to its underside. The tray is
+                handed to the composer rather than placed after it, because the composer's own
+                feedback (a source it could not read, a failed send) renders below the pill — and
+                a tray placed after the composer would tuck itself behind that instead. */}
+            <StartComposer
+              key={carriedBrief}
+              heroAnchor
+              initialMessage={carriedBrief}
+              prepareMessage={(text) => buildTripPrompt(text, { party, dates })}
+              tray={
+                <TripDetailChips
+                  party={party}
+                  onParty={setParty}
+                  dates={dates}
+                  onDates={setDates}
+                />
+              }
+            />
           </Flex>
         </Container>
       </section>

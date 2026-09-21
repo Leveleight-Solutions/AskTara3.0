@@ -349,41 +349,24 @@ function MonthCard({ month, role, band, onPick }: MonthCardProps) {
   );
 }
 
-/* The switch at the top is the one control here that says which KIND of answer is being given, and
-   Radix draws it in greys alone — a grey track under a panel-coloured thumb — so on a panel where
-   every answer is accent it reads as chrome rather than as a choice. It takes the quiet half of the
-   accent instead: the chosen side is painted --accent-3 under --accent-12, which is exactly how a
-   day inside the span is drawn a few pixels below it, so the tint means the same thing in both
-   places.
+/* The switch at the top is the one control here that says which KIND of answer is being given, so
+   its chosen side carries the accent — but in the label, not in the fill. The thumb keeps Radix's
+   own panel colour, the same white the composer and its notices are made of, and the chosen side's
+   text turns --accent-11.
 
-   The loud half is deliberately left where it already is. A solid --accent-9 thumb was rendered and
-   rejected: at this width it puts the largest block of saturated colour on the panel behind a mode
-   rather than behind the answer, sinking the 32px circles that are the answer, and it arrives in the
-   same fill as Apply, which is the panel's only commit.
+   Two fills were tried first and neither belonged. A tinted thumb (accent-3, then accent-4) sat
+   inside Radix's grey ring, so one small shape carried two hue families, and directly above the grey
+   month cards the tint read as lavender rather than as the app's blue. A solid --accent-9 thumb was
+   louder than the answer it governs: the largest block of saturated colour on the panel, sinking the
+   32px circles below it, and in the same fill as Apply, which is the panel's only commit. Colour in
+   the text says "this one" at the weight of a mode.
 
-   The thumb carries the colour rather than the track, which was also rendered. A tint spread across
-   the track only shows where the thumb is not, so it colours the side the client did not choose and
-   leaves the chosen one as a white gap — the wrong way round for a control whose whole job is to
-   show which side is live.
-
-   This arrives as a token rather than as a prop because SegmentedControl has no `color` of its own
-   in Themes 3.3: size, variant and radius are the whole set. The variable below is the one the
-   component already resolves its thumb from, so nothing about how it is drawn changes. */
-/* Step 4 rather than the step 3 the band between two dates uses. Sharing the band's exact token was
-   the tidier idea, but on the grey track step 3 is so close in lightness to the track itself
-   (1.01:1) that the thumb would have been told apart by hue alone, which is the one cue some of the
-   people using this cannot rely on. Step 4 keeps the lightness difference the control shipped with
-   and still sits far below the step 9 circles, so the mode never competes with the answer. */
-const MODE_SWITCH = {
-  '--segmented-control-indicator-background-color': 'var(--accent-4)',
-} as CSSProperties;
-
-/* Set per item rather than once on the root because only the chosen side sits on the tint; the other
-   is still over the grey track, where --accent-12 would be the wrong pairing and would leave both
-   sides looking equally chosen. Radix's own weight change is untouched, so the live side is never
-   told apart by colour alone. */
+   Set per item rather than on the root because only the chosen side is blue; the other stays on
+   Radix's grey. The thumb's white against the track and Radix's own weight change still mark the
+   live side, so it is never told apart by colour alone. --accent-11 is the accent's accessible text
+   step and clears 4.5:1 on the white thumb. */
 const modeItemStyle = (chosen: boolean): CSSProperties => ({
-  color: chosen ? 'var(--accent-12)' : undefined,
+  color: chosen ? 'var(--accent-11)' : undefined,
 });
 
 type Props = {
@@ -463,7 +446,6 @@ export function TripDatePanel({ value, onApply }: Props) {
         value={mode}
         onValueChange={(next) => setMode(next as TripDates['mode'])}
         aria-label="How firm are the dates?"
-        style={MODE_SWITCH}
       >
         <SegmentedControl.Item value="specific" style={modeItemStyle(mode === 'specific')}>
           Specific dates

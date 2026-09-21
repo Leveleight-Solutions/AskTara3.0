@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUp,
@@ -53,6 +53,25 @@ type HeldSource = {
   saved: boolean;
 };
 
+/* The composer's errors are made of the composer's own material — the solid panel colour of the
+   pill, with the tray's 16px corner and the lightest of the shadows — and keep red for the one mark
+   that means "error": the icon. The failed source is already red on its own chip inside the pill.
+
+   Two fills were tried before this and both were wrong for the hero. Radix's soft callout fills with
+   an alpha red, which composited with the blue glow behind it into a muddy violet; a solid red-3 fixed
+   that but became a salmon slab, a third material beside the white pill and the grey tray, and the
+   heaviest thing on screen — louder than the control it was reporting on. A white notice with a red
+   glyph says the same thing at the weight of a footnote.
+
+   The text is the grey scale's high-contrast step (colour gray + highContrast), about 16:1 on the
+   panel; the icon is red-11, well past the 3:1 a non-text mark owes. */
+const NOTICE = {
+  backgroundColor: 'var(--color-panel-solid)',
+  borderRadius: 'var(--radius-6)',
+  boxShadow: 'var(--shadow-1)',
+} as const;
+const NOTICE_ICON = { color: 'var(--red-11)' } as const;
+
 const kindIcon = (kind: StudioImport['kind']) =>
   kind === 'image' ? ImageIcon : kind === 'url' ? Link2 : kind === 'audio' ? Mic : FileText;
 
@@ -79,6 +98,7 @@ export function StartComposer({
   maxLength = 4000,
   heroAnchor = false,
   prepareMessage,
+  tray,
 }: {
   /** A brief carried in from elsewhere, e.g. an inspiration card's `?q=`. */
   initialMessage?: string;
@@ -87,6 +107,11 @@ export function StartComposer({
   heroAnchor?: boolean;
   /** Lets a page fold its own details into the typed brief before it is sent for review. */
   prepareMessage?: (text: string) => string;
+  /** A strip attached to the pill's underside, such as the home hero's trip details. It is
+      rendered here rather than beside the composer because it has to sit directly under the pill:
+      it tucks its top edge behind it, so anything drawn between the two — the errors below, for
+      one — would have the strip tucked behind that instead, covering it. */
+  tray?: ReactNode;
 } = {}) {
   const navigate = useNavigate();
   const [message, setMessage] = useState(initialMessage);
@@ -276,7 +301,11 @@ export function StartComposer({
   const shown = sources.find((source) => source.id === viewing);
   return (
     <Flex direction="column" gap="3" width="100%" maxWidth="688px">
-      {/* One pill holding the + menu, the sources it brings in, the prompt and the send button, so
+      {/* The pill and its tray are one control, so they share a gapless group of their own; the
+          errors and the source viewer come after the whole of it, where they cannot come between
+          the pill and the strip that is attached to it. */}
+      <Flex direction="column" align="center" width="100%">
+        {/* One pill holding the + menu, the sources it brings in, the prompt and the send button, so
           the start of a proposal reads as a single control rather than a card of controls. The
           surface belongs to the form, not to the field: the field keeps its own focus ring but
           drops its paint, so the three sit on one continuous pill. Pill-ness comes from Radix's
@@ -285,291 +314,312 @@ export function StartComposer({
           something above the input row it steps down to --radius-6, which the same attribute
           scales, because a stadium corner would clip the first and last chip. The solid panel
           colour also keeps the placeholder off the drifting glow behind it. */}
-      <Box
-        asChild
-        width="100%"
-        p="2"
-        data-radius="full"
-        {...(heroAnchor ? { 'data-hero-composer': '' } : {})}
-        position="relative"
-        style={{
-          background: 'var(--color-panel-solid)',
-          boxShadow: 'var(--shadow-3)',
-          borderRadius: open ? 'var(--radius-6)' : 'var(--radius-full)',
-          /* Lifts the pill, and everything in it, above the hero heading's entrance so the text
+        <Box
+          asChild
+          width="100%"
+          p="2"
+          data-radius="full"
+          {...(heroAnchor ? { 'data-hero-composer': '' } : {})}
+          position="relative"
+          style={{
+            background: 'var(--color-panel-solid)',
+            boxShadow: 'var(--shadow-3)',
+            borderRadius: open ? 'var(--radius-6)' : 'var(--radius-full)',
+            /* Lifts the pill, and everything in it, above the hero heading's entrance so the text
              rises out from under an opaque bar instead of sliding across it. This is a stacking
              context inside the hero's already-lifted container, not a new layer at section
              level, so nothing else on the page changes order. */
-          zIndex: 1,
-        }}
-      >
-        <form onSubmit={submit}>
-          <Flex direction="column" gap="2">
-            {sources.length > 0 && (
-              <Flex gap="4" wrap="wrap" px="1" pt="1" role="group" aria-label="Attached sources">
-                {sources.map((source, index) => {
-                  const Icon = kindIcon(source.kind);
-                  /* The cross lives inside the chip and stays out of the way until it is wanted.
+            zIndex: 1,
+          }}
+        >
+          <form onSubmit={submit}>
+            <Flex direction="column" gap="2">
+              {sources.length > 0 && (
+                <Flex gap="4" wrap="wrap" px="1" pt="1" role="group" aria-label="Attached sources">
+                  {sources.map((source, index) => {
+                    const Icon = kindIcon(source.kind);
+                    /* The cross lives inside the chip and stays out of the way until it is wanted.
                      It keeps its space at rest, so a chip is the same size hovered or not, and it
                      is revealed by focus as well as by the pointer — otherwise it could not be
                      reached by keyboard at all. Where there is no hover to give (a touchscreen,
                      whatever the window's width) it is simply always shown. */
-                  const revealed = coarsePointer || hovered === source.id || focused === source.id;
-                  return (
-                    <Flex
-                      key={source.id}
-                      align="center"
-                      gap="2"
-                      p="1"
-                      maxWidth="100%"
-                      style={{
-                        background: source.status === 'error' ? 'var(--red-a3)' : 'var(--gray-a3)',
-                        borderRadius: 'var(--radius-4)',
-                      }}
-                      onPointerEnter={() => setHovered(source.id)}
-                      onPointerLeave={() => setHovered((id) => (id === source.id ? null : id))}
-                      onFocus={() => setFocused(source.id)}
-                      onBlur={() => setFocused((id) => (id === source.id ? null : id))}
-                    >
+                    const revealed =
+                      coarsePointer || hovered === source.id || focused === source.id;
+                    return (
+                      <Flex
+                        key={source.id}
+                        align="center"
+                        gap="2"
+                        p="1"
+                        maxWidth="100%"
+                        style={{
+                          background:
+                            source.status === 'error' ? 'var(--red-a3)' : 'var(--gray-a3)',
+                          borderRadius: 'var(--radius-4)',
+                        }}
+                        onPointerEnter={() => setHovered(source.id)}
+                        onPointerLeave={() => setHovered((id) => (id === source.id ? null : id))}
+                        onFocus={() => setFocused(source.id)}
+                        onBlur={() => setFocused((id) => (id === source.id ? null : id))}
+                      >
+                        <Button
+                          type="button"
+                          size="3"
+                          variant="ghost"
+                          color={source.status === 'error' ? 'red' : 'gray'}
+                          disabled={source.status === 'pending'}
+                          /* Ghost keeps the chip reading as one surface; the padding restores the
+                           40px target and the reset margin restores the 8px to the cross, both of
+                           which the variant's own negative margin would otherwise eat. */
+                          style={{ margin: 0, padding: 'var(--space-2) var(--space-3)' }}
+                          onClick={() => setViewing(source.id)}
+                        >
+                          {source.status === 'pending' ? (
+                            <Spinner size="1" />
+                          ) : source.status === 'error' ? (
+                            <CircleAlert size={15} aria-hidden="true" />
+                          ) : (
+                            <Icon size={15} aria-hidden="true" />
+                          )}
+                          <Text truncate style={{ maxWidth: '18ch' }}>
+                            {source.label}
+                          </Text>
+                          {source.status === 'pending' && <Text size="1">Reading…</Text>}
+                        </Button>
+                        <IconButton
+                          type="button"
+                          size="3"
+                          variant="soft"
+                          color={source.status === 'error' ? 'red' : 'gray'}
+                          /* Several chips can carry the same label, so the position names which. */
+                          aria-label={`Remove source ${index + 1}, ${source.label}`}
+                          style={{ opacity: revealed ? 1 : 0 }}
+                          onClick={() => {
+                            extracting.current.delete(source.id);
+                            apply((previous) => previous.filter((item) => item.id !== source.id));
+                          }}
+                        >
+                          <X size={16} />
+                        </IconButton>
+                      </Flex>
+                    );
+                  })}
+                </Flex>
+              )}
+              {mode && (
+                <Box p="2">
+                  <Flex direction="column" gap="2">
+                    <Text as="label" htmlFor="start-composer-source" size="2" weight="medium">
+                      {mode === 'url'
+                        ? 'Public tour or cruise page'
+                        : 'Client email, PNR or travel notes'}
+                    </Text>
+                    {mode === 'url' ? (
+                      <TextField.Root
+                        size="3"
+                        id="start-composer-source"
+                        ref={(node) => {
+                          draftField.current = node;
+                        }}
+                        type="url"
+                        value={draft}
+                        maxLength={2048}
+                        placeholder="https://…"
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter') return;
+                          event.preventDefault();
+                          addDraft();
+                        }}
+                      />
+                    ) : (
+                      <TextArea
+                        size="3"
+                        id="start-composer-source"
+                        ref={(node) => {
+                          draftField.current = node;
+                        }}
+                        rows={5}
+                        value={draft}
+                        maxLength={STUDIO_IMPORT_MAX_TEXT}
+                        placeholder="Paste your source here. Tara will read it before anything is added."
+                        onChange={(event) => setDraft(event.target.value)}
+                      />
+                    )}
+                    <Flex gap="2" wrap="wrap">
                       <Button
                         type="button"
                         size="3"
-                        variant="ghost"
-                        color={source.status === 'error' ? 'red' : 'gray'}
-                        disabled={source.status === 'pending'}
-                        /* Ghost keeps the chip reading as one surface; the padding restores the
-                           40px target and the reset margin restores the 8px to the cross, both of
-                           which the variant's own negative margin would otherwise eat. */
-                        style={{ margin: 0, padding: 'var(--space-2) var(--space-3)' }}
-                        onClick={() => setViewing(source.id)}
+                        variant="soft"
+                        disabled={!draft.trim()}
+                        onClick={addDraft}
                       >
-                        {source.status === 'pending' ? (
-                          <Spinner size="1" />
-                        ) : source.status === 'error' ? (
-                          <CircleAlert size={15} aria-hidden="true" />
-                        ) : (
-                          <Icon size={15} aria-hidden="true" />
-                        )}
-                        <Text truncate style={{ maxWidth: '18ch' }}>
-                          {source.label}
-                        </Text>
-                        {source.status === 'pending' && <Text size="1">Reading…</Text>}
+                        Add source
                       </Button>
-                      <IconButton
+                      <Button
                         type="button"
                         size="3"
                         variant="soft"
-                        color={source.status === 'error' ? 'red' : 'gray'}
-                        /* Several chips can carry the same label, so the position names which. */
-                        aria-label={`Remove source ${index + 1}, ${source.label}`}
-                        style={{ opacity: revealed ? 1 : 0 }}
+                        color="gray"
                         onClick={() => {
-                          extracting.current.delete(source.id);
-                          apply((previous) => previous.filter((item) => item.id !== source.id));
+                          setDraft('');
+                          setMode(null);
                         }}
                       >
-                        <X size={16} />
-                      </IconButton>
+                        Cancel
+                      </Button>
                     </Flex>
-                  );
-                })}
-              </Flex>
-            )}
-            {mode && (
-              <Box p="2">
-                <Flex direction="column" gap="2">
-                  <Text as="label" htmlFor="start-composer-source" size="2" weight="medium">
-                    {mode === 'url'
-                      ? 'Public tour or cruise page'
-                      : 'Client email, PNR or travel notes'}
-                  </Text>
-                  {mode === 'url' ? (
-                    <TextField.Root
-                      size="3"
-                      id="start-composer-source"
-                      ref={(node) => {
-                        draftField.current = node;
-                      }}
-                      type="url"
-                      value={draft}
-                      maxLength={2048}
-                      placeholder="https://…"
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter') return;
-                        event.preventDefault();
-                        addDraft();
-                      }}
-                    />
-                  ) : (
-                    <TextArea
-                      size="3"
-                      id="start-composer-source"
-                      ref={(node) => {
-                        draftField.current = node;
-                      }}
-                      rows={5}
-                      value={draft}
-                      maxLength={STUDIO_IMPORT_MAX_TEXT}
-                      placeholder="Paste your source here. Tara will read it before anything is added."
-                      onChange={(event) => setDraft(event.target.value)}
-                    />
-                  )}
-                  <Flex gap="2" wrap="wrap">
-                    <Button
-                      type="button"
-                      size="3"
-                      variant="soft"
-                      disabled={!draft.trim()}
-                      onClick={addDraft}
-                    >
-                      Add source
-                    </Button>
-                    <Button
+                  </Flex>
+                </Box>
+              )}
+              {(dictation.recording || dictation.requestingMic) && (
+                <Box p="2">
+                  <Flex align="center" justify="between" gap="3" wrap="wrap">
+                    <Flex align="center" gap="2" role="status">
+                      {dictation.recording ? (
+                        <Mic size={16} aria-hidden="true" />
+                      ) : (
+                        <Spinner size="1" />
+                      )}
+                      <Text size="2">
+                        {dictation.recording
+                          ? 'Recording your brief · up to 2 minutes'
+                          : 'Waiting for microphone permission'}
+                      </Text>
+                    </Flex>
+                    <Flex gap="2" wrap="wrap">
+                      <Button
+                        type="button"
+                        size="3"
+                        variant="soft"
+                        color="red"
+                        disabled={!dictation.recording}
+                        onClick={dictation.stop}
+                      >
+                        <Square size={15} /> Stop & transcribe
+                      </Button>
+                      <Button
+                        type="button"
+                        size="3"
+                        variant="soft"
+                        color="gray"
+                        onClick={dictation.cancel}
+                      >
+                        Cancel recording
+                      </Button>
+                    </Flex>
+                  </Flex>
+                </Box>
+              )}
+              <Flex align="center" gap="2">
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    <IconButton
                       type="button"
                       size="3"
                       variant="soft"
                       color="gray"
-                      onClick={() => {
-                        setDraft('');
-                        setMode(null);
-                      }}
+                      radius="full"
+                      aria-label="Bring in a source"
                     >
-                      Cancel
-                    </Button>
-                  </Flex>
-                </Flex>
-              </Box>
-            )}
-            {(dictation.recording || dictation.requestingMic) && (
-              <Box p="2">
-                <Flex align="center" justify="between" gap="3" wrap="wrap">
-                  <Flex align="center" gap="2" role="status">
-                    {dictation.recording ? (
-                      <Mic size={16} aria-hidden="true" />
-                    ) : (
-                      <Spinner size="1" />
-                    )}
-                    <Text size="2">
-                      {dictation.recording
-                        ? 'Recording your brief · up to 2 minutes'
-                        : 'Waiting for microphone permission'}
-                    </Text>
-                  </Flex>
-                  <Flex gap="2" wrap="wrap">
-                    <Button
-                      type="button"
-                      size="3"
-                      variant="soft"
-                      color="red"
-                      disabled={!dictation.recording}
-                      onClick={dictation.stop}
+                      <Plus size={20} />
+                    </IconButton>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content size="2" align="start">
+                    <DropdownMenu.Label>Start from what you already have</DropdownMenu.Label>
+                    <DropdownMenu.Item onSelect={() => fileInput.current?.click()}>
+                      <Paperclip size={15} aria-hidden="true" /> Attach a file
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => openDraft('text')}>
+                      <FileText size={15} aria-hidden="true" /> Paste an email or PNR
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => openDraft('url')}>
+                      <Link2 size={15} aria-hidden="true" /> Add a tour link
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      disabled={dictation.recording || dictation.requestingMic}
+                      onSelect={() => void dictation.start()}
                     >
-                      <Square size={15} /> Stop & transcribe
-                    </Button>
-                    <Button
-                      type="button"
-                      size="3"
-                      variant="soft"
-                      color="gray"
-                      onClick={dictation.cancel}
-                    >
-                      Cancel recording
-                    </Button>
-                  </Flex>
-                </Flex>
-              </Box>
-            )}
-            <Flex align="center" gap="2">
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger>
-                  <IconButton
-                    type="button"
+                      <Mic size={15} aria-hidden="true" /> Dictate
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  aria-label="Attach a screenshot, PDF or audio file"
+                  hidden
+                  accept="image/png,image/jpeg,image/webp,application/pdf,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/webm"
+                  onChange={(event) => chooseFile(event.target.files?.[0])}
+                />
+                <Box flexGrow="1" minWidth="0">
+                  <TextField.Root
                     size="3"
-                    variant="soft"
-                    color="gray"
                     radius="full"
-                    aria-label="Bring in a source"
-                  >
-                    <Plus size={20} />
-                  </IconButton>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content size="2" align="start">
-                  <DropdownMenu.Label>Start from what you already have</DropdownMenu.Label>
-                  <DropdownMenu.Item onSelect={() => fileInput.current?.click()}>
-                    <Paperclip size={15} aria-hidden="true" /> Attach a file
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => openDraft('text')}>
-                    <FileText size={15} aria-hidden="true" /> Paste an email or PNR
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => openDraft('url')}>
-                    <Link2 size={15} aria-hidden="true" /> Add a tour link
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    disabled={dictation.recording || dictation.requestingMic}
-                    onSelect={() => void dictation.start()}
-                  >
-                    <Mic size={15} aria-hidden="true" /> Dictate
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-              <input
-                ref={fileInput}
-                type="file"
-                aria-label="Attach a screenshot, PDF or audio file"
-                hidden
-                accept="image/png,image/jpeg,image/webp,application/pdf,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/webm"
-                onChange={(event) => chooseFile(event.target.files?.[0])}
-              />
-              <Box flexGrow="1" minWidth="0">
-                <TextField.Root
+                    aria-label="Tell Tara about your trip"
+                    placeholder="Tell Tara about the trip…"
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    maxLength={maxLength}
+                    style={{ background: 'transparent', boxShadow: 'none' }}
+                  />
+                </Box>
+                <IconButton
+                  type="submit"
                   size="3"
                   radius="full"
-                  aria-label="Tell Tara about your trip"
-                  placeholder="Tell Tara about the trip…"
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  maxLength={maxLength}
-                  style={{ background: 'transparent', boxShadow: 'none' }}
-                />
-              </Box>
-              <IconButton
-                type="submit"
-                size="3"
-                radius="full"
-                loading={busy}
-                disabled={
-                  busy ||
-                  dictation.recording ||
-                  dictation.requestingMic ||
-                  (!message.trim() && !sources.length)
-                }
-                aria-label="Start planning your trip"
-              >
-                <ArrowUp size={20} />
-              </IconButton>
+                  loading={busy}
+                  disabled={
+                    busy ||
+                    dictation.recording ||
+                    dictation.requestingMic ||
+                    (!message.trim() && !sources.length)
+                  }
+                  aria-label="Start planning your trip"
+                >
+                  <ArrowUp size={20} />
+                </IconButton>
+              </Flex>
             </Flex>
-          </Flex>
-        </form>
-      </Box>
+          </form>
+        </Box>
+        {tray}
+      </Flex>
       {/* A source that could not be read says so twice: in red on its own chip, and in words
           under the pill. Nothing is dropped quietly. */}
       {sources
         .filter((source) => source.status === 'error')
         .map((source) => (
-          <Callout.Root key={source.id} color="red" size="1" role="alert">
+          <Callout.Root
+            key={source.id}
+            color="gray"
+            size="1"
+            role="alert"
+            highContrast
+            className={tray ? 'composer-feedback' : undefined}
+            style={NOTICE}
+          >
             <Callout.Icon>
-              <CircleAlert size={16} />
+              <CircleAlert size={16} style={NOTICE_ICON} />
             </Callout.Icon>
             <Callout.Text>
-              {source.label} — {source.error}
+              {/* The name is what the agent scans for when more than one file is held, so it is
+                  set apart from the reason rather than run into it. */}
+              <Text weight="medium">{source.label}</Text> — {source.error}
             </Callout.Text>
           </Callout.Root>
         ))}
       {error && (
-        <Callout.Root color="red" size="1" role="alert">
+        <Callout.Root
+          color="gray"
+          size="1"
+          role="alert"
+          highContrast
+          className={tray ? 'composer-feedback' : undefined}
+          style={NOTICE}
+        >
           <Callout.Icon>
-            <CircleAlert size={16} />
+            <CircleAlert size={16} style={NOTICE_ICON} />
           </Callout.Icon>
           <Callout.Text>{error}</Callout.Text>
         </Callout.Root>
