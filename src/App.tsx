@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -50,7 +58,16 @@ import type { TravelProfile } from '../shared/account';
 import { SettingsPage } from './pages/Settings';
 import { TopLoadingBar, useRouteLoading } from './components/TopLoadingBar';
 import { RecentProposalList, useRecentProposals } from './components/RecentProposals';
-import { NAV_ITEM_HEIGHT, SidebarNavItem, rowFill, useRowHover } from './components/SidebarNavItem';
+import {
+  NAV_ITEM_HEIGHT,
+  RailSlot,
+  SidebarNavItem,
+  fadeWithRail,
+  hiddenOnRail,
+  railTransition,
+  rowFill,
+  useRowHover,
+} from './components/SidebarNavItem';
 import Studio from './pages/Studio';
 import StudioProposal from './pages/StudioProposal';
 
@@ -744,6 +761,41 @@ const MOBILE_BAR_HEIGHT = 64;
 const SIDEBAR_WIDTH = 272;
 const SIDEBAR_COLLAPSED_WIDTH = 72;
 
+/* The panel's geometry, which the collapse animation is built on. Both widths include the 1px
+   right border (the global rule is border-box) and the panel pads its content by 12px (`p="3"`),
+   so the collapsed rail has 47px of content — the slot every glyph in the panel is centred in.
+   The content column itself is always laid out at the expanded width and the panel clips it: the
+   panel narrowing is then a window closing over content that stays where it is, and each piece
+   that must end up narrower (a row, a button) narrows itself on the same curve. */
+const SIDEBAR_BORDER = 1;
+const SIDEBAR_PADDING = 12;
+const SIDEBAR_SLOT = SIDEBAR_COLLAPSED_WIDTH - SIDEBAR_BORDER - 2 * SIDEBAR_PADDING;
+/** A Radix size-3 control — the collapsed rail's icon buttons. */
+const RAIL_CONTROL = 40;
+/** How far a 40px control sits in from the content edge to be centred on the slot. */
+const RAIL_CONTROL_OFFSET = (SIDEBAR_SLOT - RAIL_CONTROL) / 2;
+
+/**
+ * A full-width Button on the expanded panel that is an icon button on the collapsed rail — one
+ * element, not two swapped at the first frame, so its width can animate. Its leading padding is
+ * chosen so the glyph (of the given size) sits on the slot's centre in both states, and the margin
+ * and padding trade off exactly as it narrows, so the glyph holds still while the button's far
+ * edge sweeps in and clips the label. The label must be `nowrap` and must not shrink, for the
+ * same reason: it is clipped, never re-laid out.
+ */
+function railButtonStyle(collapsed: boolean, glyph: number, expandedWidth: string): CSSProperties {
+  const offset = collapsed ? RAIL_CONTROL_OFFSET : 0;
+  return {
+    width: collapsed ? RAIL_CONTROL : expandedWidth,
+    marginLeft: offset,
+    paddingLeft: (SIDEBAR_SLOT - glyph) / 2 - offset,
+    justifyContent: 'flex-start',
+    overflow: 'clip',
+    flexShrink: 0,
+    transition: railTransition('width', 'margin-left', 'padding-left'),
+  };
+}
+
 const SIDEBAR_STORAGE_KEY = 'asktara:sidebar-collapsed';
 
 /**
@@ -813,123 +865,184 @@ function Sidebar({
   useEffect(() => {
     if (!collapsed) setLogoHover(false);
   }, [collapsed]);
+  /* Sign in keeps its Radix tooltip on the rail only. The button has to stay one element across
+     the collapse for its width to animate, so the tooltip cannot be added and removed around it;
+     it is controlled instead, and simply never opens on the expanded panel, where the button
+     already says Sign in. */
+  const [signInTip, setSignInTip] = useState(false);
+  const settingsMenu = (
+    <SidebarSettingsMenu
+      signedIn={!!user}
+      onPreferences={onPreferences}
+      onAgencySettings={onAgencySettings}
+      onAccount={onAccount}
+      onSignOut={onSignOut}
+    />
+  );
   return (
     <Box
       asChild
       display={{ initial: 'none', md: 'block' }}
       flexShrink="0"
-      style={{
-        width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH,
-        // The rail slides between its two widths instead of snapping. The global
-        // prefers-reduced-motion rule in styles.css switches this off for anyone who asks.
-        transition: 'width 220ms cubic-bezier(0.32, 0.72, 0, 1)',
-        // Sticky rather than fixed: the document still scrolls as one, so the existing
-        // scroll-to-top on navigation and the pages' own dvh panels keep working.
-        position: 'sticky',
-        top: 0,
-        alignSelf: 'flex-start',
-        height: '100dvh',
-        borderRight: '1px solid var(--gray-a5)',
-        background: 'var(--gray-2)',
-        zIndex: 5,
-      }}
+      style={
+        {
+          width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH,
+          // The rail slides between its two widths instead of snapping, on the curve every row
+          // and button inside it shares. The global prefers-reduced-motion rule in styles.css
+          // switches all of it off for anyone who asks.
+          transition: railTransition('width'),
+          // The content column below is always the expanded width; this is what hides the part
+          // of it that is past the rail. `clip` rather than `hidden`, because a hidden overflow is
+          // still a scroll container and focusing something past the edge would scroll the whole
+          // panel sideways.
+          overflow: 'clip',
+          // Read by RailSlot and SidebarNavItem, which cannot import these constants from here.
+          '--rail-slot': `${SIDEBAR_SLOT}px`,
+          // Sticky rather than fixed: the document still scrolls as one, so the existing
+          // scroll-to-top on navigation and the pages' own dvh panels keep working.
+          position: 'sticky',
+          top: 0,
+          alignSelf: 'flex-start',
+          height: '100dvh',
+          borderRight: `${SIDEBAR_BORDER}px solid var(--gray-a5)`,
+          background: 'var(--gray-2)',
+          zIndex: 5,
+        } as CSSProperties
+      }
     >
       <aside aria-label="Sidebar">
         {/* 8px between the panel's blocks rather than 12px. With the nav rows now stacked, the
             blocks are what carries the grouping, and at this size the brand, the primary action,
             the navigation and the foot still read as four things without the voids between them
-            doing the work. */}
-        <Flex direction="column" gap="2" p="3" height="100%">
+            doing the work.
+
+            Fixed at the expanded width whichever state the panel is in — see SIDEBAR_SLOT. Nothing
+            in this column is laid out against the panel's animating width, so nothing in it can
+            reflow while the panel moves. */}
+        <Flex
+          direction="column"
+          gap="2"
+          p="3"
+          height="100%"
+          style={{ width: SIDEBAR_WIDTH - SIDEBAR_BORDER }}
+        >
           {/* The brand gets more air below it than the other blocks (8px gap + 12px = 20px): at
               the same 8px the logo read as crowded against the primary action. The action then
               sits a little closer to the navigation (12px) than to the brand, so it groups with
-              what it acts on. */}
+              what it acts on.
+
+              One row in both states. The home link and the collapse toggle stay mounted and simply
+              fade as the panel's edge passes over them; only the expand control is added, laid
+              over the mark in exactly the mark's place. */}
           <Flex
-            direction={collapsed ? 'column' : 'row'}
+            position="relative"
             align="center"
             justify="between"
-            gap="2"
             flexShrink="0"
             mb="3"
+            style={{ height: NAV_ITEM_HEIGHT }}
           >
-            {collapsed ? (
-              /* Collapsed, the mark is the way back out: pointing at it — or focusing it —
-                 swaps the logo for the expand glyph, so the narrow rail carries one control
-                 where it used to stack a logo above a button. The label is a Radix Tooltip
-                 rather than a native title, so it reads like every other label in the app. */
-              <Tooltip content="Expand sidebar">
+            <Link
+              to="/"
+              aria-label="Asktara home"
+              {...hiddenOnRail(collapsed)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                height: NAV_ITEM_HEIGHT,
+                textDecoration: 'none',
+                color: 'var(--accent-9)',
+              }}
+            >
+              {/* Hidden rather than faded while collapsed: the expand control draws the same mark
+                  at the same size in the same place, so the swap is invisible — and a mark still
+                  showing underneath would bleed through its hover wash. */}
+              <RailSlot>
+                <Flex
+                  asChild
+                  align="center"
+                  style={{ visibility: collapsed ? 'hidden' : undefined }}
+                >
+                  <span>
+                    <TaraMark size={26} />
+                  </span>
+                </Flex>
+              </RailSlot>
+              <Text
+                size="4"
+                weight="bold"
+                style={{
+                  color: 'var(--gray-12)',
+                  whiteSpace: 'nowrap',
+                  ...fadeWithRail(collapsed),
+                }}
+              >
+                ask<Text weight="light">tara</Text>
+              </Text>
+            </Link>
+            <Flex {...hiddenOnRail(collapsed)} style={fadeWithRail(collapsed)}>
+              <Tooltip content="Collapse sidebar">
                 <IconButton
                   variant="soft"
                   color="gray"
                   size="3"
-                  aria-label="Expand sidebar"
-                  aria-expanded={false}
+                  aria-label="Collapse sidebar"
+                  aria-expanded
                   onClick={onToggleCollapsed}
-                  onPointerEnter={() => setLogoHover(true)}
-                  onPointerLeave={() => setLogoHover(false)}
-                  onFocus={() => setLogoHover(true)}
-                  onBlur={() => setLogoHover(false)}
                 >
-                  {logoHover ? (
-                    <PanelLeftOpen size={18} />
-                  ) : (
-                    <Flex asChild align="center" style={{ color: 'var(--accent-9)' }}>
-                      <span>
-                        <TaraMark size={22} />
-                      </span>
-                    </Flex>
-                  )}
+                  <PanelLeftClose size={18} />
                 </IconButton>
               </Tooltip>
-            ) : (
-              <>
-                <Link to="/" aria-label="Asktara home" style={{ textDecoration: 'none' }}>
-                  <Flex
-                    align="center"
-                    gap="2"
-                    px="1"
-                    style={{ height: NAV_ITEM_HEIGHT, color: 'var(--accent-9)' }}
-                  >
-                    <TaraMark size={26} />
-                    <Text size="4" weight="bold" style={{ color: 'var(--gray-12)' }}>
-                      ask<Text weight="light">tara</Text>
-                    </Text>
-                  </Flex>
-                </Link>
-                <Tooltip content="Collapse sidebar">
-                  <IconButton
-                    variant="soft"
-                    color="gray"
-                    size="3"
-                    aria-label="Collapse sidebar"
-                    aria-expanded
-                    onClick={onToggleCollapsed}
-                  >
-                    <PanelLeftClose size={18} />
-                  </IconButton>
-                </Tooltip>
-              </>
+            </Flex>
+            {collapsed && (
+              /* Collapsed, the mark is the way back out: pointing at it — or focusing it — swaps
+                 the logo for the expand glyph, so the narrow rail carries one control where it
+                 used to stack a logo above a button. The label is a Radix Tooltip rather than a
+                 native title, so it reads like every other label in the app.
+
+                 Its soft wash shows only while it is pointed at or focused. At rest it would
+                 appear around the logo on the first frame of every collapse, and the rail's
+                 other controls already show that a mark on a rail is pressable; the hover wash,
+                 the glyph swap and the tooltip still arrive together the moment it is reached. */
+              <Box position="absolute" top="0" left="0" height="100%">
+                <RailSlot>
+                  <Tooltip content="Expand sidebar">
+                    <IconButton
+                      variant="soft"
+                      color="gray"
+                      size="3"
+                      aria-label="Expand sidebar"
+                      aria-expanded={false}
+                      onClick={onToggleCollapsed}
+                      onPointerEnter={() => setLogoHover(true)}
+                      onPointerLeave={() => setLogoHover(false)}
+                      onFocus={() => setLogoHover(true)}
+                      onBlur={() => setLogoHover(false)}
+                      style={{ backgroundColor: logoHover ? undefined : 'transparent' }}
+                    >
+                      {logoHover ? (
+                        <PanelLeftOpen size={18} />
+                      ) : (
+                        <Flex asChild align="center" style={{ color: 'var(--accent-9)' }}>
+                          <span>
+                            <TaraMark size={26} />
+                          </span>
+                        </Flex>
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                </RailSlot>
+              </Box>
             )}
           </Flex>
           {/* The action's weight is the one thing about it that depends on who is here, so the
-              row holds its height from the first frame and fills in once the session is known. */}
+              row holds its height from the first frame and fills in once the session is known.
+
+              One Button in both states: on the rail it narrows to the 40px square the icon button
+              used to be, the plus holding still on the slot's centre while the label is clipped
+              away behind it. */}
           {!identityKnown ? (
             <Box flexShrink="0" style={{ height: NAV_ITEM_HEIGHT }} />
-          ) : collapsed ? (
-            <Flex justify="center" flexShrink="0">
-              <IconButton
-                asChild
-                size="3"
-                variant={user ? 'solid' : 'soft'}
-                color={user ? undefined : 'gray'}
-                aria-label="Create a proposal"
-                title="Create a proposal"
-              >
-                <Link to="/">
-                  <Plus size={18} />
-                </Link>
-              </IconButton>
-            </Flex>
           ) : (
             <Button
               asChild
@@ -937,14 +1050,22 @@ function Sidebar({
               variant={user ? 'solid' : 'soft'}
               color={user ? undefined : 'gray'}
               style={{
-                width: '100%',
-                justifyContent: 'flex-start',
+                ...railButtonStyle(collapsed, 16, '100%'),
                 fontSize: 'var(--font-size-2)',
               }}
             >
-              <Link to="/">
-                <Plus size={16} />
-                Create a proposal
+              <Link
+                to="/"
+                aria-label={collapsed ? 'Create a proposal' : undefined}
+                title={collapsed ? 'Create a proposal' : undefined}
+              >
+                <Plus size={16} style={{ flexShrink: 0 }} />
+                <span
+                  {...hiddenOnRail(collapsed)}
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0, ...fadeWithRail(collapsed) }}
+                >
+                  Create a proposal
+                </span>
               </Link>
             </Button>
           )}
@@ -952,8 +1073,11 @@ function Sidebar({
               action and the account stay put at both ends. */}
           <Box flexGrow="1" mt="1" style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             {/* No gap: the rows stack and each row's own 40px does the separating. See
-                SidebarNavItem for why that is still the right call against the target rule. */}
-            <Flex asChild direction="column" gap="0">
+                SidebarNavItem for why that is still the right call against the target rule.
+
+                A size container, so each row can lay its label out against the navigation's
+                width — which never animates — instead of its own, which does. */}
+            <Flex asChild direction="column" gap="0" style={{ containerType: 'inline-size' }}>
               <nav aria-label="Main navigation">
                 <SidebarNavItem
                   to="/studio"
@@ -991,37 +1115,49 @@ function Sidebar({
                 />
               </nav>
             </Flex>
-            {user && !collapsed && <RecentProposalList recent={recent} />}
+            {/* Recent has no place on the rail, but it leaves with the panel rather than on the
+                first frame: it fades, and its height closes to nothing on the same curve (a grid
+                row going from 1fr to 0fr is the one way to animate to an intrinsic height). It is
+                the last thing in this region, so closing it moves nothing else. */}
+            {user && (
+              <Box
+                {...hiddenOnRail(collapsed)}
+                style={{
+                  display: 'grid',
+                  gridTemplateRows: collapsed ? '0fr' : '1fr',
+                  opacity: collapsed ? 0 : 1,
+                  transition: railTransition('grid-template-rows', 'opacity'),
+                }}
+              >
+                <Box style={{ minHeight: 0, overflow: 'clip' }}>
+                  <RecentProposalList recent={recent} />
+                </Box>
+              </Box>
+            )}
           </Box>
           {/* Held back with the primary action: the foot is a different shape signed in and
               signed out, so drawing the wrong one first would move the panel under the pointer. */}
           {identityKnown && (
             <Box flexShrink="0">
-              <Separator size="4" mb="2" />
+              {/* The column is wider than the rail, so the rule narrows with the rows rather than
+                  running on to the panel's edge. */}
+              <Separator
+                size="4"
+                mb="2"
+                style={{
+                  width: collapsed ? SIDEBAR_SLOT : '100%',
+                  transition: railTransition('width'),
+                }}
+              />
               {user ? (
-                <Flex
-                  direction={collapsed ? 'column' : 'row'}
-                  align="center"
-                  gap="2"
-                  justify={collapsed ? 'center' : 'start'}
-                >
-                  {collapsed ? (
-                    <IconButton
-                      variant="soft"
-                      color="gray"
-                      size="3"
-                      data-testid="account-button"
-                      aria-label="Manage account"
-                      title={user.name}
-                      onClick={onAccount}
-                    >
-                      <Avatar
-                        size="1"
-                        radius="full"
-                        fallback={user.name.slice(0, 1).toUpperCase()}
-                      />
-                    </IconButton>
-                  ) : (
+                <Flex direction="column" gap="2">
+                  {/* On the rail the gear goes above the account rather than below it, so the
+                      account button — the foot's primary target — keeps its place at the bottom in
+                      both states. The gear is the one control that has to change places; it does
+                      so on the first frame, once, where the panel's edge is already covering the
+                      spot it left, instead of sliding across the panel after it. */}
+                  {collapsed && <RailSlot>{settingsMenu}</RailSlot>}
+                  <Flex align="center" justify="between">
                     <Button
                       variant="soft"
                       color="gray"
@@ -1030,10 +1166,8 @@ function Sidebar({
                       aria-label="Manage account"
                       title={user.name}
                       onClick={onAccount}
-                      // Radix pins its buttons to `flex-shrink: 0`, which is right in a toolbar and
-                      // wrong here: this one is the row's elastic member, so it takes the space the
-                      // two icon buttons leave and gives its label somewhere to ellipse into.
-                      style={{ flex: '1 1 0', minWidth: 0, justifyContent: 'flex-start' }}
+                      // Takes the width the gear and its 8px gap leave on the expanded panel.
+                      style={railButtonStyle(collapsed, 24, `calc(100% - ${RAIL_CONTROL + 8}px)`)}
                     >
                       <Avatar
                         size="1"
@@ -1041,70 +1175,81 @@ function Sidebar({
                         fallback={user.name.slice(0, 1).toUpperCase()}
                         style={{ flexShrink: 0 }}
                       />
-                      {/* A flex item's automatic minimum is its content, so without this the long
-                        name would push the two icon buttons past the panel's edge instead of
-                        ellipsing. `size="2"` overrides the 16px a size-3 Radix button gives its
-                        label: the button stays 40px for the target rule, but the name now sits
-                        at the same 14px as the rows above it instead of shouting over them. */}
-                      <Text size="2" truncate style={{ minWidth: 0 }}>
+                      {/* `size="2"` overrides the 16px a size-3 Radix button gives its label: the
+                        button stays 40px for the target rule, but the name now sits at the same
+                        14px as the rows above it instead of shouting over them.
+
+                        The name does not shrink with the button — it would re-ellipse on every
+                        frame. It is capped at the room it has on the expanded panel (the button's
+                        width less the avatar, the slot inset, and Radix's size-3 gap and trailing
+                        padding) and ellipses there, and the narrowing button clips it. */}
+                      <Text
+                        size="2"
+                        truncate
+                        {...hiddenOnRail(collapsed)}
+                        style={{
+                          flexShrink: 0,
+                          maxWidth: `calc(${
+                            SIDEBAR_WIDTH -
+                            SIDEBAR_BORDER -
+                            2 * SIDEBAR_PADDING -
+                            (RAIL_CONTROL + 8) -
+                            (SIDEBAR_SLOT - 24) / 2 -
+                            24
+                          }px - var(--space-3) - var(--space-4))`,
+                          ...fadeWithRail(collapsed),
+                        }}
+                      >
                         {user.name}
                       </Text>
                     </Button>
-                  )}
-                  <SidebarSettingsMenu
-                    signedIn
-                    onPreferences={onPreferences}
-                    onAgencySettings={onAgencySettings}
-                    onAccount={onAccount}
-                    onSignOut={onSignOut}
-                  />
+                    {!collapsed && settingsMenu}
+                  </Flex>
                 </Flex>
               ) : (
-                <Flex direction="column" gap="2" align={collapsed ? 'center' : 'stretch'}>
+                /* No gap on this column: the note's spacing lives inside the part that closes, so
+                   the rail is left with exactly the 8px between the gear and Sign in. */
+                <Flex direction="column">
                   {/* Travel preferences stay reachable signed out on purpose: a guest's answers
                     migrate into the account at sign-up, so hiding them would lose that work. */}
-                  {collapsed ? (
-                    <>
-                      <SidebarSettingsMenu
-                        signedIn={false}
-                        onPreferences={onPreferences}
-                        onAgencySettings={onAgencySettings}
-                        onAccount={onAccount}
-                        onSignOut={onSignOut}
-                      />
-                      <Tooltip content="Sign in">
-                        <IconButton size="3" aria-label="Sign in" onClick={onSignIn}>
-                          <LogIn size={18} />
-                        </IconButton>
-                      </Tooltip>
-                    </>
-                  ) : (
-                    <>
-                      <Flex align="center" gap="2">
-                        <SidebarSettingsMenu
-                          signedIn={false}
-                          onPreferences={onPreferences}
-                          onAgencySettings={onAgencySettings}
-                          onAccount={onAccount}
-                          onSignOut={onSignOut}
-                        />
-                      </Flex>
-                      <Box px="3" pt="1">
+                  <RailSlot>{settingsMenu}</RailSlot>
+                  <Box
+                    {...hiddenOnRail(collapsed)}
+                    style={{
+                      display: 'grid',
+                      gridTemplateRows: collapsed ? '0fr' : '1fr',
+                      opacity: collapsed ? 0 : 1,
+                      transition: railTransition('grid-template-rows', 'opacity'),
+                    }}
+                  >
+                    <Box style={{ minHeight: 0, overflow: 'clip' }}>
+                      <Box px="3" pt="3">
                         <Text as="div" size="1" color="gray">
                           Sign in to keep your trips, wishlist and proposals.
                         </Text>
                       </Box>
-                      <Button
-                        size="3"
-                        aria-label="Sign in"
-                        onClick={onSignIn}
-                        style={{ width: '100%', justifyContent: 'flex-start' }}
+                    </Box>
+                  </Box>
+                  <Tooltip
+                    content="Sign in"
+                    open={collapsed && signInTip}
+                    onOpenChange={setSignInTip}
+                  >
+                    <Button
+                      size="3"
+                      aria-label="Sign in"
+                      onClick={onSignIn}
+                      style={{ ...railButtonStyle(collapsed, 18, '100%'), marginTop: 8 }}
+                    >
+                      <LogIn size={18} style={{ flexShrink: 0 }} />
+                      <span
+                        {...hiddenOnRail(collapsed)}
+                        style={{ whiteSpace: 'nowrap', flexShrink: 0, ...fadeWithRail(collapsed) }}
                       >
-                        <LogIn size={18} />
                         Sign in
-                      </Button>
-                    </>
-                  )}
+                      </span>
+                    </Button>
+                  </Tooltip>
                 </Flex>
               )}
             </Box>
