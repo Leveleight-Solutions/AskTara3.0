@@ -57,3 +57,102 @@ a {
     transition: none !important;
   }
 }
+
+/* The home hero's detail toolbar (src/components/TripDetailChips.tsx).
+
+   It is a strip attached to the underside of the composer rather than a row of buttons floating
+   below it: inset from the pill's edges, square across the top and rounded along the bottom, so
+   the two read as one control that happens to have a tray. The top of the strip is tucked behind
+   the pill, which is opaque and lifted, so the seam never shows and no sliver of the hero is
+   trapped between them; the padding gives that tucked height back and a little over, so what is
+   visible of the strip is the chip plus the air above and below it.
+
+   The chips inside are flat until they are pointed at, open or answered. Radix's Button covers
+   each of those looks, but not one control that moves between them without resizing — its ghost
+   variant sizes itself to its text, so swapping ghost for soft on open made the chip shorter and
+   the hero above it jump. The geometry is fixed here and only the fill changes with state. Radix
+   wraps its own variant rules in :where(), so a single class outranks them without !important.
+
+   The tray is translucent, which is settled, and that is what everything drawn on it has to cope
+   with: the strip is not one colour. AuroraBackground paints a near-white ground with a glow
+   drifting over it, so an alpha grey composites out anywhere between #e9ecf0 where the hero is
+   plain and #cee1f1 under the middle of the glow — and the glow is behind the composer, which is
+   exactly where this tray is. Every ratio quoted below is measured on that darkest end, because a
+   value that only holds on the pale end is not a value. The one thing that cannot be earned this
+   way is the dark appearance: the aurora's ground is a fixed light hex in both appearances, so an
+   alpha grey stays pale there while the theme's text steps go near-white. That is a fault in the
+   hero behind this file, not in the marks on top of it — see the note on the label's colour in
+   TripDetailChips.tsx. */
+.chip-bar {
+  width: calc(100% - var(--space-4) * 2);
+  margin-top: calc(var(--space-3) * -1);
+  /* The top pays back the 12px tucked behind the pill and adds the gap on top of it; the other
+     three sides are that same gap.
+
+     It has to be the same on both axes, and that is the whole reason this is one value: a chip's
+     corner only nests inside the tray's if the distance between the two curves is constant, and
+     with 8px at the side and 2px underneath there was no radius that could sit right against both.
+     4px is the tightest the scale offers, so the chips stay seated in the tray rather than floating
+     in it, and it sets the chip's own radius below: 16px tray corner less a 4px gap is 12px. */
+  padding: calc(var(--space-3) + var(--space-1)) var(--space-1) var(--space-1);
+  /* An alpha grey, not a solid one, and deliberately so: it composites with whatever the hero is
+     doing behind it, so the tray picks up the aurora's blue and reads as part of the hero rather
+     than a grey panel dropped onto it. A solid step is easier to prove contrast against and was
+     tried, but it looked like a slab. The contrast is earned in the marks instead — the label at
+     the scale's high-contrast step, the icons at step 11, and no opacity on either. */
+  background-color: var(--gray-a3);
+  border-radius: 0 0 var(--radius-6) var(--radius-6);
+}
+.chip {
+  margin: 0;
+  /* Radix's button reset is content-box, so a height asked for here would have the button's own
+     4px of block padding added on top of it; pinning the box model makes the height the height.
+
+     36px is the chip a pointer gets. The strip is a quiet footnote under the composer, and at 44px
+     the chips were the second-heaviest thing in the hero — the reference's actions are lighter
+     than their own field, which is what makes them read as trim rather than as a second row of
+     buttons. The 44px touch floor is not abandoned, it is moved to where it belongs: the media
+     query below restores it on any device that cannot hover, where a fingertip is the pointer. */
+  box-sizing: border-box;
+  height: calc(var(--space-6) + var(--space-1));
+  /* 12px of shoulder: the fill is visible in two of the four states, and at 8px it sat on the
+     label. */
+  padding-inline: var(--space-3);
+  gap: var(--space-2);
+  /* Icons only — the label carries its own high-contrast colour from the component, so that the
+     two can be told apart deliberately instead of through an opacity that answers to nothing.
+     Step 11 measures 4.26:1 on the tray under the glow and 4.85:1 away from it, which is short of
+     the 4.5:1 a piece of text owes and comfortably past the 3:1 a non-text mark owes. That is the
+     whole reason the two are split: the marks can afford step 11, the words cannot. The one place
+     it dips is hover, at 3.52:1, where the extra alpha layer darkens the ground under a mark that
+     has not changed colour; still above the floor, and the state lasts as long as the pointer
+     rests there. */
+  color: var(--gray-11);
+  background-color: transparent;
+  /* Concentric with the tray: the outer corner less the gap between them, written as that
+     subtraction so the two cannot drift apart when either changes. Radix's own radius prop on the
+     Button lands on the same 12px today, but by coincidence rather than by rule. */
+  border-radius: calc(var(--radius-6) - var(--space-1));
+  transition: background-color 120ms ease;
+}
+/* A fingertip is not a cursor: where there is no hover there is also no way to discover a target
+   by brushing it, so the chip takes the full 44px floor back. A pointer query rather than a width,
+   because a wide touchscreen has no hover either. */
+@media (pointer: coarse) {
+  .chip {
+    height: calc(var(--space-7) + var(--space-1));
+  }
+}
+/* Another alpha layer over the tray's own, so hover deepens the same tint rather than introducing
+   a second colour. A solid step would sit on a translucent tray as a patch of a different material
+   and, on a tray this pale, would barely register at all. */
+.chip:hover {
+  background-color: var(--gray-a4);
+}
+/* Answered or open, the chip arrives at the panel colour and takes a shadow with it, which is what
+   separates it from the hover it passed through on the way. */
+.chip[data-state='open'],
+.chip[data-chip-set='true'] {
+  background-color: var(--color-panel-solid);
+  box-shadow: var(--shadow-2);
+}
