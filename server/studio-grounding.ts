@@ -1,4 +1,4 @@
-import type { StudioBrief, StudioStop } from '../shared/studio.ts';
+import type { StudioBrief, StudioStop, StudioWorkspace } from '../shared/studio.ts';
 import { StudioError } from './studio-store.ts';
 import { detectDestinationIntent } from './planner.ts';
 
@@ -196,11 +196,10 @@ function dateFor(
   if (anchored.length) return (field === 'startDate' ? anchored[0] : anchored.at(-1))!.date;
   if (dates.length >= 2 && /\b(?:to|between)\b|[–]/i.test(source))
     return (field === 'startDate' ? dates[0] : dates.at(-1))!.date;
-  if (allowBare && dates.length === 1 && !start.test(source) && !end.test(source))
-    return dates[0].date;
   if (
-    field === 'startDate' &&
+    allowBare &&
     dates.length === 1 &&
+    !start.test(source) &&
     !end.test(source) &&
     !/\b(?:depart|fly|flight)\b/i.test(source)
   )
@@ -264,6 +263,45 @@ function money(source: string): {
   };
 }
 
+type StudioGroundingContext = {
+  messages?: Pick<StudioWorkspace['messages'][number], 'role' | 'content'>[];
+  /** The brief after applying literal, validated user facts. */
+  brief?: StudioBrief;
+};
+
+function questionFields(
+  context: StudioGroundingContext,
+  current: Pick<StudioBrief, 'children'> = { children: null },
+) {
+  const reply = context.messages?.findLast((entry) => entry.role === 'assistant')?.content || '';
+  const sentences = reply.match(/[^.!?]+[.!?]?/g) || [];
+  const question =
+    [...sentences].reverse().find((sentence) => sentence.endsWith('?')) || sentences.at(-1) || '';
+  const fields = new Set<string>();
+  if (/\badults?\b/i.test(question)) fields.add('adults');
+  const ages = /\b(?:ages?|how old)\b/i.test(question);
+  if (ages && (/\b(?:children|kids?|infants?|their)\b/i.test(question) || current.children))
+    fields.add('childAges');
+  else if (/\b(?:children|kids?|infants?)\b/i.test(question)) fields.add('children');
+  if (/\b(?:budget|spend|price point|group total)\b/i.test(question)) fields.add('budget');
+  if (/\b(?:nights?|length of stay|how long)\b/i.test(question)) fields.add('nights');
+  if (/\b(?:arrival|arrive|start(?:ing)? date|when.*(?:travel|go|begin|start))\b/i.test(question))
+    fields.add('startDate');
+  if (/\b(?:return|end date|leave|depart)\b/i.test(question)) fields.add('endDate');
+  if (/\bdates?\b/i.test(question) && !/\b(?:birth|born)\b/i.test(question))
+    fields.add('datesFlexible');
+  return fields;
+}
+
+function answersField(fields: Set<string>, field: string) {
+  if (!fields.has(field)) return false;
+  if (field === 'startDate' || field === 'endDate')
+    return !fields.has(field === 'startDate' ? 'endDate' : 'startDate');
+  if (field === 'datesFlexible')
+    return [...fields].every((entry) => ['startDate', 'endDate', 'datesFlexible'].includes(entry));
+  return fields.size === 1;
+}
+
 /** Apply only source-grounded critical facts. The model chooses fields; it cannot invent their values. */
 export function groundedStudioBrief(
   current: StudioBrief,
@@ -271,8 +309,12 @@ export function groundedStudioBrief(
   facts: { field: keyof StudioBrief; evidence: string }[],
   message: string,
   documentTexts: string[],
+  context: StudioGroundingContext = {},
 ): StudioBrief {
   const next = structuredClone(current);
+  const asked = questionFields(context, current);
+  const contextual = (source: string, field: string) =>
+    normal(source) === normal(message) && answersField(asked, field);
   const valid = facts
     .map((fact) => ({ ...fact, sources: actualSources(fact.evidence, message, documentTexts) }))
     .filter((fact) => fact.sources.length);
@@ -291,9 +333,15 @@ export function groundedStudioBrief(
   for (const fact of valid) {
     if (fact.field !== 'adults' && fact.field !== 'children') continue;
     const source = fact.sources[0];
+    const allowBare = bareNumber(message) && contextual(source, fact.field);
     const value =
-      count(fact.evidence, fact.field, bareNumber(message)) ??
-      count(source, fact.field, bareNumber(message));
+      count(fact.evidence, fact.field, allowBare) ??
+      count(source, fact.field, allowBare) ??
+      (fact.field === 'children' &&
+      contextual(source, 'children') &&
+      /^\s*(?:no|none|nope)(?:\s+(?:this time|thanks|thank you))?[.!]?\s*$/i.test(message)
+        ? 0
+        : undefined);
     if (value !== undefined) {
       if (fact.field === 'children' && value !== next.children) next.childAges = [];
       next[fact.field] = value;
@@ -306,7 +354,10 @@ export function groundedStudioBrief(
       const text = numeric(fact.evidence);
       const scoped =
         text.match(/\b(?:ages?|aged)\s*[:=]?\s*([\d\s,&-]+(?:and\s*\d+)?)/i)?.[1] ||
-        (/^\s*[\d\s,&-]+(?:and\s*\d+)?[.!]?\s*$/i.test(text) ? text : '');
+        numeric(source).match(/\b(?:ages?|aged)\s*[:=]?\s*([\d\s,&-]+(?:and\s*\d+)?)/i)?.[1] ||
+        (contextual(source, 'childAges') && /^\s*[\d\s,&-]+(?:and\s*\d+)?[.!]?\s*$/i.test(text)
+          ? text
+          : '');
       const ages = scoped.match(/\d+/g)?.map(Number) || [];
       if (
         next.children !== 0 &&
@@ -317,16 +368,22 @@ export function groundedStudioBrief(
         next.childAges = ages;
     } else if (fact.field === 'startDate' || fact.field === 'endDate') {
       // Source context distinguishes an arrival from an outbound flight departure.
-      const value = dateFor(source, fact.field, normal(source) === normal(fact.evidence));
+      const value = dateFor(source, fact.field, contextual(source, fact.field));
       if (value) next[fact.field] = value;
     } else if (fact.field === 'datesFlexible') {
       if (
-        /\b(?:dates? (?:are |is )?flexible|flexible dates?|any dates?|not fixed|no fixed dates?)\b/i.test(
+        /\b(?:dates? (?:are |is )?(?:flexible|not fixed)|flexible dates?|any dates?|no fixed dates?)\b/i.test(
           source,
-        )
+        ) ||
+        (contextual(source, 'datesFlexible') &&
+          /^\s*(?:flexible|not fixed)[.!]?\s*$/i.test(message))
       )
         next.datesFlexible = true;
-      else if (/\b(?:dates? (?:are |is )?(?:fixed|not flexible)|fixed dates?)\b/i.test(source))
+      else if (
+        /\b(?:dates? (?:are |is )?(?:fixed|not flexible)|fixed dates?)\b/i.test(source) ||
+        (contextual(source, 'datesFlexible') &&
+          /^\s*(?:fixed|not flexible)[.!]?\s*$/i.test(message))
+      )
         next.datesFlexible = false;
     }
   }
@@ -337,6 +394,7 @@ export function groundedStudioBrief(
     const source = moneyFact.sources[0];
     const budgetScope = source.match(/\b(?:budget|spend|total group price)[^;\n]{0,250}/i)?.[0];
     const detail = money(budgetScope || source);
+    if (bareNumber(source) && !contextual(source, 'budget')) detail.amount = undefined;
     const currency = detail.currency || next.currency;
     if (detail.amount !== undefined) {
       let multiplier = 1;
@@ -414,11 +472,18 @@ function routeEntries(source: string): { name: string; country: string; nights: 
     const name = match[1]
       .replace(/^(?:change|switch|replace)\b.*\b(?:to|with)\s+/i, '')
       .replace(
-        /^(?:(?:and|then|visit|plan|stay in|go to|travel to|a trip to|we want|we would like)\s+)+/i,
+        /^(?:(?:and|then|visit|plan|stay in|go to|travel to|a trip to|trip to|to|we want|we would like)\s+)+/i,
         '',
       )
       .trim();
-    if (!name || /\b(?:adults?|children|budget|hotels?|proposal|nights?)\b/i.test(name)) continue;
+    if (
+      !name ||
+      /\b(?:adults?|children|budget|hotels?|proposal|nights?)\b/i.test(name) ||
+      /^(?:for|about|around|approximately|stay|staying|spend|spending|I|we|they|it|the|a|an)\b/i.test(
+        name,
+      )
+    )
+      continue;
     entries.push({ name, country: match[2]?.trim() || '', nights: +match[3] });
   }
   return entries;
@@ -451,6 +516,7 @@ function requestedNights(
   name: string,
   current: number | null,
   singleStop: boolean,
+  allowBare = false,
 ): number | undefined {
   const text = numeric(source),
     place = escape(name);
@@ -478,7 +544,31 @@ function requestedNights(
     ) ||
     text.match(new RegExp(`\\b(\\d+)\\s+nights?\\s+(?:in|at|for)\\s+${place}\\b`, 'i')) ||
     (singleStop ? text.match(/^\s*(\d+)\s+nights?\s*(?:please)?[.!]?\s*$/i) : null);
-  return absolute ? Number(absolute[1]) : undefined;
+  if (absolute) return Number(absolute[1]);
+  if (!singleStop) return;
+  // In a one-stop conversation, arrival and duration often share one short answer:
+  // "18 November 2026, for 3 nights". Do not assign another named city's stay here.
+  const durations = [...text.matchAll(/\b(\d+)\s+nights?\b/gi)];
+  if (
+    durations.length === 1 &&
+    routeEntries(source).every((entry) => placeNormal(entry.name) === placeNormal(name)) &&
+    !/\bnights?\s+(?:in|at|for)\s+[\p{L}]/iu.test(text) &&
+    !/\b(?:more|extra|another|add|remove|extend|lengthen|shorten|by)\b/i.test(text)
+  )
+    return Number(durations[0][1]);
+  if (allowBare && bareNumber(text)) return Number(text.match(/\d+/)?.[0]);
+}
+
+function recentUserRouteSources(messages: NonNullable<StudioGroundingContext['messages']>) {
+  const sources: string[] = [];
+  for (const entry of [...messages].reverse()) {
+    if (entry.role !== 'user') continue;
+    sources.push(entry.content);
+    // Stop at the most recent destination request: an earlier, superseded route
+    // must not justify a model reverting the client's destination.
+    if (detectDestinationIntent(entry.content).kind === 'explicit') break;
+  }
+  return sources;
 }
 
 /** A literal excerpt cannot justify replacing London with an unrelated model-selected city. */
@@ -488,6 +578,7 @@ export function assertStudioRouteGrounding(
   message: string,
   documentTexts: string[],
   routeEvidence: string,
+  context: StudioGroundingContext = {},
 ): void {
   if (sameRoute(current, proposed)) return;
   const fail = () => {
@@ -496,7 +587,15 @@ export function assertStudioRouteGrounding(
       'The route did not match the supplied destinations or stay lengths. Please retry or edit the route directly.',
     );
   };
-  if (!actualSources(routeEvidence, message, documentTexts).length) fail();
+  const messages = context.messages || [];
+  const history = !current.length ? recentUserRouteSources(messages) : [];
+  if (!actualSources(routeEvidence, message, [...documentTexts, ...history]).length) fail();
+  const asked = questionFields(context, context.brief);
+  const answeringNights =
+    asked.has('nights') &&
+    [...asked].every((field) =>
+      ['nights', 'startDate', 'endDate', 'datesFlexible'].includes(field),
+    );
   const ideas =
     /\b(?:suggest|recommend|choose|pick|design)\b.{0,65}\b(?:route|destinations?|cities|places|itinerary)\b|\b(?:route ideas|where should (?:we|they|i) go|surprise me)\b/i.test(
       message,
@@ -509,18 +608,35 @@ export function assertStudioRouteGrounding(
     /\b(?:use|update|build|plan|read|review)\b.{0,50}\b(?:source|document|import|screenshot|pnr|brief|route|itinerary)\b/i.test(
       message,
     );
-  if (current.length && !change && !ideas && !sourceChange) fail();
+  if (
+    current.length &&
+    !change &&
+    !ideas &&
+    !sourceChange &&
+    !readDates(message).length &&
+    !(answeringNights && bareNumber(message))
+  )
+    fail();
   const source = [message, ...(!current.length || sourceChange ? documentTexts : [])].join('\n');
-  for (const entry of proposed) {
+  const initialSource = [source, ...history].join('\n');
+  for (const [index, entry] of proposed.entries()) {
     const old = current.find((previous) => placeNormal(previous.name) === placeNormal(entry.name));
-    if (!ideas && old && old.nights !== entry.nights) {
-      const expected = requestedNights(source, entry.name, old.nights, current.length === 1);
+    if (!ideas && (old ? old.nights !== entry.nights : entry.nights !== null)) {
+      const singleStop = proposed.length === 1 && current.length <= 1;
+      const expected =
+        requestedNights(source, entry.name, old?.nights ?? null, singleStop, answeringNights) ??
+        (!current.length
+          ? history
+              .map((text) => requestedNights(text, entry.name, null, singleStop))
+              .find((nights) => nights !== undefined)
+          : undefined);
       if (expected === undefined || expected !== entry.nights) fail();
     }
     if (
       entry.arrivalFixed &&
       entry.arrivalDate &&
       !readDates(source).some((date) => date.date === entry.arrivalDate) &&
+      !(index === 0 && context.brief?.startDate === entry.arrivalDate) &&
       !current.some(
         (old) =>
           old.arrivalFixed &&
@@ -533,7 +649,7 @@ export function assertStudioRouteGrounding(
   if (!ideas) {
     for (const entry of proposed)
       if (
-        !containsPlace(source, entry.name) &&
+        !containsPlace(initialSource, entry.name) &&
         !current.some((old) => placeNormal(old.name) === placeNormal(entry.name))
       )
         fail();

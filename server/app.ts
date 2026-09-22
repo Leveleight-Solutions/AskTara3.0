@@ -40,7 +40,7 @@ import {
 } from './validation.ts';
 import { integrationStatus, ProviderError, searchFlights, searchHotels } from './integrations.ts';
 import { tripCalendar } from './calendar.ts';
-import { publicConfig } from './config.ts';
+import { publicConfig, sessionCookieName } from './config.ts';
 import { addCatalogItem, TripItemError } from './trip-items.ts';
 import {
   AccountError,
@@ -56,9 +56,10 @@ import { installStudioRoutes } from './studio-routes.ts';
 import { StudioImportError } from './studio-imports.ts';
 import { installStudioProposalRoutes } from './studio-proposals.ts';
 import { installStudioSupplierRoutes } from './studio-suppliers.ts';
+import { installApiDocs } from './api-docs.ts';
 
 const deriveKey = promisify(scrypt);
-const COOKIE = 'asktara_session';
+const LEGACY_COOKIE = 'asktara_session';
 const SESSION_AGE = 30 * 24 * 60 * 60 * 1000;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 interface SessionRecord {
@@ -94,6 +95,7 @@ export function createApp(
     bookingProviders?: Partial<Record<'hotel' | 'flight', BookingProvider>>;
   } = {},
 ) {
+  const cookieName = sessionCookieName();
   const app = express();
   const db = openDatabase(dbPath);
   app.locals.db = db;
@@ -125,6 +127,7 @@ export function createApp(
       message: { error: 'Too many requests. Please wait a minute.' },
     }),
   );
+  installApiDocs(app, cookieName);
   app.use('/api/studio/import/preview', express.json({ limit: '12mb' }));
   app.use(express.json({ limit: '256kb' }));
   app.use(cookieParser());
@@ -137,8 +140,9 @@ export function createApp(
       if (origin) {
         const allowed = new Set([`${req.protocol}://${req.get('host')}`, process.env.APP_ORIGIN]);
         if (process.env.NODE_ENV !== 'production') {
-          allowed.add('http://localhost:5173');
-          allowed.add('http://127.0.0.1:5173');
+          const webPort = Number(process.env.WEB_PORT || 5173);
+          for (const hostname of ['localhost', '127.0.0.1', '[::1]'])
+            allowed.add(`http://${hostname}:${webPort}`);
         }
         if (!allowed.has(origin))
           return res.status(403).json({ error: 'This origin is not allowed.' });
@@ -174,16 +178,20 @@ export function createApp(
       userId,
       session.expires_at,
     );
-    res.cookie(COOKIE, token, cookieOptions);
+    res.cookie(cookieName, token, cookieOptions);
     return session;
   }
   app.use('/api', (req, res, next) => {
-    const cookie = req.cookies[COOKIE];
+    const usingLegacy = cookieName !== LEGACY_COOKIE && req.cookies[cookieName] === undefined;
+    const cookie = usingLegacy ? req.cookies[LEGACY_COOKIE] : req.cookies[cookieName];
     let session: SessionRecord | undefined;
     if (typeof cookie === 'string' && /^[a-f0-9]{64}$/.test(cookie))
       session = db
         .prepare('SELECT * FROM sessions WHERE id = ? AND expires_at > ?')
         .get(hash(cookie), Date.now()) as unknown as SessionRecord | undefined;
+    // Migrate only a token owned by this database. Keep the legacy cookie because
+    // another local checkout may still use it; our scoped cookie takes precedence.
+    if (session && usingLegacy) res.cookie(cookieName, cookie, cookieOptions);
     res.locals.session = session || createSession(res);
     next();
   });

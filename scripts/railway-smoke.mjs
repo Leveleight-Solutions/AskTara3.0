@@ -13,6 +13,7 @@ const futureDate = (now, days) =>
 function client(base, fetchImpl) {
   const cookies = new Map();
   let sessionFlags = '';
+  let sessionCookieName;
   async function request(
     path,
     { method = 'GET', body, expected = 200, json = true, timeout = 30000 } = {},
@@ -38,7 +39,10 @@ function client(base, fetchImpl) {
       if (separator < 1) continue;
       const name = pair.slice(0, separator);
       cookies.set(name, pair.slice(separator + 1));
-      if (name === 'asktara_session') sessionFlags = cookie.slice(pair.length);
+      if (/;\s*HttpOnly(?:;|$)/i.test(cookie)) {
+        sessionCookieName = name;
+        sessionFlags = cookie.slice(pair.length);
+      }
     }
     const raw = await response.text();
     assert(
@@ -58,7 +62,7 @@ function client(base, fetchImpl) {
   }
   return {
     request,
-    hasSession: () => cookies.has('asktara_session'),
+    hasSession: () => Boolean(sessionCookieName && cookies.has(sessionCookieName)),
     sessionFlags: () => sessionFlags,
     cookieHeader: () => [...cookies].map(([name, value]) => `${name}=${value}`).join('; '),
   };

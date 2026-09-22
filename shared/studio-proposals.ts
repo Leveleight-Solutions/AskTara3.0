@@ -1,4 +1,5 @@
 import type { StudioItem, StudioStop } from './studio';
+import type { StudioItinerary } from './studio-itinerary';
 
 /** Public, immutable client output. Never extend this with the private workspace. */
 export interface StudioClientProposal {
@@ -52,6 +53,7 @@ export interface StudioClientProposal {
     description: string;
     sources: { label: string; url: string; checkedAt: string }[];
   }[];
+  itinerary?: StudioItinerary | null;
   pricing: {
     mode: 'itemised' | 'package';
     packagePrice: number | null;

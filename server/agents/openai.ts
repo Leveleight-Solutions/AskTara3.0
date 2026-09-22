@@ -2,8 +2,20 @@ import { z } from 'zod';
 
 export const DEFAULT_OPENAI_MODEL = 'gpt-6-astra';
 export const planningModel = () => process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+type OpenAIPlanningCode =
+  | 'OPENAI_NOT_CONFIGURED'
+  | 'OPENAI_ACCESS_DENIED'
+  | 'OPENAI_MODEL_UNAVAILABLE'
+  | 'OPENAI_RATE_LIMITED'
+  | 'OPENAI_UNAVAILABLE';
 export class OpenAIPlanningError extends Error {
   readonly status = 503;
+  constructor(
+    message: string,
+    readonly code: OpenAIPlanningCode = 'OPENAI_UNAVAILABLE',
+  ) {
+    super(message);
+  }
 }
 export interface WebSource {
   url: string;
@@ -42,7 +54,10 @@ export async function structuredResponse<T>(options: {
   const { signal } = options;
   signal?.throwIfAborted();
   if (!process.env.OPENAI_API_KEY)
-    throw new OpenAIPlanningError('AI planning is not configured. Your saved trip is unchanged.');
+    throw new OpenAIPlanningError(
+      'AI planning is not configured. Add an OpenAI API key to the server to enable it. Your saved trip is unchanged.',
+      'OPENAI_NOT_CONFIGURED',
+    );
   const effort = process.env.OPENAI_REASONING_EFFORT || 'low';
   if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))
     throw new Error('Invalid OpenAI reasoning effort configuration.');
@@ -52,9 +67,11 @@ export async function structuredResponse<T>(options: {
   const timeout = AbortSignal.timeout(Math.min(options.timeoutMs || 90_000, 150_000));
   const stage = options.webSearch
     ? 'Web research'
-    : options.name === 'travel_intake'
-      ? 'Trip intake'
-      : 'Itinerary planning';
+    : options.name === 'studio_brief_review'
+      ? 'Brief review'
+      : options.name === 'travel_intake'
+        ? 'Trip intake'
+        : 'Itinerary planning';
   let response: Response;
   try {
     response = await fetch('https://api.openai.com/v1/responses', {
@@ -89,11 +106,27 @@ export async function structuredResponse<T>(options: {
     );
   }
   signal?.throwIfAborted();
-  // Provider error bodies can include private request details. Keep failures concise.
-  if (!response.ok)
+  // Classify status codes only; provider error bodies can contain credentials or client data.
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403)
+      throw new OpenAIPlanningError(
+        'OpenAI rejected this server\u2019s credentials or access. Check the API key and project permissions. Your saved trip is unchanged.',
+        'OPENAI_ACCESS_DENIED',
+      );
+    if (response.status === 404)
+      throw new OpenAIPlanningError(
+        'The configured AI model is unavailable to this OpenAI project. Check the model setting and project access. Your saved trip is unchanged.',
+        'OPENAI_MODEL_UNAVAILABLE',
+      );
+    if (response.status === 429)
+      throw new OpenAIPlanningError(
+        'OpenAI\u2019s rate or usage limit was reached. Retry shortly; if it continues, check the project\u2019s quota and billing. Your saved trip is unchanged.',
+        'OPENAI_RATE_LIMITED',
+      );
     throw new OpenAIPlanningError(
       `${stage} is temporarily unavailable (OpenAI status ${response.status}). Your saved trip is unchanged; please retry.`,
     );
+  }
   const data = (await response.json()) as {
     status?: string;
     incomplete_details?: { reason?: string } | null;

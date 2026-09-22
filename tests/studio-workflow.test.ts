@@ -145,7 +145,6 @@ test('first AI review only extracts the brief and rejects model defaults without
     assert.equal(body.text.format.name, 'studio_brief_review');
     assert.equal(body.tools, undefined);
     assert.equal(body.store, false);
-    assert.match(body.instructions, /approve the route first/);
     return modelResponse(
       reviewData(workspace, {
         brief: {

@@ -11,14 +11,14 @@ import {
   studioAgencySchema,
   studioPatchSchema,
   structureFingerprint,
+  replaceStudioRecommendations,
 } from './studio-domain.ts';
-import {
-  reviewStudioBrief,
-  studioRecommendations,
-  extractStudioArrangements,
-} from './studio-models.ts';
+import { studioRecommendations, extractStudioArrangements } from './studio-models.ts';
 import { parseStudioImport, studioImportSchema, StudioImportError } from './studio-imports.ts';
 import { planningFailureReason } from './agents/failures.ts';
+import { OpenAIPlanningError } from './agents/openai.ts';
+import { runStudioAssistant } from './studio-assistant.ts';
+import { generateStudioItinerary } from './studio-itinerary.ts';
 
 type Session = { id: string; owner_id: string; user_id: string | null };
 type Dependencies = {
@@ -141,7 +141,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       new Date().toISOString(),
     );
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 210000);
+    const timeout = setTimeout(() => controller.abort(), 300000);
     timeout.unref();
     const promise = (async () => {
       try {
@@ -175,6 +175,15 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
           throw new StudioError(
             503,
             'The request was interrupted. Your saved workspace is unchanged.',
+          );
+        if (error instanceof OpenAIPlanningError)
+          throw new StudioError(
+            error.status,
+            error.message.replace(
+              'Your saved trip is unchanged',
+              'Your saved workspace is unchanged',
+            ),
+            error.code,
           );
         // Never log model bodies or private client/import data.
         const reason = planningFailureReason(error);
@@ -264,7 +273,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       .extend({ message: z.string().trim().min(1).max(16000) })
       .parse(req.body);
     await action(req, res, 'review', body, async (workspace, signal) => {
-      const result = await reviewStudioBrief(
+      const result = await runStudioAssistant(
         workspace,
         body.message,
         store.getAgency(session(res).owner_id),
@@ -305,8 +314,18 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         'The route end differs from the requested end date. Adjust the nights or the brief before approving.',
       );
     workspace.structureAccepted = true;
-    workspace.stage = 'services';
+    workspace.stage = 'itinerary';
     res.json({ workspace: save(res, workspace, body.revision) });
+  });
+  app.post('/api/studio/workspaces/:id/itinerary', limiter, async (req, res) => {
+    const body = actionSchema
+      .extend({ instructions: z.string().trim().max(4000).default('') })
+      .parse(req.body);
+    await action(req, res, 'itinerary', body, async (workspace, signal) => {
+      workspace.itinerary = await generateStudioItinerary(workspace, body.instructions, signal);
+      workspace.stage = 'itinerary';
+      return { nextAction: 'itinerary', days: workspace.itinerary.days.length };
+    });
   });
   app.post('/api/studio/workspaces/:id/recommendations', limiter, async (req, res) => {
     const body = actionSchema
@@ -324,14 +343,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         body.interests,
         signal,
       );
-      workspace.recommendations = [
-        ...workspace.recommendations.filter(
-          (rec) => !(body.stopIds.includes(rec.stopId) && rec.category === body.category),
-        ),
-        ...recommendations,
-      ];
-      if (workspace.recommendations.length > 120)
-        throw new StudioError(400, 'Keep at most 120 recommendations per proposal.');
+      replaceStudioRecommendations(workspace, body.stopIds, body.category, recommendations);
       workspace.stage = 'recommendations';
       return { count: recommendations.length };
     });

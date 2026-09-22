@@ -320,6 +320,7 @@ export function installStudioSupplierRoutes(
     const item = JSON.parse(String(row.data)) as StudioItem;
     requireActiveSession(res);
     workspace.items.push({ ...item, included: true });
+    workspace.itinerary = null;
     res.json({ workspace: store.save(ownerId, workspace, revision) });
   });
 }

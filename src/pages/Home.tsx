@@ -6,6 +6,7 @@ import { useApp } from '../context';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { RiseIn } from '../components/RiseIn';
 import { StartComposer } from '../components/StartComposer';
+import { PlanningModeNotice } from '../components/PlanningModeNotice';
 import { Modal } from '../components/ui';
 import { buildTripPrompt } from '../../shared/trip-prompt';
 
@@ -97,6 +98,7 @@ export default function Home() {
                   initialMessage={carriedBrief}
                   prepareMessage={(text) => buildTripPrompt(text, { travelers, startDate })}
                 />
+                <PlanningModeNotice />
                 <Flex align="center" gap="2" wrap="wrap" justify="center">
                   <Button
                     type="button"

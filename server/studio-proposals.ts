@@ -167,6 +167,36 @@ export function buildStudioClientProposal(
             : [];
         }),
       })),
+    itinerary: workspace.itinerary
+      ? {
+          generatedAt: text(workspace.itinerary.generatedAt, 40),
+          days: workspace.itinerary.days.map((day) => ({
+            day: day.day,
+            date: text(day.date, 10),
+            stopIds: day.stopIds.filter((id) => workspace.stops.some((stop) => stop.id === id)),
+            title: publicText(day.title, 200),
+            summary: publicText(day.summary),
+            activities: day.activities.map((activity) => ({
+              period: activity.period,
+              title: publicText(activity.title, 200),
+              description: publicText(activity.description),
+              sources: activity.sources.flatMap((source) => {
+                const url = publicSourceUrl(source.url, privateReferences);
+                return url
+                  ? [
+                      {
+                        label: publicText(source.label, 150),
+                        url,
+                        checkedAt: text(source.checkedAt, 40),
+                      },
+                    ]
+                  : [];
+              }),
+            })),
+          })),
+          notes: workspace.itinerary.notes.map((note) => publicText(note, 2000)),
+        }
+      : null,
     pricing: {
       mode: workspace.pricing.mode,
       packagePrice: packageMode ? workspace.pricing.packagePrice : null,
@@ -272,6 +302,23 @@ export async function studioProposalPdf(
     body(
       `${stop.name}${stop.country ? `, ${stop.country}` : ''} · ${stop.nights === null ? 'Nights to confirm' : `${stop.nights} nights`}\n${[stop.arrivalDate, stop.departureDate].filter(Boolean).join(' to ')}${stop.neighbourhood ? `\nArea: ${stop.neighbourhood}` : ''}${stop.onwardTransport !== 'undecided' ? `\nOnward travel: ${stop.onwardTransport}` : ''}`,
     );
+  }
+  if (proposal.itinerary?.days.length) {
+    heading('Your daily itinerary');
+    for (const day of proposal.itinerary.days) {
+      heading(`Day ${day.day}${day.date ? ` · ${day.date}` : ''} · ${day.title}`);
+      body(day.summary);
+      for (const activity of day.activities) {
+        doc.fillColor('#202b24').fontSize(12);
+        write(`${activity.period} · ${activity.title}`).moveDown(0.25);
+        body(activity.description);
+        for (const source of activity.sources)
+          body(
+            `${source.label}: ${source.url}${source.checkedAt ? ` (checked ${source.checkedAt.slice(0, 10)})` : ''}`,
+          );
+      }
+    }
+    for (const note of proposal.itinerary.notes) body(note);
   }
   if (proposal.items.length) heading('Included services');
   for (const item of proposal.items) {

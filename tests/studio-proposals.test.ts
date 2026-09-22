@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
-import { defaultStudioAgency, type StudioItem } from '../shared/studio.ts';
+import PDFDocument from 'pdfkit';
+import { defaultStudioAgency, type StudioItem, type StudioWorkspace } from '../shared/studio.ts';
+import type { StudioItinerary } from '../shared/studio-itinerary.ts';
 import { studioProposalIsStale } from '../shared/studio-proposals.ts';
 import {
   buildStudioClientProposal,
@@ -86,7 +88,43 @@ function item(overrides: Partial<StudioItem> = {}): StudioItem {
     ...overrides,
   };
 }
-function server() {
+function itinerary(): StudioItinerary {
+  return {
+    generatedAt: '2026-09-14T12:00:00.000Z',
+    days: [
+      {
+        day: 1,
+        date: '2026-11-18',
+        stopIds: ['paris'],
+        title: 'Arrive and explore the Left Bank',
+        summary: 'An easy introduction to Paris at your own pace.',
+        activities: [
+          {
+            period: 'afternoon',
+            title: 'A riverside walk',
+            description:
+              'Follow the Seine and pause for a cafe break. Booking reference: SECRET123',
+            sources: [
+              {
+                label: 'Official visitor information',
+                url: 'https://paris.example/visit?tracking=PRIVATE_TRACKING',
+                checkedAt: '2026-09-14T12:00:00.000Z',
+              },
+              {
+                label: 'Private supplier portal',
+                url: 'https://supplier.example/reservation/SECRET123',
+                checkedAt: '2026-09-14T12:00:00.000Z',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    notes: ['Activities are suggestions; opening times and availability need confirmation.'],
+  };
+}
+
+function server(configure?: (workspace: StudioWorkspace) => void) {
   const db = new DatabaseSync(':memory:');
   databases.push(db);
   db.exec('PRAGMA foreign_keys = ON');
@@ -95,7 +133,9 @@ function server() {
   const store = new StudioStore(db),
     app = express();
   app.use(express.json());
-  const workspace = store.create('alice', fixture());
+  const initial = fixture();
+  configure?.(initial);
+  const workspace = store.create('alice', initial);
   app.use((req, res, next) => {
     res.locals.owner = req.get('x-owner') || 'alice';
     next();
@@ -156,6 +196,84 @@ test('client snapshot excludes private workspace and supplier fields; selected d
   assert.match(proposal.items[0].description, /removed/);
   assert.equal(proposal.recommendations[0].sources.length, 1);
   assert.equal(proposal.recommendations[0].sources[0].url, 'https://paris.example/visit');
+});
+
+test('daily itinerary snapshots allowlist client content and remove private references and unsafe sources', () => {
+  const workspace = fixture();
+  workspace.itinerary = itinerary();
+  Object.assign(workspace.itinerary, { context: 'PRIVATE_CONTEXT', cost: 1253.17 });
+  Object.assign(workspace.itinerary.days[0], { privateReference: 'SECRET123' });
+  Object.assign(workspace.itinerary.days[0].activities[0], { supplier: 'PRIVATE_SUPPLIER' });
+  workspace.itinerary.days[0].stopIds.push('UNKNOWN_PRIVATE_STOP');
+  workspace.itinerary.notes.push('Keep reference SECRET123 off the public plan.');
+  const proposal = buildStudioClientProposal(workspace, defaultStudioAgency());
+  assert.ok(proposal.itinerary);
+  assert.equal(proposal.itinerary.days[0].title, 'Arrive and explore the Left Bank');
+  assert.deepEqual(proposal.itinerary.days[0].stopIds, ['paris']);
+  assert.equal(proposal.itinerary.days[0].activities[0].sources.length, 1);
+  assert.equal(
+    proposal.itinerary.days[0].activities[0].sources[0].url,
+    'https://paris.example/visit',
+  );
+  assert.match(proposal.itinerary.days[0].activities[0].description, /removed/);
+  assert.doesNotMatch(
+    JSON.stringify(proposal),
+    /PRIVATE_|SECRET123|1253\.17|privateReference|supplier|context|cost/,
+  );
+  workspace.itinerary.days[0].title = 'A private subsequent edit';
+  assert.equal(proposal.itinerary.days[0].title, 'Arrive and explore the Left Bank');
+  assert.equal(buildStudioClientProposal(fixture(), defaultStudioAgency()).itinerary, null);
+});
+
+test('PDF renders the sanitized daily plan with dates, activities, sources and notes', async (t) => {
+  const workspace = fixture();
+  workspace.itinerary = itinerary();
+  const proposal = buildStudioClientProposal(workspace, defaultStudioAgency());
+  const rendered: string[] = [];
+  const originalText = PDFDocument.prototype.text;
+  t.mock.method(
+    PDFDocument.prototype,
+    'text',
+    function (this: PDFKit.PDFDocument, value: string, ...args: unknown[]) {
+      rendered.push(value);
+      return Reflect.apply(originalText, this, [value, ...args]);
+    },
+  );
+  const pdf = await studioProposalPdf(proposal);
+  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+  const content = rendered.join('\n');
+  assert.match(content, /Your daily itinerary/);
+  assert.match(content, /Day 1 · 2026-11-18 · Arrive and explore the Left Bank/);
+  assert.match(content, /An easy introduction to Paris/);
+  assert.match(content, /afternoon · A riverside walk/);
+  assert.match(content, /https:\/\/paris.example\/visit \(checked 2026-09-14\)/);
+  assert.match(
+    content,
+    /Activities are suggestions; opening times and availability need confirmation/,
+  );
+  assert.doesNotMatch(content, /PRIVATE_|SECRET123|1253\.17/);
+});
+
+test('preview and published snapshots include the same sanitized itinerary and published plans stay immutable', async () => {
+  const { app, workspace, store } = server((value) => {
+    value.itinerary = itinerary();
+  });
+  const path = `/api/studio/workspaces/${workspace.id}/proposal`;
+  const preview = await request(app).get(`${path}/preview`).expect(200);
+  assert.equal(preview.body.proposal.itinerary.days[0].title, 'Arrive and explore the Left Bank');
+  assert.doesNotMatch(JSON.stringify(preview.body.proposal.itinerary), /PRIVATE_|SECRET123/);
+  const published = await request(app)
+    .post(path)
+    .send({ revision: workspace.revision })
+    .expect(201);
+  const publicPath = `/api/studio/proposals/${published.body.proposal.token}`;
+  const shared = await request(app).get(publicPath).expect(200);
+  assert.deepEqual(shared.body.proposal.itinerary, preview.body.proposal.itinerary);
+  const edited = store.require('alice', workspace.id);
+  edited.itinerary!.days[0].title = 'Private changed day';
+  store.save('alice', edited, edited.revision);
+  const unchanged = await request(app).get(publicPath).expect(200);
+  assert.deepEqual(unchanged.body.proposal.itinerary, preview.body.proposal.itinerary);
 });
 
 test('pricing never mixes currencies or counts sandbox rates as live totals', () => {

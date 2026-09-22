@@ -16,6 +16,7 @@ import {
   Text,
 } from '@radix-ui/themes';
 import { api } from '../api';
+import { StudioItineraryContent } from '../components/StudioItineraryPanel';
 import type { StudioClientProposal } from '../../shared/studio-proposals';
 import { studioProposalIsStale, studioProposalMoney } from '../../shared/studio-proposals';
 
@@ -96,7 +97,13 @@ export function StudioProposalDocument({
             <Text size="1" weight="bold" style={{ letterSpacing: '0.15em', color: accent }}>
               YOUR TRAVEL PROPOSAL
             </Text>
-            <Heading as={titleAs} size={{ initial: '8', sm: '9' }} mt="3" mb="3" style={{ color: accent }}>
+            <Heading
+              as={titleAs}
+              size={{ initial: '8', sm: '9' }}
+              mt="3"
+              mb="3"
+              style={{ color: accent }}
+            >
               {proposal.title}
             </Heading>
             {proposal.clientName && (
@@ -184,6 +191,20 @@ export function StudioProposalDocument({
               </Grid>
             </section>
           </Box>
+          {proposal.itinerary && (
+            <Box asChild>
+              <section aria-label="Travel itinerary">
+                <Heading as={sectionAs} size="7" mb="4" style={{ color: accent }}>
+                  Your day-by-day itinerary
+                </Heading>
+                <StudioItineraryContent
+                  itinerary={proposal.itinerary}
+                  dayHeading={itemAs}
+                  accent={accent}
+                />
+              </section>
+            </Box>
+          )}
           {proposal.items.length > 0 && (
             <Box asChild>
               <section>
