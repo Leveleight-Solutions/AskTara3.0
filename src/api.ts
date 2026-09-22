@@ -8,22 +8,52 @@ export class ApiError extends Error {
   }
 }
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    credentials: 'same-origin',
-    ...options,
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-    },
-  });
-  const body = await response.json().catch(() => ({}));
+  const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      credentials: 'same-origin',
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    // Keep cancellations recognizable to polling and page-cleanup callers.
+    if (options.signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
+      throw error;
+    throw new ApiError(
+      'Cannot connect to Tara. Please check your connection and try again.',
+      0,
+      'BACKEND_UNAVAILABLE',
+    );
+  }
+  if (response.status === 204) return undefined as T;
+  const contentType = response.headers.get('content-type')?.split(';')[0].trim() || '';
+  if (contentType !== 'application/json' && !contentType.endsWith('+json')) {
+    throw new ApiError(
+      'Tara could not connect to its API. Please try again shortly.',
+      response.ok ? 502 : response.status,
+      'INVALID_API_RESPONSE',
+    );
+  }
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ApiError(
+      'Tara returned an incomplete response. Please try again.',
+      response.ok ? 502 : response.status,
+      'INVALID_API_RESPONSE',
+    );
+  }
   if (!response.ok)
     throw new ApiError(
-      typeof body.error === 'string'
+      typeof body?.error === 'string'
         ? body.error
-        : body.error?.message || body.message || 'Something went wrong. Please try again.',
+        : body?.error?.message || body?.message || 'Something went wrong. Please try again.',
       response.status,
-      typeof body.code === 'string' ? body.code : undefined,
+      typeof body?.code === 'string' ? body.code : undefined,
     );
   return body as T;
 }

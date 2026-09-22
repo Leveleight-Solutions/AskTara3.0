@@ -1,5 +1,8 @@
-/** Travel-agent workspace: structure first, services and recommendations only on request. */
-export type StudioStage = 'brief' | 'structure' | 'services' | 'recommendations' | 'proposal';
+import type { StudioItinerary } from './studio-itinerary';
+
+/** Travel-agent workspace: route, daily planning, services and client proposal. */
+export type StudioStage =
+  'brief' | 'structure' | 'itinerary' | 'services' | 'recommendations' | 'proposal';
 export type TransportMode = 'undecided' | 'flight' | 'train' | 'car' | 'ferry' | 'coach' | 'other';
 export interface StudioStop {
   id: string;
@@ -122,6 +125,7 @@ export interface StudioWorkspace {
   structureAccepted: boolean;
   items: StudioItem[];
   recommendations: StudioRecommendation[];
+  itinerary?: StudioItinerary | null;
   imports: StudioImport[];
   messages: { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[];
   pricing: StudioPricing;

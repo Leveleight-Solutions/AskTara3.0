@@ -52,11 +52,13 @@ import { useRouteLoading } from '../components/TopLoadingBar';
 import { useComposerLayout } from '../components/useComposerLayout';
 import { StudioImportComposer, type StudioImportMode } from '../components/StudioImportComposer';
 import StudioProposalControls from '../components/StudioProposalControls';
+import { StudioItineraryPanel } from '../components/StudioItineraryPanel';
 import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
 import { useRowHover } from '../components/SidebarNavItem';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { onStudioWorkspaceEvent } from '../studioEvents';
 import { ChatTurn } from '../components/ChatTurn';
+import { PlanningModeNotice } from '../components/PlanningModeNotice';
 import MarkdownText from '../components/MarkdownText';
 import type {
   StudioAgency,
@@ -78,8 +80,8 @@ type WorkspacePatch = {
   recommendations?: StudioWorkspace['recommendations'];
   pricing?: StudioWorkspace['pricing'];
 };
-const stageLabels = ['Brief', 'Structure', 'Services', 'Recommendations', 'Proposal'];
-const stages = ['brief', 'structure', 'services', 'recommendations', 'proposal'];
+const stageLabels = ['Brief', 'Structure', 'Itinerary', 'Services', 'Recommendations', 'Proposal'];
+const stages = ['brief', 'structure', 'itinerary', 'services', 'recommendations', 'proposal'];
 /** Full-width row inside the two-column form grids. */
 const spanAll = { gridColumn: '1 / -1' };
 /** `<fieldset disabled>` is kept for its native disable cascade; this strips the UA chrome. */
@@ -161,7 +163,10 @@ function StudioTopBar({
           </Heading>
           <Text size="1" color="gray" truncate>
             Step {stageIndex + 1} of {stageLabels.length}: {stageLabels[stageIndex]}
-            {!gateOpen && ' · Accept the structure to unlock services'}
+            {!gateOpen &&
+              (workspace.stops.length
+                ? ' · Accept the structure to unlock services'
+                : ' · Start with a destination')}
           </Text>
         </Flex>
       </header>
@@ -180,7 +185,7 @@ export default function Studio() {
   const [clients, setClients] = useState<StudioClient[]>([]);
   const [agency, setAgency] = useState<StudioAgency | null>(null);
   const [routeDirty, setRouteDirty] = useState(false);
-  const actionLock = useRef(false);
+  const actionLock = useRef<{ epoch: number } | null>(null);
   const requestIds = useRef(new Map<string, string>());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -222,6 +227,7 @@ export default function Studio() {
     const sameOwner = loadedOwner.current === ownerVersion;
     const carriedError = (location.state as { reviewError?: string } | null)?.reviewError || '';
     const carriedMessage = search.get('q') || '';
+    setPendingTurn('');
     if (sameOwner) {
       setSwitching(true);
     } else {
@@ -247,7 +253,13 @@ export default function Studio() {
         if ('workspace' in result) {
           setWorkspace(result.workspace);
           setWorkspaces([]);
-          setActiveTab(result.workspace.structureAccepted ? 'services' : 'structure');
+          setActiveTab(
+            result.workspace.structureAccepted
+              ? result.workspace.itinerary || result.workspace.stage === 'itinerary'
+                ? 'itinerary'
+                : 'services'
+              : 'structure',
+          );
         } else {
           setWorkspace(null);
           setWorkspaces(result.workspaces);
@@ -283,9 +295,11 @@ export default function Studio() {
   }, [id, ownerVersion]);
 
   async function act(label: string, operation: () => Promise<void>) {
-    if (actionLock.current) return;
-    actionLock.current = true;
-    const currentEpoch = epoch.current;
+    if (switching || (id && latestWorkspace.current?.id !== id)) return false;
+    if (actionLock.current?.epoch === epoch.current) return false;
+    const lock = { epoch: epoch.current };
+    actionLock.current = lock;
+    const currentEpoch = lock.epoch;
     setBusy(label);
     setError('');
     try {
@@ -297,33 +311,39 @@ export default function Studio() {
       if (cause instanceof ApiError && cause.status === 409 && id) {
         try {
           const result = await api<{ workspace: StudioWorkspace }>(`/studio/workspaces/${id}`);
-          setWorkspace(result.workspace);
+          if (currentEpoch === epoch.current && latestWorkspace.current?.id === id)
+            setWorkspace(result.workspace);
         } catch {
           /* Keep the current local view when refresh is unavailable. */
         }
       }
       return false;
     } finally {
-      actionLock.current = false;
+      if (actionLock.current === lock) actionLock.current = null;
       if (currentEpoch === epoch.current) setBusy('');
     }
   }
   async function mutate(action: string, body: Record<string, unknown>) {
     const current = latestWorkspace.current;
     if (!current) return;
-    const result = await api<{ workspace: StudioWorkspace }>(
-      `/studio/workspaces/${current.id}${action}`,
-      {
-        method: action ? 'POST' : 'PATCH',
-        body: JSON.stringify({ ...body, revision: current.revision }),
-      },
-    );
+    const currentEpoch = epoch.current;
+    const result = await api<{
+      workspace: StudioWorkspace;
+      nextAction?: 'structure' | 'itinerary' | 'services' | 'recommendations' | 'proposal';
+    }>(`/studio/workspaces/${current.id}${action}`, {
+      method: action ? 'POST' : 'PATCH',
+      body: JSON.stringify({ ...body, revision: current.revision }),
+    });
     if (
+      currentEpoch === epoch.current &&
       latestWorkspace.current?.id === current.id &&
       result.workspace.revision >= latestWorkspace.current.revision
-    )
+    ) {
       setWorkspace(result.workspace);
-    return result.workspace;
+      if (result.nextAction)
+        setActiveTab(result.workspace.structureAccepted ? result.nextAction : 'structure');
+      return result.workspace;
+    }
   }
   const patch = async (value: WorkspacePatch) => {
     const success = await act('Saving changes', async () => {
@@ -338,10 +358,16 @@ export default function Studio() {
      page. Shows the turn and empties the composer straight away, and hands the words back if it
      fails, so a failed send never costs the agent what they typed. */
   async function sendToTara(text: string) {
+    if (
+      actionLock.current?.epoch === epoch.current ||
+      switching ||
+      (id && latestWorkspace.current?.id !== id)
+    )
+      return;
     const submittedEpoch = epoch.current;
     setPendingTurn(text);
     setMessage('');
-    const sent = await act('Reviewing the brief', async () => {
+    const sent = await act('Planning your trip', async () => {
       const current = latestWorkspace.current;
       if (!current) return;
       const requestKey = JSON.stringify({
@@ -364,13 +390,13 @@ export default function Studio() {
      away so a refresh does not send it again. */
   const autoReviewed = useRef('');
   useEffect(() => {
-    if (!id || !workspace || loading) return;
+    if (!id || !workspace || loading || switching || workspace.id !== id) return;
     const carried = search.get('q');
     if (!carried || autoReviewed.current === id) return;
     autoReviewed.current = id;
     navigate(`/studio/${id}`, { replace: true });
     void sendToTara(carried);
-  }, [id, workspace, loading, search, navigate]);
+  }, [id, workspace, loading, switching, search, navigate]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     if ((!message.trim() && !workspace?.imports.length) || routeDirty) return;
@@ -384,7 +410,7 @@ export default function Studio() {
     const submittedEpoch = epoch.current;
     setPendingTurn(text);
     setMessage('');
-    const sent = await act('Reviewing the brief', async () => {
+    const sent = await act('Planning with Tara', async () => {
       {
         const result = await api<{ workspace: StudioWorkspace }>('/studio/workspaces', {
           method: 'POST',
@@ -515,7 +541,15 @@ export default function Studio() {
      each scrolling on its own. The index below is still an ordinary page. */
   if (id && workspace)
     return (
-      <>
+      <div
+        key={workspace.id}
+        inert={switching || workspace.id !== id}
+        aria-busy={switching || workspace.id !== id || undefined}
+        style={{
+          opacity: switching || workspace.id !== id ? 0.6 : 1,
+          transition: switching ? 'opacity 160ms ease 120ms' : 'opacity 120ms ease',
+        }}
+      >
         <SplitWorkspace
           surface="islands"
           background={<AuroraBackground variant="spread" />}
@@ -554,6 +588,7 @@ export default function Studio() {
           primaryPadding="3"
           primary={
             <Flex direction="column" gap="3">
+              <PlanningModeNotice />
               {/* Standing background about the client reads as the head of the conversation, and
                   has to sit outside the log: inside it, opening it would be announced as a new
                   message. */}
@@ -651,7 +686,7 @@ export default function Studio() {
                         <Flex align="center" gap="2">
                           <InlineSpinner />
                           <Text as="p" size="2" color="gray">
-                            {busy || 'Reviewing the brief'}…
+                            {busy || 'Planning with Tara'}…
                           </Text>
                         </Flex>
                       </ChatTurn>
@@ -788,17 +823,19 @@ export default function Studio() {
           secondaryHeader={
             <Box px="4" pt="3">
               <Tabs.List aria-label="Plan details">
-                {['structure', 'services', 'recommendations', 'proposal'].map((tab) => {
-                  const gated = tab !== 'structure' && !workspace.structureAccepted;
-                  return (
-                    <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
-                      <Flex align="center" gap="1">
-                        {gated && <Lock size={12} aria-hidden="true" />}
-                        {tab[0].toUpperCase() + tab.slice(1)}
-                      </Flex>
-                    </Tabs.Trigger>
-                  );
-                })}
+                {['structure', 'itinerary', 'services', 'recommendations', 'proposal'].map(
+                  (tab) => {
+                    const gated = tab !== 'structure' && !workspace.structureAccepted;
+                    return (
+                      <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
+                        <Flex align="center" gap="1">
+                          {gated && <Lock size={12} aria-hidden="true" />}
+                          {tab[0].toUpperCase() + tab.slice(1)}
+                        </Flex>
+                      </Tabs.Trigger>
+                    );
+                  },
+                )}
               </Tabs.List>
             </Box>
           }
@@ -862,8 +899,8 @@ export default function Studio() {
                           disabled={!!busy || routeDirty}
                           onClick={() =>
                             void act('Accepting structure', async () => {
-                              await mutate('/accept-structure', {});
-                              setActiveTab('services');
+                              const accepted = await mutate('/accept-structure', {});
+                              if (accepted) setActiveTab('itinerary');
                             })
                           }
                         >
@@ -890,11 +927,38 @@ export default function Studio() {
                         <Check size={17} />
                       </Callout.Icon>
                       <Callout.Text>
-                        Structure accepted. Choose the services or recommendations you want to add.
+                        Structure accepted. Build the day-by-day itinerary, then add any services or
+                        extra recommendations your client needs.
                       </Callout.Text>
                     </Callout.Root>
                   )}
                 </Card>
+              </Tabs.Content>
+              <Tabs.Content value="itinerary">
+                {workspace.structureAccepted && (
+                  <StudioItineraryPanel
+                    workspace={workspace}
+                    disabled={!!busy}
+                    building={busy === 'Building the day-by-day itinerary'}
+                    onGenerate={async (instructions) =>
+                      act('Building the day-by-day itinerary', async () => {
+                        const requestKey = JSON.stringify({
+                          workspace: workspace.id,
+                          revision: workspace.revision,
+                          action: 'itinerary',
+                          instructions,
+                        });
+                        const requestId = requestIds.current.get(requestKey) || crypto.randomUUID();
+                        requestIds.current.set(requestKey, requestId);
+                        const generated = await mutate('/itinerary', { instructions, requestId });
+                        requestIds.current.delete(requestKey);
+                        if (generated) setActiveTab('itinerary');
+                      })
+                    }
+                    onRefine={() => askTara('Refine the day-by-day itinerary: ')}
+                    onReview={() => setActiveTab('proposal')}
+                  />
+                )}
               </Tabs.Content>
               <Tabs.Content value="services">
                 {workspace.structureAccepted && (
@@ -950,7 +1014,7 @@ export default function Studio() {
           />
         )}
         {dialogs}
-      </>
+      </div>
     );
   return (
     <Box

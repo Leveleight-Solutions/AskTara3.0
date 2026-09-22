@@ -16,11 +16,32 @@ cp .env.example .env
 npm run dev
 ```
 
-Open **http://localhost:5173**. Vite runs the frontend on port 5173 and forwards `/api` requests to Express on port 3001. Both processes start with `npm run dev`; `npm run dev:server` starts only Express. Keep `PORT=3001` for the included Vite proxy, or update `vite.config.ts` if changing the backend port.
+Open **http://localhost:5173**. Vite runs the frontend on port 5173 and forwards `/api` requests to Express on port 3001. Both processes start with `npm run dev`; `npm run dev:server` starts only Express.
+
+For another local checkout, set `PORT`, `WEB_PORT` and `APP_ORIGIN` together in `.env`
+(for example `3002`, `5174`, and `http://localhost:5174`). The frontend proxy follows
+`PORT` automatically. Vite fails if `WEB_PORT` is occupied instead of silently switching
+to another port. Development accepts the configured frontend port on `localhost`,
+`127.0.0.1` and `[::1]`. Use the same hostname consistently when testing: browser cookies
+are shared across ports on a hostname, but not between `localhost` and `127.0.0.1`.
+Development session cookies are named for the API port to isolate separate checkouts;
+`SESSION_COOKIE_NAME` overrides the name when needed. Existing valid sessions migrate
+to the scoped cookie automatically. Open Swagger through `/api/docs` on either server.
+
+Without API keys, Studio reads explicit local brief details and attached text notes,
+supports manual route/service edits and produces proposals. Flexible AI research,
+image/PDF/audio extraction, and supplier searches still require their configured keys;
+check `/api/integrations` for availability.
 
 Open **http://localhost:5173/studio** to work on an agent proposal. For a demo, enter: “Plan a 28-day European proposal for a fictional client: 2 adults, no children. Arrive Paris on 2026-11-18. Paris 9 nights, Berlin 9 nights and London 9 nights. Group budget AUD 12000. Prefer 4-star hotels near railway stations and quiet cultural visits. Start with the route only.” Tara reviews the brief; continue to the route, edit it and explicitly accept it before adding services.
 
-The current project has OpenAI configured and retains LiteAPI sandbox credentials as requested. A fresh checkout can use manual Studio route/service editing, proposal generation, accounts and the local catalog without external keys. Simple local intake is available, but flexible AI review, image/PDF/audio extraction and sourced recommendations require OpenAI; supplier searches require the supplier key. Secrets stay on the server.
+A fresh checkout has no provider credentials. Manual Studio route/service editing, proposal generation,
+accounts and the local catalog work without external keys. **Basic planning mode** is shown when
+AI is not configured; its guided questions and explicit-detail parsing are limited local rules.
+For full AI conversation, set `OPENAI_API_KEY` in `.env` and restart `npm run dev`, then refresh
+the browser. Refreshing alone does not reload the server environment. Flexible AI review,
+image/PDF/audio extraction and sourced recommendations require OpenAI; supplier searches require
+the supplier key. Secrets stay on the server.
 
 ## Agent Studio
 
@@ -28,7 +49,8 @@ The current project has OpenAI configured and retains LiteAPI sandbox credential
 - **Editable structure.** Destinations, nights, dates, onward transport and neighbourhood preferences appear beside chat. Drag stops or use accessible up/down controls, adjust nights, and pin explicit arrival dates. Routes support up to 20 stops, 120 nights per stop and 365 total nights. The structure must be accepted before supplier search or recommendation research; material route changes require acceptance again.
 - **Quotes and existing arrangements.** Add hotels, flights, tours, cruises, transfers, insurance or placeholders manually. Saved source text stays private; explicit arrangement extraction produces unselected candidates requiring review. Selecting a LiteAPI quote adds a proposal item only—it creates no reservation, ticket, payment or insurance policy.
 - **Qualified supplier search.** The same LiteAPI key serves flights and hotels, with sandbox results clearly labelled. Searches require a confirmed adult-only party; family quotes can be entered manually and reviewed. Hotel searches require exact dates, a destination country, hotel preferences and nationality. Flight searches ask for explicit airports, dates and cabin rather than inferring a return journey.
-- **Optional recommendations.** Request a small sourced list of things to do or places to eat for selected destinations. New suggestions remain outside the proposal until explicitly selected. There are no automatic morning/lunch/dinner schedules in Studio.
+- **Daily itineraries.** Once destinations and nights are known, ask Tara to “build the complete day-by-day itinerary”, or accept the route and use the Itinerary tab. Plans cover arrival, sightseeing, transfers and departure with researched sources. Ask for a slower pace or different activities to revise them. Flexible dates stay undated. Generated plans support up to 35 days; route editing supports longer trips. Changes to route, preferences or selected services clear an outdated plan so it can be regenerated. The saved daily plan appears in proposal previews, published snapshots and PDFs.
+- **Optional recommendations.** Ask Tara for a small sourced list of things to do or places to eat, or use Recommendations for selected destinations. New suggestions remain outside the proposal until explicitly selected.
 - **Client and agency context.** Client-name history links earlier workspaces and supports deliberate reuse of background context. Each new trip starts with unknown party counts. Agency settings include custom qualifying questions, branding and GDS format hints; a format hint does not connect a reservation system.
 - **Client proposals.** Review itemised or package pricing, selected services and selected recommendations in an agency-branded preview. Publish a revocable read-only link or download a PDF. Private chat, source documents, booking references, costs and margins are excluded. Package mode hides component prices. Price-validity notices default to 48 hours, while an aged proposal remains viewable with reconfirmation messaging.
 - **Transparent commercial inputs.** Internal costs, margin and payment-cost allowances support the agent's pricing decision. Manual insurance prices remain agent estimates until an insurer quote API is integrated; no premium formula or card-surcharge rule is invented.
@@ -151,29 +173,44 @@ Run `npm run test:e2e` for browser journeys using installed Google Chrome (`chan
 
 ## API overview
 
+Interactive Swagger documentation is available at **[/api/docs](http://localhost:3001/api/docs)**
+on the backend (`PORT`, default 3001), and through the frontend at
+**[http://localhost:5173/api/docs](http://localhost:5173/api/docs)** (`WEB_PORT`, default 5173).
+Use the ports in your `.env` if they differ. The OpenAPI 3.1 document is served at
+`/api/openapi.json` and can also be imported into API clients.
+
+Swagger initializes a browser session and sends its cookie automatically. Expand an endpoint,
+click **Try it out**, edit its request, and click **Execute**. Use registration/login endpoints
+before testing account-only operations. Requests change data in the current session; use the
+latest returned `revision` for edits and a UUID `requestId` for actions that require one.
+Provider availability and sandbox booking gates also apply to requests made through Swagger.
+The specification lives in `server/openapi/`; exported Zod validators supply request schemas
+where available, and tests check that every registered application route is documented.
+
 All application endpoints start with `/api`. See [the planning architecture](docs/PLANNING_ARCHITECTURE.md) for workflow stages and persistence guarantees. Use JSON request bodies and preserve the session cookie. Begin with `GET /api/session` before parallel requests on a new client. Responses use JSON with an `error` string on failure. Trip/share/wishlist deletion returns `204`; account deletion returns `200` with a JSON result and a new guest-session cookie. Rate limits apply globally, with tighter limits for authentication, chat, and provider search.
 
 Studio uses separate workspace and proposal APIs:
 
-| Endpoint                                                | Purpose / result                                                                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `GET/POST /studio/workspaces`                           | List owned workspaces or create a blank one.                                                                                   |
-| `GET/PATCH/DELETE /studio/workspaces/:id`               | Read, revise or delete an owned workspace. Edits include the current `revision`.                                               |
-| `POST /studio/workspaces/:id/review`                    | `{revision, requestId, message}` reviews the brief and extracts a draft route; no supplier or activity research.               |
-| `POST /studio/workspaces/:id/structure`                 | `{revision, skipQualification}` continues with the available route and explicit unknowns.                                      |
-| `POST /studio/workspaces/:id/accept-structure`          | `{revision}` approves the route structure before enrichment.                                                                   |
-| `POST /studio/import/preview`                           | Extract a supplied text/file/link/audio input for private agent review.                                                        |
-| `POST /studio/workspaces/:id/import`                    | Save the reviewed text as a private source.                                                                                    |
-| `POST /studio/workspaces/:id/imports/:importId/extract` | `{revision, requestId}` creates unselected service candidates requiring review.                                                |
-| `POST /studio/workspaces/:id/hotels/search`             | `{revision, stopId, guestNationality}` searches qualified hotel quotes.                                                        |
-| `POST /studio/workspaces/:id/flights/search`            | `{revision, origin, destination, departureDate, returnDate?, adults, cabinClass}` searches explicitly requested flight quotes. |
-| `POST /studio/workspaces/:id/quotes/:quoteId`           | `{revision}` adds a returned quote to the proposal; does not reserve it.                                                       |
-| `POST /studio/workspaces/:id/recommendations`           | `{revision, requestId, category, stopIds, interests}` researches optional suggestions, initially unselected.                   |
-| `GET/PATCH /studio/agency`                              | Read or configure owned branding and workflow preferences.                                                                     |
-| `GET /studio/clients`                                   | Read private client/context history from owned workspaces.                                                                     |
-| `GET /studio/workspaces/:id/proposal/preview`           | Review the client-facing proposal; `/preview/pdf` downloads a draft PDF.                                                       |
-| `POST/DELETE /studio/workspaces/:id/proposal`           | `{revision}` publishes a snapshot or revokes its link.                                                                         |
-| `GET /studio/proposals/:token`                          | Public read-only snapshot; `/pdf` downloads its PDF.                                                                           |
+| Endpoint                                                | Purpose / result                                                                                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET/POST /studio/workspaces`                           | List owned workspaces or create a blank one.                                                                                                                               |
+| `GET/PATCH/DELETE /studio/workspaces/:id`               | Read, revise or delete an owned workspace. Edits include the current `revision`.                                                                                           |
+| `POST /studio/workspaces/:id/review`                    | `{revision, requestId, message}` handles conversational brief/route updates, requested itinerary generation/revision, activity research and guidance to services/proposal. |
+| `POST /studio/workspaces/:id/itinerary`                 | `{revision, requestId, instructions?}` builds or revises a sourced daily plan for an accepted route.                                                                       |
+| `POST /studio/workspaces/:id/structure`                 | `{revision, skipQualification}` continues with the available route and explicit unknowns.                                                                                  |
+| `POST /studio/workspaces/:id/accept-structure`          | `{revision}` approves the route structure before enrichment.                                                                                                               |
+| `POST /studio/import/preview`                           | Extract a supplied text/file/link/audio input for private agent review.                                                                                                    |
+| `POST /studio/workspaces/:id/import`                    | Save the reviewed text as a private source.                                                                                                                                |
+| `POST /studio/workspaces/:id/imports/:importId/extract` | `{revision, requestId}` creates unselected service candidates requiring review.                                                                                            |
+| `POST /studio/workspaces/:id/hotels/search`             | `{revision, stopId, guestNationality}` searches qualified hotel quotes.                                                                                                    |
+| `POST /studio/workspaces/:id/flights/search`            | `{revision, origin, destination, departureDate, returnDate?, adults, cabinClass}` searches explicitly requested flight quotes.                                             |
+| `POST /studio/workspaces/:id/quotes/:quoteId`           | `{revision}` adds a returned quote to the proposal; does not reserve it.                                                                                                   |
+| `POST /studio/workspaces/:id/recommendations`           | `{revision, requestId, category, stopIds, interests}` researches optional suggestions, initially unselected.                                                               |
+| `GET/PATCH /studio/agency`                              | Read or configure owned branding and workflow preferences.                                                                                                                 |
+| `GET /studio/clients`                                   | Read private client/context history from owned workspaces.                                                                                                                 |
+| `GET /studio/workspaces/:id/proposal/preview`           | Review the client-facing proposal; `/preview/pdf` downloads a draft PDF.                                                                                                   |
+| `POST/DELETE /studio/workspaces/:id/proposal`           | `{revision}` publishes a snapshot or revokes its link.                                                                                                                     |
+| `GET /studio/proposals/:token`                          | Public read-only snapshot; `/pdf` downloads its PDF.                                                                                                                       |
 
 Core platform and earlier consumer-planner endpoints:
 

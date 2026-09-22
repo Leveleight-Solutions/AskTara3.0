@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
   const webPort = Number(env.WEB_PORT ?? 5173);
   return {
     plugins: [react()],
-    server: { port: webPort, proxy: { '/api': `http://127.0.0.1:${apiPort}` } },
+    server: { port: webPort, strictPort: true, proxy: { '/api': `http://127.0.0.1:${apiPort}` } },
     build: { outDir: 'dist' },
   };
 });

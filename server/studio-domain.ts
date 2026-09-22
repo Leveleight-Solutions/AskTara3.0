@@ -6,6 +6,7 @@ import type {
   StudioStop,
   StudioAgency,
   StudioQualification,
+  StudioRecommendation,
 } from '../shared/studio.ts';
 import { StudioError } from './studio-store.ts';
 
@@ -176,6 +177,7 @@ export function structureFingerprint(workspace: StudioWorkspace) {
     .update(
       JSON.stringify({
         startDate: workspace.brief.startDate,
+        endDate: workspace.brief.endDate,
         stops: workspace.stops.map(
           ({
             id,
@@ -201,6 +203,28 @@ export function structureFingerprint(workspace: StudioWorkspace) {
     )
     .digest('hex');
 }
+export function replaceStudioRecommendations(
+  workspace: StudioWorkspace,
+  stopIds: string[],
+  category: StudioRecommendation['category'],
+  recommendations: StudioRecommendation[],
+) {
+  const replacing = (item: StudioRecommendation) =>
+    stopIds.includes(item.stopId) && item.category === category;
+  const next = [
+    ...workspace.recommendations.filter((item) => !replacing(item)),
+    ...recommendations,
+  ];
+  if (next.length > 120)
+    throw new StudioError(
+      400,
+      'Keep at most 120 recommendations per proposal. Choose fewer destinations or remove older suggestions.',
+    );
+  if (workspace.recommendations.some((item) => item.included && replacing(item)))
+    workspace.itinerary = null;
+  workspace.recommendations = next;
+}
+
 export function qualifyStudio(
   workspace: StudioWorkspace,
   agency: StudioAgency,
@@ -304,6 +328,15 @@ export function applyStudioPatch(
   agency: StudioAgency,
 ): StudioWorkspace {
   const previous = structureFingerprint(workspace);
+  const itineraryBasis = (value: StudioWorkspace) => {
+    const { request: _request, output: _output, clientName: _name, ...preferences } = value.brief;
+    return JSON.stringify({
+      preferences,
+      items: value.items,
+      recommendations: value.recommendations,
+    });
+  };
+  const previousItineraryBasis = itineraryBasis(workspace);
   const oldParty = JSON.stringify([
     workspace.brief.adults,
     workspace.brief.children,
@@ -400,6 +433,7 @@ export function applyStudioPatch(
       JSON.stringify([workspace.brief.adults, workspace.brief.children, workspace.brief.childAges])
   )
     workspace.items = workspace.items.map((item) => ({ ...item, needsReview: true }));
+  if (changed || previousItineraryBasis !== itineraryBasis(workspace)) workspace.itinerary = null;
   workspace.qualification = qualifyStudio(workspace, agency);
   return workspace;
 }

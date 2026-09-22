@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Container, Flex, Heading } from '@radix-ui/themes';
+import { Box, Container, Flex, Heading } from '@radix-ui/themes';
 import { useApp } from '../context';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { RiseIn } from '../components/RiseIn';
 import { StartComposer } from '../components/StartComposer';
 import { TripDetailChips } from '../components/TripDetailChips';
+import { PlanningModeNotice } from '../components/PlanningModeNotice';
 import { buildTripPrompt } from '../../shared/trip-prompt';
 import type { TripDates, TripParty } from '../../shared/trip-details';
 
@@ -92,20 +93,28 @@ export default function Home() {
                 handed to the composer rather than placed after it, because the composer's own
                 feedback (a source it could not read, a failed send) renders below the pill — and
                 a tray placed after the composer would tuck itself behind that instead. */}
-            <StartComposer
-              key={carriedBrief}
-              heroAnchor
-              initialMessage={carriedBrief}
-              prepareMessage={(text) => buildTripPrompt(text, { party, dates })}
-              tray={
-                <TripDetailChips
-                  party={party}
-                  onParty={setParty}
-                  dates={dates}
-                  onDates={setDates}
-                />
-              }
-            />
+            <Flex direction="column" align="center" gap="3" width="100%" maxWidth="688px">
+              <StartComposer
+                key={carriedBrief}
+                heroAnchor
+                initialMessage={carriedBrief}
+                prepareMessage={(text) => buildTripPrompt(text, { party, dates })}
+                tray={
+                  <TripDetailChips
+                    party={party}
+                    onParty={setParty}
+                    dates={dates}
+                    onDates={setDates}
+                  />
+                }
+              />
+              {/* Basic planning mode is a fact about the whole composer, so it sits after the
+                  whole of it — pill, tray and any errors — and takes the tray's inset like the
+                  errors do, so every edge under the pill lines up on the same two lines. */}
+              <Box className="composer-feedback">
+                <PlanningModeNotice />
+              </Box>
+            </Flex>
           </Flex>
         </Container>
       </section>

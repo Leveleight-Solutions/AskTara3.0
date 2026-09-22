@@ -254,6 +254,11 @@ test('Studio starts with brief review and explicit structure acceptance before s
   await expect(page.getByRole('button', { name: 'Send to Tara' })).toBeDisabled();
   await page.getByRole('button', { name: 'Save route changes' }).click();
   await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.getByRole('tab', { name: 'Services', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What would you like help with?' })).toBeVisible();
   expect(workspace.structureAccepted).toBe(true);
   expect(
@@ -356,6 +361,84 @@ test('hotel quote search asks nationality and adds an explicit quote without res
   const search = mocked.requests.find((r) => r.path.endsWith('/hotels/search'))!;
   expect(search.body).toEqual({ revision: 1, stopId: stops()[0].id, guestNationality: 'AU' });
   expect(workspace.items).toHaveLength(1);
+  expect(mocked.unexpected).toEqual([]);
+});
+
+test('switching proposals blocks outgoing edits and resets supplier inputs at the same revision', async ({
+  page,
+}) => {
+  const workspace = fixtureWorkspace(true);
+  const next = fixtureWorkspace(true);
+  next.id = '60000000-0000-4000-8000-000000000020';
+  next.title = 'Hendersons in London';
+  next.stops = [
+    {
+      ...stops()[0],
+      id: '60000000-0000-4000-8000-000000000021',
+      name: 'London',
+      country: 'United Kingdom',
+    },
+  ];
+  const mocked = await mockStudio(page, workspace, {
+    clients: [
+      {
+        name: 'Henderson',
+        context: workspace.brief.context,
+        previousWorkspaces: [{ id: next.id, title: next.title, updatedAt: now }],
+      },
+    ],
+  });
+  let release!: () => void;
+  let requested!: () => void;
+  const responseGate = new Promise<void>((resolve) => (release = resolve));
+  const requestStarted = new Promise<void>((resolve) => (requested = resolve));
+  await page.route(`**/api/studio/workspaces/${next.id}`, async (route) => {
+    expect(route.request().method()).toBe('GET');
+    requested();
+    await responseGate;
+    await route.fulfill({ json: { workspace: next } });
+  });
+
+  await page.goto(`/studio/${workspaceId}`);
+  await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
+  await page.getByLabel('Guest nationality · two-letter code').fill('AU');
+  await page.getByRole('button', { name: 'Search hotels quotes' }).click();
+  await expect(page.getByRole('button', { name: 'Add quote to proposal' })).toBeVisible();
+  await page.getByText('Background', { exact: true }).click();
+  await page.getByRole('link', { name: next.title }).click();
+  await requestStarted;
+  try {
+    await expect(page.locator('[inert][aria-busy="true"]')).toBeVisible();
+    // The outgoing quote remains painted, but a click cannot add it while the next proposal loads.
+    await expect(
+      page
+        .getByRole('button', { name: 'Add quote to proposal', includeHidden: true })
+        .click({ timeout: 500 }),
+    ).rejects.toThrow();
+    expect(mocked.requests.some((request) => request.path.includes('/quotes/'))).toBe(false);
+  } finally {
+    release();
+  }
+
+  await expect(page).toHaveURL(`/studio/${next.id}`);
+  await expect(page.getByRole('heading', { name: next.title, exact: true })).toBeVisible();
+  await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Destination for hotel quotes' })).toHaveText(
+    'London',
+  );
+  await expect(page.getByLabel('Guest nationality · two-letter code')).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Add quote to proposal' })).toHaveCount(0);
+  await page.getByLabel('Guest nationality · two-letter code').fill('GB');
+  await page.getByRole('button', { name: 'Search hotels quotes' }).click();
+  await expect(page.getByRole('heading', { name: 'Example station hotel' })).toBeVisible();
+  expect(
+    mocked.requests.filter((request) => request.path.endsWith('/hotels/search')).at(-1),
+  ).toEqual({
+    method: 'POST',
+    path: `/api/studio/workspaces/${next.id}/hotels/search`,
+    body: { revision: next.revision, stopId: next.stops[0].id, guestNationality: 'GB' },
+  });
+  expect(workspace.items).toHaveLength(0);
   expect(mocked.unexpected).toEqual([]);
 });
 

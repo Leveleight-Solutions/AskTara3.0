@@ -18,6 +18,9 @@ const stop = (name: string, nights: number | null = 4, country = ''): StudioStop
   notes: '',
 });
 const fact = (field: keyof StudioBrief, evidence: string) => ({ field, evidence });
+const afterQuestion = (content: string) => ({
+  messages: [{ role: 'assistant' as const, content }],
+});
 
 test('literal evidence cannot turn two adults into ninety-nine or infer zero children', () => {
   const current = brief();
@@ -61,12 +64,23 @@ test('explicit adult-only party and natural child ages are retained without inve
   assert.deepEqual(adultOnly.childAges, []);
 });
 
-test('short numeric answers can fill the chosen field but irrelevant literal words cannot', () => {
+test('short numeric answers fill only the field established by the prior question', () => {
   const current = brief();
   assert.equal(
-    groundedStudioBrief(current, { ...current, adults: 99 }, [fact('adults', 'Two')], 'Two', [])
-      .adults,
+    groundedStudioBrief(
+      current,
+      { ...current, adults: 99 },
+      [fact('adults', 'Two')],
+      'Two',
+      [],
+      afterQuestion('How many adults are travelling?'),
+    ).adults,
     2,
+  );
+  assert.equal(
+    groundedStudioBrief(current, { ...current, adults: 2 }, [fact('adults', 'Two')], 'Two', [])
+      .adults,
+    null,
   );
   assert.equal(
     groundedStudioBrief(
@@ -216,8 +230,206 @@ test('Australian date forms and short date answers work without treating outboun
     [fact('endDate', '25/11/2026')],
     '25/11/2026',
     [],
+    afterQuestion('What is the return date?'),
   );
   assert.equal(short.endDate, '2026-11-25');
+});
+
+test('a short no answer confirms zero children only when children were unambiguously asked about', () => {
+  const current = { ...brief(), children: 2, childAges: [8, 12] };
+  for (const answer of ['no', 'none', 'nope', 'No thanks.']) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, children: 99 },
+      [fact('children', answer)],
+      answer,
+      [],
+      afterQuestion('Noted: 2 adults. Are any children travelling this time?'),
+    );
+    assert.equal(result.children, 0, answer);
+    assert.deepEqual(result.childAges, [], answer);
+  }
+  for (const question of [
+    'Any hotel preferences?',
+    'Are there adults or children?',
+    'Any children, and are dates flexible?',
+  ]) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, children: 0 },
+      [fact('children', 'no')],
+      'no',
+      [],
+      afterQuestion(question),
+    );
+    assert.equal(result.children, 2, question);
+    assert.deepEqual(result.childAges, [8, 12], question);
+  }
+  assert.equal(
+    groundedStudioBrief(
+      current,
+      { ...current, children: 0 },
+      [],
+      'no',
+      [],
+      afterQuestion('Any children travelling?'),
+    ).children,
+    2,
+    'the model still needs a literal field fact',
+  );
+  assert.equal(
+    groundedStudioBrief(
+      brief(),
+      { ...brief(), children: 1 },
+      [fact('children', 'yes')],
+      'yes',
+      [],
+      afterQuestion('Any children travelling?'),
+    ).children,
+    null,
+    'yes does not establish a count',
+  );
+});
+
+test('flexible and fixed date answers use the latest date question without treating budget flexibility as travel dates', () => {
+  const current = brief();
+  const question = afterQuestion(
+    'Noted: no children. What is the arrival date, or are dates flexible?',
+  );
+  const flexible = groundedStudioBrief(
+    current,
+    { ...current, datesFlexible: false },
+    [fact('datesFlexible', 'flexible')],
+    'flexible',
+    [],
+    question,
+  );
+  assert.equal(flexible.datesFlexible, true);
+  assert.equal(
+    groundedStudioBrief(
+      current,
+      { ...current, datesFlexible: true },
+      [fact('datesFlexible', 'flexible')],
+      'flexible',
+      [],
+      afterQuestion('What are your preferred travel dates?'),
+    ).datesFlexible,
+    true,
+  );
+  const fixed = groundedStudioBrief(
+    flexible,
+    flexible,
+    [fact('datesFlexible', 'fixed')],
+    'fixed',
+    [],
+    question,
+  );
+  assert.equal(fixed.datesFlexible, false);
+  for (const message of ['flexible', 'not fixed']) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, datesFlexible: true },
+      [fact('datesFlexible', message)],
+      message,
+      [],
+      afterQuestion('Is the group budget flexible?'),
+    );
+    assert.equal(result.datesFlexible, false, message);
+  }
+  const olderDateQuestion = groundedStudioBrief(
+    current,
+    { ...current, datesFlexible: true },
+    [fact('datesFlexible', 'flexible')],
+    'flexible',
+    [],
+    {
+      messages: [
+        ...question.messages,
+        { role: 'user', content: '2026-11-18' },
+        { role: 'assistant', content: 'What is the budget?' },
+      ],
+    },
+  );
+  assert.equal(olderDateQuestion.datesFlexible, false);
+});
+
+test('bare numeric answers cannot leak between budget, adults, child ages and ambiguous combined questions', () => {
+  const current = { ...brief(), children: 1 };
+  const facts = [fact('budget', '12'), fact('adults', '12'), fact('childAges', '12')];
+  const proposed = { ...current, budget: 12, adults: 12, childAges: [12] };
+  const budget = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '12',
+    [],
+    afterQuestion('Is there a group budget or price point?'),
+  );
+  assert.equal(budget.budget, 12);
+  assert.equal(budget.adults, null);
+  assert.deepEqual(budget.childAges, []);
+  const adults = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '12',
+    [],
+    afterQuestion('How many adults are travelling?'),
+  );
+  assert.equal(adults.adults, 12);
+  assert.equal(adults.budget, null);
+  assert.deepEqual(adults.childAges, []);
+  const ages = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '12',
+    [],
+    afterQuestion('What are the ages of all children?'),
+  );
+  assert.deepEqual(ages.childAges, [12]);
+  assert.equal(ages.adults, null);
+  assert.equal(ages.budget, null);
+  const ambiguous = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '12',
+    [],
+    afterQuestion('How many nights and adults should I plan for?'),
+  );
+  assert.equal(ambiguous.adults, null);
+  assert.equal(ambiguous.budget, null);
+  assert.deepEqual(ambiguous.childAges, []);
+});
+
+test('a short date answer uses the prior arrival or return question and cannot fill both dates', () => {
+  const current = brief();
+  const facts = [fact('startDate', '18 November 2026'), fact('endDate', '18 November 2026')];
+  const proposed = { ...current, startDate: '2026-11-18', endDate: '2026-11-18' };
+  const arrival = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '18 November 2026',
+    [],
+    afterQuestion('When will you arrive, and how many nights?'),
+  );
+  assert.equal(arrival.startDate, '2026-11-18');
+  assert.equal(arrival.endDate, '');
+  const unprompted = groundedStudioBrief(current, proposed, facts, '18 November 2026', []);
+  assert.equal(unprompted.startDate, '');
+  assert.equal(unprompted.endDate, '');
+  const ambiguous = groundedStudioBrief(
+    current,
+    proposed,
+    facts,
+    '18 November 2026',
+    [],
+    afterQuestion('What are the arrival and return dates?'),
+  );
+  assert.equal(ambiguous.startDate, '');
+  assert.equal(ambiguous.endDate, '');
 });
 
 test('critical facts may use supplied documents but never absent prior-client assumptions', () => {
@@ -429,6 +641,196 @@ test('transport changes preserve nights, while explicit relative night adjustmen
       'London train please',
     ),
   );
+});
+
+test('London intake accepts combined arrival and night answers after a destination-only turn', () => {
+  const current = [stop('London', null, 'United Kingdom')];
+  assert.doesNotThrow(() => assertStudioRouteGrounding([], current, 'to london', [], 'to london'));
+  for (const message of [
+    '18 November 2026, for 3 nights',
+    '2026-11-18 and three nights please',
+    'Arriving on November 18, 2026 and staying for 3 nights.',
+  ]) {
+    assert.doesNotThrow(
+      () =>
+        assertStudioRouteGrounding(
+          current,
+          [{ ...current[0], nights: 3, arrivalDate: '2026-11-18', arrivalFixed: true }],
+          message,
+          [],
+          message,
+          { brief: { ...brief(), startDate: '2026-11-18' } },
+        ),
+      message,
+    );
+    assert.throws(
+      () =>
+        assertStudioRouteGrounding(current, [{ ...current[0], nights: 30 }], message, [], message),
+      StudioError,
+      message,
+    );
+  }
+});
+
+test('date-only route answers preserve nights and allow a literal fixed arrival', () => {
+  const current = [stop('London', 3)];
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding(
+      current,
+      [{ ...current[0], arrivalDate: '2026-11-18', arrivalFixed: true }],
+      '18 November 2026',
+      [],
+      '18 November 2026',
+    ),
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        current,
+        [{ ...current[0], nights: 18, arrivalDate: '2026-11-18', arrivalFixed: true }],
+        '18 November 2026',
+        [],
+        '18 November 2026',
+      ),
+    StudioError,
+  );
+});
+
+test('bare night counts require the prior assistant question and a single unambiguous stop', () => {
+  const current = [stop('London', null)];
+  const messages = [
+    { role: 'user' as const, content: 'to london' },
+    { role: 'assistant' as const, content: 'How many nights would you like in London?' },
+  ];
+  for (const message of ['3', 'three'])
+    assert.doesNotThrow(() =>
+      assertStudioRouteGrounding(current, [{ ...current[0], nights: 3 }], message, [], message, {
+        messages,
+      }),
+    );
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding(current, [{ ...current[0], nights: 3 }], '3', [], '3', {
+      messages: [{ role: 'assistant', content: 'Noted: 2 adults. How many nights in London?' }],
+    }),
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(current, [{ ...current[0], nights: 3 }], '3', [], '3', {
+        messages: [{ role: 'assistant', content: 'How many nights and adults should I plan for?' }],
+      }),
+    StudioError,
+  );
+  assert.throws(
+    () => assertStudioRouteGrounding(current, [{ ...current[0], nights: 3 }], '3', [], '3'),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(current, [{ ...current[0], nights: 3 }], '3', [], '3', {
+        messages: [{ role: 'assistant', content: 'How many adults are travelling?' }],
+      }),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        current,
+        [{ ...current[0], nights: 18 }],
+        '2026-11-18',
+        [],
+        '2026-11-18',
+        { messages },
+      ),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [...current, stop('Paris', null)],
+        [{ ...current[0], nights: 3 }, stop('Paris', null)],
+        '3',
+        [],
+        '3',
+        { messages },
+      ),
+    StudioError,
+  );
+});
+
+test('initial routes may use previous user destinations and grounded brief dates, never assistant inventions', () => {
+  const messages = [
+    { role: 'user' as const, content: 'hi' },
+    { role: 'assistant' as const, content: 'Where would your client like to travel?' },
+    { role: 'user' as const, content: 'to london' },
+    { role: 'assistant' as const, content: 'What is the arrival date and how many nights?' },
+  ];
+  const proposed = [{ ...stop('London', 3), arrivalDate: '2026-11-18', arrivalFixed: true }];
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding([], proposed, '18 November 2026, 3 nights', [], '3 nights', {
+      messages,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding([], proposed, '3 nights', [], 'to london', {
+      messages,
+      brief: { ...brief(), startDate: '2026-11-18' },
+    }),
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding([], [stop('Bali', 3)], '3 nights', [], '3 nights', { messages }),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding([], [stop('London', 30)], '3 nights', [], '3 nights', {
+        messages,
+      }),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding([], [stop('Bali', 3)], '3 nights', [], '3 nights', {
+        messages: [...messages, { role: 'assistant', content: 'Bali might be nice.' }],
+      }),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding([], [stop('London', 3)], '3 nights', [], '3 nights', {
+        messages: [
+          ...messages,
+          { role: 'user', content: 'Actually, change the destination to Paris.' },
+        ],
+      }),
+    StudioError,
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [],
+        [stop('London', 3)],
+        '3 nights',
+        [],
+        'Invented source excerpt',
+        { messages },
+      ),
+    StudioError,
+  );
+});
+
+test('new stops need literal stay lengths and another destination’s nights cannot change the saved stop', () => {
+  assert.throws(
+    () => assertStudioRouteGrounding([], [stop('London', 3)], 'to london', [], 'to london'),
+    StudioError,
+  );
+  const current = [stop('London', 3)];
+  for (const message of ['Berlin for 5 nights', '5 nights in Berlin', 'Add 5 nights'])
+    assert.throws(
+      () => assertStudioRouteGrounding(current, [stop('London', 5)], message, [], message),
+      StudioError,
+      message,
+    );
 });
 
 test('unrelated answers preserve the route, while requested replacement, ordering and route ideas are allowed', () => {

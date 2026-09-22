@@ -39,6 +39,7 @@ export function initializeStudioStorage(db: DatabaseSync) {
 /** Rows carry `pinned_at` beside the JSON document; it is merged in on read, never stored in it. */
 function readWorkspace(row: Record<string, unknown>): StudioWorkspace {
   return {
+    itinerary: null,
     ...(JSON.parse(String(row.data)) as StudioWorkspace),
     pinnedAt: row.pinned_at ? String(row.pinned_at) : null,
   };
@@ -79,6 +80,7 @@ export function newStudioWorkspace(): StudioWorkspace {
     structureAccepted: false,
     items: [],
     recommendations: [],
+    itinerary: null,
     imports: [],
     messages: [],
     pricing: { mode: 'itemised', packagePrice: null, currency: 'AUD', notes: '', marginPercent: 0 },
