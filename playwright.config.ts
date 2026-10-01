@@ -4,7 +4,8 @@ import 'dotenv/config';
 // The dev server reads WEB_PORT from .env, so the suite must follow it. Without this the
 // default 5173 can silently hit an unrelated Vite server and test the wrong application,
 // because reuseExistingServer treats whatever answers on that port as ours.
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${process.env.WEB_PORT || 5173}`;
+const baseURL =
+  process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${process.env.WEB_PORT || 5173}`;
 
 export default defineConfig({
   testDir: './tests',

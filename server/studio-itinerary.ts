@@ -199,6 +199,7 @@ Respond to the requested change using the current itinerary, preserving unaffect
         children: workspace.brief.children,
         childAges: workspace.brief.childAges,
         interests: workspace.brief.interests,
+        foodPreferences: workspace.brief.foodPreferences || [],
         requirements: workspace.brief.requirements,
         context: workspace.brief.context,
         budget: workspace.brief.budget,

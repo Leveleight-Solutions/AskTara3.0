@@ -1,4 +1,6 @@
 import type { StudioItinerary } from './studio-itinerary';
+import type { StudioCruiseDraft } from './studio-cruise';
+import type { StudioDestinationResearch, StudioEntryRequirements } from './studio-travel-research';
 
 /** Travel-agent workspace: route, daily planning, services and client proposal. */
 export type StudioStage =
@@ -17,6 +19,14 @@ export interface StudioStop {
   notes: string;
 }
 export interface StudioBrief {
+  clientId?: string;
+  passportNationality?: string;
+  preferredDestination?: string;
+  destinationCountry?: string;
+  tripType?: 'undecided' | 'single' | 'multiple';
+  outboundTransport?: 'undecided' | 'flight' | 'cruise';
+  returnTransport?: 'undecided' | 'flight' | 'cruise';
+  foodPreferences?: string[];
   clientName: string;
   context: string;
   request: string;
@@ -126,6 +136,10 @@ export interface StudioWorkspace {
   items: StudioItem[];
   recommendations: StudioRecommendation[];
   itinerary?: StudioItinerary | null;
+  itineraryManual?: boolean;
+  cruises?: StudioCruiseDraft[];
+  destinationResearch?: StudioDestinationResearch | null;
+  entryRequirements?: StudioEntryRequirements[];
   imports: StudioImport[];
   messages: { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[];
   pricing: StudioPricing;
@@ -136,6 +150,7 @@ export interface StudioWorkspace {
   pinnedAt?: string | null;
 }
 export interface StudioClient {
+  id?: string;
   name: string;
   context: string;
   previousWorkspaces: { id: string; title: string; updatedAt: string }[];

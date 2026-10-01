@@ -52,6 +52,14 @@ import { useRouteLoading } from '../components/TopLoadingBar';
 import { useComposerLayout } from '../components/useComposerLayout';
 import { StudioImportComposer, type StudioImportMode } from '../components/StudioImportComposer';
 import StudioProposalControls from '../components/StudioProposalControls';
+import StudioHotelResults from '../components/StudioHotelResults';
+import type { StudioHotelSearchResult } from '../../shared/studio-hotels';
+import { StudioTravelResearch } from '../components/StudioTravelResearch';
+import { StudioClientProfiles } from '../components/StudioClientProfiles';
+import { StudioCruiseImport } from '../components/StudioCruiseImport';
+import type { StudioCruiseDraft } from '../../shared/studio-cruise';
+import type { StudioClientProfile } from '../../shared/studio-clients';
+import { studioCountries } from '../../shared/studio-travel-research';
 import { StudioItineraryPanel } from '../components/StudioItineraryPanel';
 import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
 import { useRowHover } from '../components/SidebarNavItem';
@@ -79,9 +87,16 @@ type WorkspacePatch = {
   items?: StudioItem[];
   recommendations?: StudioWorkspace['recommendations'];
   pricing?: StudioWorkspace['pricing'];
+  itinerary?: StudioWorkspace['itinerary'];
 };
-const stageLabels = ['Brief', 'Structure', 'Itinerary', 'Services', 'Recommendations', 'Proposal'];
-const stages = ['brief', 'structure', 'itinerary', 'services', 'recommendations', 'proposal'];
+const stageLabels = ['Brief', 'Accommodation', 'Activities'];
+const tabLabels: Record<string, string> = {
+  structure: 'Brief & route',
+  services: 'Accommodation',
+  itinerary: 'Daily activities',
+  recommendations: 'Optional ideas',
+  proposal: 'Proposal',
+};
 /** Full-width row inside the two-column form grids. */
 const spanAll = { gridColumn: '1 / -1' };
 /** `<fieldset disabled>` is kept for its native disable cascade; this strips the UA chrome. */
@@ -177,12 +192,14 @@ function StudioTopBar({
 export default function Studio() {
   const { id } = useParams();
   const [search] = useSearchParams();
-  const { ownerVersion } = useApp();
+  const { ownerVersion, integrations } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const [workspaces, setWorkspaces] = useState<StudioWorkspace[]>([]);
   const [workspace, setWorkspace] = useState<StudioWorkspace | null>(null);
   const [clients, setClients] = useState<StudioClient[]>([]);
+  const [profiles, setProfiles] = useState<StudioClientProfile[]>([]);
+  const [selectedCruise, setSelectedCruise] = useState<string>('');
   const [agency, setAgency] = useState<StudioAgency | null>(null);
   const [routeDirty, setRouteDirty] = useState(false);
   const actionLock = useRef<{ epoch: number } | null>(null);
@@ -228,6 +245,7 @@ export default function Studio() {
     const carriedError = (location.state as { reviewError?: string } | null)?.reviewError || '';
     const carriedMessage = search.get('q') || '';
     setPendingTurn('');
+    setSelectedCruise('');
     if (sameOwner) {
       setSwitching(true);
     } else {
@@ -238,6 +256,7 @@ export default function Studio() {
       setWorkspace(null);
       setWorkspaces([]);
       setClients([]);
+      setProfiles([]);
       setMessage(carriedMessage);
     }
     void Promise.all([
@@ -339,6 +358,7 @@ export default function Studio() {
       latestWorkspace.current?.id === current.id &&
       result.workspace.revision >= latestWorkspace.current.revision
     ) {
+      latestWorkspace.current = result.workspace;
       setWorkspace(result.workspace);
       if (result.nextAction)
         setActiveTab(result.workspace.structureAccepted ? result.nextAction : 'structure');
@@ -505,7 +525,7 @@ export default function Studio() {
   /* Exactly one solid Button is live at a time: the chat composer owns it until a route
      exists, then the canvas action for the open tab owns it. */
   const routeStarted = !!workspace?.stops.length;
-  const stageIndex = workspace ? Math.max(0, stages.indexOf(workspace.stage)) : 0;
+  const stageIndex = activeTab === 'structure' ? 0 : activeTab === 'services' ? 1 : 2;
   const dialogs = (
     <>
       {deleting && (
@@ -589,6 +609,46 @@ export default function Studio() {
           primary={
             <Flex direction="column" gap="3">
               <PlanningModeNotice />
+              <StudioClientProfiles
+                workspace={workspace}
+                disabled={!!busy || routeDirty}
+                onProfiles={setProfiles}
+                onDeleted={async () => {
+                  await act('Refreshing client profile', async () => {
+                    const current = latestWorkspace.current!;
+                    const currentEpoch = epoch.current;
+                    const result = await api<{ workspace: StudioWorkspace }>(
+                      `/studio/workspaces/${current.id}`,
+                    );
+                    if (currentEpoch === epoch.current) setWorkspace(result.workspace);
+                  });
+                }}
+                onSelect={async (profile) => {
+                  if (!profile) {
+                    await patch({ brief: { clientId: '' } });
+                    return;
+                  }
+                  await patch({
+                    brief: {
+                      clientId: profile.id,
+                      clientName: profile.name,
+                      context: profile.context,
+                      passportNationality: profile.passportNationality,
+                      interests: profile.interests,
+                      foodPreferences: profile.foodPreferences,
+                    },
+                  });
+                  if (
+                    integrations.ai &&
+                    (profile.history.some((trip) => trip.destination.trim()) ||
+                      (profile.previousTripCount || 0) > 0) &&
+                    !latestWorkspace.current?.stops.length
+                  )
+                    await act('Researching destinations for this returning client', async () => {
+                      await mutate('/destinations/research', { requestId: crypto.randomUUID() });
+                    });
+                }}
+              />
               {/* Standing background about the client reads as the head of the conversation, and
                   has to sit outside the log: inside it, opening it would be announced as a new
                   message. */}
@@ -624,13 +684,15 @@ export default function Studio() {
                           {workspace.brief.context || 'No background context added yet.'}
                         </Text>
                         {clients
-                          .filter(
-                            (c) =>
-                              c.name.toLocaleLowerCase() ===
-                              workspace.brief.clientName.toLocaleLowerCase(),
+                          .filter((client) =>
+                            workspace.brief.clientId
+                              ? client.id === workspace.brief.clientId
+                              : !client.id &&
+                                client.name.toLowerCase() ===
+                                  workspace.brief.clientName.toLowerCase(),
                           )
-                          .flatMap((c) => c.previousWorkspaces)
-                          .filter((w) => w.id !== workspace.id)
+                          .flatMap((client) => client.previousWorkspaces)
+                          .filter((previous) => previous.id !== workspace.id)
                           .map((previous) => (
                             <Text key={previous.id} size="2" asChild>
                               <Link
@@ -823,14 +885,14 @@ export default function Studio() {
           secondaryHeader={
             <Box px="4" pt="3">
               <Tabs.List aria-label="Plan details">
-                {['structure', 'itinerary', 'services', 'recommendations', 'proposal'].map(
+                {['structure', 'services', 'itinerary', 'recommendations', 'proposal'].map(
                   (tab) => {
                     const gated = tab !== 'structure' && !workspace.structureAccepted;
                     return (
                       <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
                         <Flex align="center" gap="1">
                           {gated && <Lock size={12} aria-hidden="true" />}
-                          {tab[0].toUpperCase() + tab.slice(1)}
+                          {tabLabels[tab]}
                         </Flex>
                       </Tabs.Trigger>
                     );
@@ -850,6 +912,110 @@ export default function Studio() {
                 }}
               />
               <Tabs.Content value="structure">
+                <StudioTravelResearch
+                  workspace={workspace}
+                  history={
+                    profiles.find((profile) => profile.id === workspace.brief.clientId)?.history ||
+                    []
+                  }
+                  busy={!!busy || routeDirty}
+                  research={workspace.destinationResearch}
+                  entryResults={workspace.entryRequirements}
+                  onResearch={() =>
+                    act('Researching destinations', async () => {
+                      await mutate('/destinations/research', { requestId: crypto.randomUUID() });
+                    })
+                  }
+                  onCheckEntry={(stopId) =>
+                    act('Checking entry requirements', async () => {
+                      await mutate('/entry-requirements', {
+                        requestId: crypto.randomUUID(),
+                        ...(stopId ? { stopId } : {}),
+                      });
+                    })
+                  }
+                  onChooseDestination={async (candidate) => {
+                    const existing = workspace.stops.find(
+                      (stop) =>
+                        stop.name.toLowerCase() === candidate.destination.toLowerCase() &&
+                        stop.country.toLowerCase() === candidate.country.toLowerCase(),
+                    );
+                    const stop = {
+                      ...blankStop(),
+                      name: candidate.destination,
+                      country: candidate.country,
+                    };
+                    await patch({
+                      brief: {
+                        preferredDestination: candidate.destination,
+                        destinationCountry: candidate.countryCode,
+                      },
+                      stops:
+                        workspace.brief.tripType === 'single'
+                          ? [existing || stop]
+                          : existing
+                            ? workspace.stops
+                            : [...workspace.stops, stop],
+                    });
+                  }}
+                />
+                <Box my="4">
+                  {!!workspace.cruises?.length && (
+                    <label>
+                      <Text size="2">Saved cruise to edit</Text>
+                      <select
+                        aria-label="Saved cruise to edit"
+                        value={selectedCruise}
+                        disabled={!!busy || routeDirty}
+                        onChange={(e) => setSelectedCruise(e.target.value)}
+                      >
+                        <option value="">Import another cruise</option>
+                        {workspace.cruises.map((cruise) => (
+                          <option key={cruise.id} value={cruise.id}>
+                            {cruise.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <StudioCruiseImport
+                    disabled={!!busy || routeDirty}
+                    initialDraft={workspace.cruises?.find((cruise) => cruise.id === selectedCruise)}
+                    onExtract={async (input) => {
+                      let cruise: StudioCruiseDraft | undefined;
+                      await act('Reading cruise itinerary', async () => {
+                        const current = latestWorkspace.current!;
+                        const currentEpoch = epoch.current;
+                        const result = await api<{
+                          workspace: StudioWorkspace;
+                          cruise: StudioCruiseDraft;
+                        }>(`/studio/workspaces/${current.id}/cruises/preview`, {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            revision: current.revision,
+                            requestId: crypto.randomUUID(),
+                            input,
+                          }),
+                        });
+                        if (
+                          currentEpoch === epoch.current &&
+                          latestWorkspace.current?.id === current.id
+                        ) {
+                          latestWorkspace.current = result.workspace;
+                          setWorkspace(result.workspace);
+                          cruise = result.cruise;
+                        }
+                      });
+                      return cruise;
+                    }}
+                    onApply={async (cruise) =>
+                      act('Saving cruise itinerary', async () => {
+                        await mutate('/cruises/apply', { cruise });
+                        setSelectedCruise(cruise.id);
+                      })
+                    }
+                  />
+                </Box>
                 <RouteEditor
                   key={`${workspace.id}:${workspace.revision}`}
                   workspace={workspace}
@@ -900,7 +1066,7 @@ export default function Studio() {
                           onClick={() =>
                             void act('Accepting structure', async () => {
                               const accepted = await mutate('/accept-structure', {});
-                              if (accepted) setActiveTab('itinerary');
+                              if (accepted) setActiveTab('services');
                             })
                           }
                         >
@@ -927,8 +1093,8 @@ export default function Studio() {
                         <Check size={17} />
                       </Callout.Icon>
                       <Callout.Text>
-                        Structure accepted. Build the day-by-day itinerary, then add any services or
-                        extra recommendations your client needs.
+                        Structure accepted. Choose accommodation, then add and edit daily
+                        activities. You can also add flight and cruise services.
                       </Callout.Text>
                     </Callout.Root>
                   )}
@@ -939,6 +1105,11 @@ export default function Studio() {
                   <StudioItineraryPanel
                     workspace={workspace}
                     disabled={!!busy}
+                    onSave={async (itinerary) =>
+                      act('Saving daily activities', async () => {
+                        await mutate('', { itinerary });
+                      })
+                    }
                     building={busy === 'Building the day-by-day itinerary'}
                     onGenerate={async (instructions) =>
                       act('Building the day-by-day itinerary', async () => {
@@ -1099,7 +1270,7 @@ export default function Studio() {
                         </Link>
                         <Flex align="center" justify="between" gap="2" mt="4" wrap="wrap">
                           <Badge color="gray" variant="soft">
-                            {stageLabels[stages.indexOf(item.stage)]}
+                            {tabLabels[item.stage] || 'Brief'}
                           </Badge>
                           <Flex align="center" gap="2">
                             <Text size="1" color="gray">
@@ -2500,9 +2671,7 @@ function BriefDialog({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const update = (patch: Partial<StudioBrief>) => setBrief({ ...brief, ...patch });
-  const previous = clients.find(
-    (client) => client.name.toLocaleLowerCase() === brief.clientName.toLocaleLowerCase(),
-  );
+  const previous = undefined as StudioClient | undefined;
   return (
     <Modal title="Client brief" onClose={onClose} wide>
       <Text as="p" size="2" color="gray" mb="4">
@@ -2553,7 +2722,7 @@ function BriefDialog({
               list="studio-client-names"
               value={brief.clientName}
               maxLength={200}
-              onChange={(e) => update({ clientName: e.target.value })}
+              onChange={(e) => update({ clientName: e.target.value, clientId: '' })}
             />
             <datalist id="studio-client-names">
               {clients.map((c) => (
@@ -2570,6 +2739,69 @@ function BriefDialog({
               value={brief.origin}
               maxLength={200}
               onChange={(e) => update({ origin: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Passport nationality
+            </Text>
+            <select
+              aria-label="Passport nationality"
+              value={brief.passportNationality || ''}
+              onChange={(e) => update({ passportNationality: e.target.value })}
+              style={{ width: '100%', padding: 10 }}
+            >
+              <option value="">Not supplied</option>
+              {studioCountries.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {country.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Trip type
+            </Text>
+            <select
+              aria-label="Trip type"
+              value={brief.tripType || 'undecided'}
+              onChange={(e) => update({ tripType: e.target.value as StudioBrief['tripType'] })}
+              style={{ width: '100%', padding: 10 }}
+            >
+              <option value="undecided">Not decided</option>
+              <option value="single">Single destination</option>
+              <option value="multiple">Multiple destinations · keep my order</option>
+            </select>
+          </label>
+          {(['outboundTransport', 'returnTransport'] as const).map((field) => (
+            <label key={field}>
+              <Text as="div" size="2" weight="medium" mb="1">
+                {field === 'outboundTransport' ? 'Arrival transport' : 'Return transport'}
+              </Text>
+              <select
+                aria-label={
+                  field === 'outboundTransport' ? 'Arrival transport' : 'Return transport'
+                }
+                value={brief[field] || 'undecided'}
+                onChange={(e) => update({ [field]: e.target.value })}
+                style={{ width: '100%', padding: 10 }}
+              >
+                <option value="undecided">Not decided</option>
+                <option value="flight">Flight</option>
+                <option value="cruise">Cruise</option>
+              </select>
+            </label>
+          ))}
+          <label style={spanAll}>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Food preferences · comma separated
+            </Text>
+            <TextField.Root
+              value={(brief.foodPreferences || []).join(', ')}
+              onChange={(e) =>
+                update({ foodPreferences: e.target.value.split(',').map((value) => value.trim()) })
+              }
             />
           </label>
           <label style={spanAll}>
@@ -2799,13 +3031,14 @@ function SupplierQuotes({
 }) {
   const [kind, setKind] = useState<'hotels' | 'flights'>('hotels');
   const [stopId, setStopId] = useState(workspace.stops[0]?.id || '');
-  const [nationality, setNationality] = useState('');
+  const [nationality, setNationality] = useState(workspace.brief.passportNationality || '');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
   const [departureDate, setDepartureDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
   const [cabin, setCabin] = useState('');
   const [quotes, setQuotes] = useState<StudioItem[]>([]);
+  const [hotelResult, setHotelResult] = useState<StudioHotelSearchResult | null>(null);
   const [warning, setWarning] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2818,29 +3051,47 @@ function SupplierQuotes({
     controller.current?.abort();
     searchEpoch.current++;
     setQuotes([]);
+    setHotelResult(null);
     setWarning('');
     setError('');
     setBusy(false);
     quoteLock.current = false;
     setQuoteRevision(null);
-  }, [workspace.revision, kind]);
+  }, [
+    workspace.revision,
+    kind,
+    stopId,
+    nationality,
+    origin,
+    destination,
+    departureDate,
+    returnDate,
+    cabin,
+  ]);
   const stop = workspace.stops.find((s) => s.id === stopId);
-  const partyConfirmed = !!workspace.brief.adults && workspace.brief.children === 0;
+  const partyConfirmed =
+    !!workspace.brief.adults &&
+    workspace.brief.children !== null &&
+    workspace.brief.childAges.length === workspace.brief.children;
   const hotelReady =
     partyConfirmed &&
     !!stop?.arrivalDate &&
     !!stop.departureDate &&
     !!workspace.brief.hotelStandard.trim() &&
     !!workspace.brief.hotelLocation.trim();
-  const flightReady = partyConfirmed && !!workspace.brief.cabin.trim();
-  async function search(event: FormEvent) {
-    event.preventDefault();
+  const flightReady =
+    partyConfirmed && workspace.brief.children === 0 && !!workspace.brief.cabin.trim();
+  async function search(event?: FormEvent, offset = 0) {
+    event?.preventDefault();
     if (quoteLock.current) return;
     quoteLock.current = true;
     setBusy(true);
     setError('');
-    setQuotes([]);
-    setWarning('');
+    if (!offset) {
+      setQuotes([]);
+      setHotelResult(null);
+      setWarning('');
+    }
     const current = ++searchEpoch.current;
     controller.current?.abort();
     const requestController = new AbortController();
@@ -2848,7 +3099,12 @@ function SupplierQuotes({
     try {
       const body =
         kind === 'hotels'
-          ? { revision: workspace.revision, stopId, guestNationality: nationality.toUpperCase() }
+          ? {
+              revision: workspace.revision,
+              stopId,
+              guestNationality: nationality.toUpperCase(),
+              ...(offset ? { offset } : {}),
+            }
           : {
               revision: workspace.revision,
               origin: origin.toUpperCase(),
@@ -2858,20 +3114,61 @@ function SupplierQuotes({
               adults: workspace.brief.adults,
               cabinClass: cabin,
             };
-      const result = await api<{ quotes: StudioItem[]; mode: string; warning: string }>(
+      const result = await api<StudioHotelSearchResult>(
         `/studio/workspaces/${workspace.id}/${kind}/search`,
         { method: 'POST', body: JSON.stringify(body), signal: requestController.signal },
       );
       if (current !== searchEpoch.current) return;
-      setQuotes(result.quotes);
+      if (offset && hotelResult && Array.isArray(result.hotels)) {
+        const key = (hotel: StudioHotelSearchResult['hotels'][number]) =>
+          JSON.stringify([
+            hotel.hotelKey,
+            hotel.room,
+            hotel.board,
+            hotel.price,
+            hotel.currency,
+            hotel.checkin,
+            hotel.checkout,
+          ]);
+        const seen = new Set(hotelResult.hotels.map(key));
+        const additional = result.hotels.filter((hotel) => {
+          const id = key(hotel);
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+        const hotels = [...hotelResult.hotels, ...additional];
+        const quoteIds = new Set(additional.map((hotel) => hotel.quoteId));
+        const combinedQuotes = [
+          ...quotes,
+          ...result.quotes.filter((quote) => quoteIds.has(quote.id)),
+        ];
+        setQuotes(combinedQuotes);
+        setHotelResult({
+          ...hotelResult,
+          quotes: combinedQuotes,
+          hotels,
+          inventory: {
+            ...result.inventory,
+            returnedHotels: new Set(hotels.map((hotel) => hotel.hotelKey)).size,
+            returnedQuotes: hotels.length,
+            pagesSearched: hotelResult.inventory.pagesSearched + result.inventory.pagesSearched,
+            limit: hotelResult.inventory.limit + result.inventory.limit,
+            incomplete: hotelResult.inventory.incomplete || result.inventory.incomplete,
+          },
+        });
+      } else {
+        setQuotes(result.quotes);
+        if (kind === 'hotels' && Array.isArray(result.hotels)) setHotelResult(result);
+      }
       setQuoteRevision(workspace.revision);
       setWarning(
         result.warning ||
-          (result.mode === 'test' || result.mode === 'sandbox'
+          (result.mode === 'test'
             ? 'Sandbox quotes are simulated examples.'
             : 'Availability and prices require reconfirmation.'),
       );
-      if (!result.quotes.length)
+      if (!result.quotes.length && !offset)
         setWarning(
           'No quotes were returned for these details. You can refine the search or add a service manually.',
         );
@@ -2950,6 +3247,7 @@ function SupplierQuotes({
                             onValueChange={(value) => {
                               setStopId(value);
                               setQuotes([]);
+                              setHotelResult(null);
                             }}
                           >
                             <Select.Trigger
@@ -3079,9 +3377,8 @@ function SupplierQuotes({
                         <CircleAlert size={16} />
                       </Callout.Icon>
                       <Callout.Text>
-                        Confirm the number of adults and children in the brief first. Supplier
-                        searches currently support adult-only parties; family services can be added
-                        manually.
+                        Confirm adults, children and each child’s age in the brief. Hotel searches
+                        support families; flight searches currently support adults only.
                       </Callout.Text>
                     </Callout.Root>
                   )}
@@ -3102,7 +3399,8 @@ function SupplierQuotes({
                         <CircleAlert size={16} />
                       </Callout.Icon>
                       <Callout.Text>
-                        Confirm the client’s preferred cabin in the brief before searching.
+                        Confirm the preferred cabin for an adults-only flight search. Family flights
+                        can be added manually.
                       </Callout.Text>
                     </Callout.Root>
                   )}
@@ -3135,8 +3433,20 @@ function SupplierQuotes({
                 <Callout.Text>{warning}</Callout.Text>
               </Callout.Root>
             )}
+            {kind === 'hotels' && hotelResult && (
+              <StudioHotelResults
+                result={hotelResult}
+                onLoadMore={() => search(undefined, hotelResult.inventory.nextOffset || 0)}
+                loadingMore={busy}
+                disabled={disabled || busy || quoteRevision !== workspace.revision}
+                onSelect={(quoteId) => {
+                  const quote = quotes.find((q) => q.id === quoteId);
+                  if (quote) return select(quote);
+                }}
+              />
+            )}
             <Flex direction="column" gap="3" mt="4">
-              {quotes.map((quote) => (
+              {(kind === 'hotels' && hotelResult ? [] : quotes).map((quote) => (
                 <Card asChild key={quote.id} size="2">
                   <article>
                     <Flex

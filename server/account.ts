@@ -1,3 +1,4 @@
+import { listStudioClientProfiles } from './studio-clients.ts';
 import type { Express, Response, RequestHandler } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
@@ -287,6 +288,7 @@ export function installAccountRoutes(
       saved,
       bookings: new BookingStore(db).list(row.id),
       studio: {
+        clients: listStudioClientProfiles(db, row.id),
         agency: new StudioStore(db).getAgency(row.id),
         workspaces: new StudioStore(db).list(row.id).map(({ proposal, ...workspace }) => ({
           ...workspace,
@@ -307,6 +309,7 @@ export function installAccountRoutes(
       deleteBookings(db, row.id);
       db.prepare('DELETE FROM studio_workspaces WHERE owner_id = ?').run(row.id);
       db.prepare('DELETE FROM studio_agencies WHERE owner_id = ?').run(row.id);
+      db.prepare('DELETE FROM studio_clients WHERE owner_id = ?').run(row.id);
       db.prepare('DELETE FROM planning_runs WHERE owner_id = ?').run(row.id);
       db.prepare('DELETE FROM trips WHERE owner_id = ?').run(row.id); // Revisions cascade.
       db.prepare('DELETE FROM saved WHERE owner_id = ?').run(row.id);

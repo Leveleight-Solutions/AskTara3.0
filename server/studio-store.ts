@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { defaultStudioAgency, type StudioAgency, type StudioWorkspace } from '../shared/studio.ts';
+import { scrubStudioPrivateData } from './studio-privacy.ts';
 
 export class StudioError extends Error {
   constructor(
@@ -18,6 +19,8 @@ export function initializeStudioStorage(db: DatabaseSync) {
       data TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS studio_workspace_owner ON studio_workspaces(owner_id, updated_at);
+    CREATE TABLE IF NOT EXISTS studio_clients (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS studio_client_owner ON studio_clients(owner_id, updated_at);
     CREATE TABLE IF NOT EXISTS studio_agencies (owner_id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS studio_requests (
       owner_id TEXT NOT NULL, request_id TEXT NOT NULL, workspace_id TEXT NOT NULL REFERENCES studio_workspaces(id) ON DELETE CASCADE,
@@ -39,14 +42,17 @@ export function initializeStudioStorage(db: DatabaseSync) {
 /** Rows carry `pinned_at` beside the JSON document; it is merged in on read, never stored in it. */
 function readWorkspace(row: Record<string, unknown>): StudioWorkspace {
   return {
+    cruises: [],
+    destinationResearch: null,
+    entryRequirements: [],
     itinerary: null,
-    ...(JSON.parse(String(row.data)) as StudioWorkspace),
+    ...scrubStudioPrivateData(JSON.parse(String(row.data)) as StudioWorkspace),
     pinnedAt: row.pinned_at ? String(row.pinned_at) : null,
   };
 }
 function documentOf(workspace: StudioWorkspace): string {
   const { pinnedAt: _pinnedAt, ...document } = workspace;
-  return JSON.stringify(document);
+  return JSON.stringify(scrubStudioPrivateData(document));
 }
 export function newStudioWorkspace(): StudioWorkspace {
   const now = new Date().toISOString();
@@ -56,6 +62,14 @@ export function newStudioWorkspace(): StudioWorkspace {
     title: 'New client proposal',
     stage: 'brief',
     brief: {
+      clientId: '',
+      passportNationality: '',
+      preferredDestination: '',
+      destinationCountry: '',
+      tripType: 'undecided',
+      outboundTransport: 'undecided',
+      returnTransport: 'undecided',
+      foodPreferences: [],
       clientName: '',
       context: '',
       request: '',
@@ -80,6 +94,9 @@ export function newStudioWorkspace(): StudioWorkspace {
     structureAccepted: false,
     items: [],
     recommendations: [],
+    cruises: [],
+    destinationResearch: null,
+    entryRequirements: [],
     itinerary: null,
     imports: [],
     messages: [],
@@ -126,6 +143,7 @@ export class StudioStore {
     return this.require(ownerId, id);
   }
   create(ownerId: string, workspace = newStudioWorkspace()): StudioWorkspace {
+    Object.assign(workspace, scrubStudioPrivateData(workspace));
     this.db
       .prepare(
         'INSERT INTO studio_workspaces (id,owner_id,revision,data,updated_at) VALUES (?,?,?,?,?)',
@@ -135,11 +153,11 @@ export class StudioStore {
   }
   /** A single CAS statement; may be called inside a publication transaction. */
   save(ownerId: string, workspace: StudioWorkspace, expectedRevision: number): StudioWorkspace {
-    const next = {
+    const next = scrubStudioPrivateData({
       ...workspace,
       revision: expectedRevision + 1,
       updatedAt: new Date().toISOString(),
-    };
+    });
     const saved = this.db
       .prepare(
         'UPDATE studio_workspaces SET revision=?,data=?,updated_at=? WHERE id=? AND owner_id=? AND revision=?',
@@ -183,6 +201,7 @@ export class StudioStore {
   }
 }
 export function migrateStudio(db: DatabaseSync, guest: string, user: string) {
+  db.prepare('UPDATE studio_clients SET owner_id=? WHERE owner_id=?').run(user, guest);
   db.prepare('UPDATE studio_workspaces SET owner_id=? WHERE owner_id=?').run(user, guest);
   db.prepare('UPDATE studio_quotes SET owner_id=? WHERE owner_id=?').run(user, guest);
   // Completed request IDs remain meaningful in their original owner scope only.

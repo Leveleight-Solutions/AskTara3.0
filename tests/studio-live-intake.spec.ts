@@ -102,7 +102,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
     expect(
       workspace.messages.filter((message) => message.role === 'assistant').at(-1)!.content.length,
     ).toBeLessThanOrEqual(600);
-    await expect(page.getByRole('tab', { name: 'Services', exact: true })).toBeDisabled();
+    await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
     await page
       .getByRole('button', { name: /Skip questions and build structure|Build route structure/ })
       .click();
@@ -117,7 +117,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
     expect(workspace.structureAccepted).toBe(true);
     verify(workspace);
     await page.reload();
-    await page.getByRole('tab', { name: 'Structure', exact: true }).click();
+    await page.getByRole('tab', { name: 'Brief & route', exact: true }).click();
     await expect(
       page.getByRole('spinbutton', { name: 'Nights in Paris', exact: true }),
     ).toHaveValue('9');

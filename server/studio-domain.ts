@@ -9,6 +9,11 @@ import type {
   StudioRecommendation,
 } from '../shared/studio.ts';
 import { StudioError } from './studio-store.ts';
+import {
+  studioItinerarySchema,
+  sanitizeManualStudioItinerary,
+} from '../shared/studio-itinerary.ts';
+import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 
 export const studioDate = z
   .string()
@@ -25,6 +30,20 @@ const amount = z.number().finite().min(0).max(10000000).nullable();
 const currency = z.string().regex(/^[A-Z]{3}$/);
 export const studioBriefSchema = z
   .object({
+    clientId: z.string().max(80).optional(),
+    passportNationality: z
+      .string()
+      .refine((v) => !v || Boolean(normalizeStudioCountry(v)), 'Choose a passport nationality.')
+      .optional(),
+    preferredDestination: short.optional(),
+    destinationCountry: z
+      .string()
+      .refine((v) => !v || Boolean(normalizeStudioCountry(v)), 'Choose a destination country.')
+      .optional(),
+    tripType: z.enum(['undecided', 'single', 'multiple']).optional(),
+    outboundTransport: z.enum(['undecided', 'flight', 'cruise']).optional(),
+    returnTransport: z.enum(['undecided', 'flight', 'cruise']).optional(),
+    foodPreferences: z.array(short).max(30).optional(),
     clientName: short,
     context: z.string().max(8000),
     request: z.string().max(16000),
@@ -144,6 +163,7 @@ export const studioPatchSchema = z
     items: z.array(studioItemSchema).max(150).optional(),
     recommendations: z.array(studioRecommendationSchema).max(120).optional(),
     pricing: studioPricingSchema.partial().optional(),
+    itinerary: studioItinerarySchema.nullable().optional(),
   })
   .strict();
 export function addNights(date: string, nights: number) {
@@ -221,7 +241,7 @@ export function replaceStudioRecommendations(
       'Keep at most 120 recommendations per proposal. Choose fewer destinations or remove older suggestions.',
     );
   if (workspace.recommendations.some((item) => item.included && replacing(item)))
-    workspace.itinerary = null;
+    if (!workspace.itineraryManual) workspace.itinerary = null;
   workspace.recommendations = next;
 }
 
@@ -242,6 +262,46 @@ export function qualifyStudio(
       'Where would you like the client to travel?',
       'A destination is needed to build a route.',
       true,
+    );
+  const passport = normalizeStudioCountry(b.passportNationality || '');
+  if (passport) fact('passportNationality', 'Passport nationality', passport.name);
+  else
+    ask(
+      'passportNationality',
+      'Which country issued the passport held?',
+      'Only the country is needed; do not enter a passport number.',
+    );
+  if (b.tripType && b.tripType !== 'undecided')
+    fact(
+      'tripType',
+      'Trip type',
+      b.tripType === 'single' ? 'Single destination' : 'Multiple destinations',
+    );
+  else
+    ask(
+      'tripType',
+      'Is this a single-destination or multi-destination trip?',
+      'Confirm the intended scope before adding route stops.',
+    );
+  if (b.outboundTransport && b.outboundTransport !== 'undecided')
+    fact(
+      'outboundTransport',
+      'Travel to destination',
+      b.outboundTransport === 'cruise' ? 'Cruise' : 'Flight',
+    );
+  else
+    ask(
+      'outboundTransport',
+      'Will the client reach the destination by flight or cruise?',
+      'Arrival arrangements may affect entry and port requirements.',
+    );
+  if (b.returnTransport && b.returnTransport !== 'undecided')
+    fact('returnTransport', 'Return travel', b.returnTransport === 'cruise' ? 'Cruise' : 'Flight');
+  else
+    ask(
+      'returnTransport',
+      'Will the return be by flight or cruise?',
+      'The return can use a different transport mode.',
     );
   if (b.startDate) fact('startDate', 'Arrival date', b.startDate);
   else if (b.datesFlexible) fact('dates', 'Travel dates', 'Flexible');
@@ -328,6 +388,48 @@ export function applyStudioPatch(
   agency: StudioAgency,
 ): StudioWorkspace {
   const previous = structureFingerprint(workspace);
+  const entryBasis = (value: StudioWorkspace) =>
+    JSON.stringify({
+      passport: value.brief.passportNationality || '',
+      destination: value.brief.preferredDestination || '',
+      country: value.brief.destinationCountry || '',
+      start: value.brief.startDate,
+      end: value.brief.endDate,
+      outbound: value.brief.outboundTransport || 'undecided',
+      returning: value.brief.returnTransport || 'undecided',
+      route: value.stops.map(
+        ({ id, name, country, arrivalDate, departureDate, nights, onwardTransport }) => ({
+          id,
+          name,
+          country,
+          arrivalDate,
+          departureDate,
+          nights,
+          onwardTransport,
+        }),
+      ),
+    });
+  const researchBasis = (value: StudioWorkspace) =>
+    JSON.stringify({
+      clientId: value.brief.clientId || '',
+      destination: value.brief.preferredDestination || '',
+      country: value.brief.destinationCountry || '',
+      start: value.brief.startDate,
+      end: value.brief.endDate,
+      flexible: value.brief.datesFlexible,
+      adults: value.brief.adults,
+      children: value.brief.children,
+      budget: value.brief.budget,
+      currency: value.brief.currency,
+      origin: value.brief.origin,
+      interests: value.brief.interests,
+      food: value.brief.foodPreferences || [],
+      requirements: value.brief.requirements,
+      tripType: value.brief.tripType || 'undecided',
+      route: value.stops.map(({ name, country }) => ({ name, country })),
+    });
+  const previousEntryBasis = entryBasis(workspace);
+  const previousResearchBasis = researchBasis(workspace);
   const itineraryBasis = (value: StudioWorkspace) => {
     const { request: _request, output: _output, clientName: _name, ...preferences } = value.brief;
     return JSON.stringify({
@@ -344,6 +446,14 @@ export function applyStudioPatch(
   ]);
   if (patch.title !== undefined) workspace.title = patch.title;
   if (patch.brief) workspace.brief = { ...workspace.brief, ...patch.brief };
+  if (workspace.brief.passportNationality)
+    workspace.brief.passportNationality = normalizeStudioCountry(
+      workspace.brief.passportNationality,
+    )!.code;
+  if (workspace.brief.destinationCountry)
+    workspace.brief.destinationCountry = normalizeStudioCountry(
+      workspace.brief.destinationCountry,
+    )!.code;
   if (
     workspace.brief.endDate &&
     workspace.brief.startDate &&
@@ -433,7 +543,38 @@ export function applyStudioPatch(
       JSON.stringify([workspace.brief.adults, workspace.brief.children, workspace.brief.childAges])
   )
     workspace.items = workspace.items.map((item) => ({ ...item, needsReview: true }));
-  if (changed || previousItineraryBasis !== itineraryBasis(workspace)) workspace.itinerary = null;
+  if (changed || previousItineraryBasis !== itineraryBasis(workspace)) {
+    // Agent-authored plans remain editable after preferences or supplier selections change.
+    if (!workspace.itineraryManual) workspace.itinerary = null;
+    if (workspace.itinerary) {
+      workspace.itinerary.days.forEach((day) => {
+        day.stopIds = day.stopIds.filter((id) => workspace.stops.some((stop) => stop.id === id));
+      });
+      workspace.itinerary.notes = [
+        ...new Set([
+          ...workspace.itinerary.notes,
+          'Trip details changed. Review the daily plan against the current route and services.',
+        ]),
+      ].slice(-20);
+    }
+  }
+  if (patch.itinerary !== undefined) {
+    workspace.itineraryManual = true;
+    workspace.itinerary =
+      patch.itinerary === null
+        ? null
+        : sanitizeManualStudioItinerary(patch.itinerary, workspace.itinerary);
+    const ids = new Set(workspace.stops.map((stop) => stop.id));
+    if (workspace.itinerary?.days.some((day) => day.stopIds.some((id) => !ids.has(id))))
+      throw new StudioError(400, 'Daily plans must refer to destinations in this workspace.');
+  }
+  if (patch.stops) {
+    workspace.brief.preferredDestination = workspace.stops[0]?.name || '';
+    workspace.brief.destinationCountry =
+      normalizeStudioCountry(workspace.stops[0]?.country || '')?.code || '';
+  }
+  if (previousEntryBasis !== entryBasis(workspace)) workspace.entryRequirements = [];
+  if (previousResearchBasis !== researchBasis(workspace)) workspace.destinationResearch = null;
   workspace.qualification = qualifyStudio(workspace, agency);
   return workspace;
 }

@@ -8,7 +8,8 @@ import type {
   IntegrationStatus,
 } from '../shared/types.ts';
 import { destinations } from '../shared/catalog.ts';
-import { flightSearchSchema, hotelSearchSchema } from './validation.ts';
+import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
+import { searchStudioHotelInventory, type HotelProviderResult } from './studio-hotels.ts';
 
 type ProviderMode = 'test' | 'live' | 'provider';
 
@@ -591,10 +592,11 @@ const hotelEnvironmentNotice = (mode: ProviderMode) =>
 
 /** The optional destination must come from server-resolved trip data, never request JSON. */
 export async function searchHotels(
-  input: z.infer<typeof hotelSearchSchema>,
+  input: z.infer<typeof studioHotelSearchSchema>,
   signal?: AbortSignal,
   destination?: Destination,
-) {
+  options?: { expanded?: boolean; offset?: number },
+): Promise<HotelProviderResult> {
   signal?.throwIfAborted();
   const location = destination ?? destinations.find((d) => d.id === input.destinationId);
   if (
@@ -618,6 +620,25 @@ export async function searchHotels(
       503,
       'HOTELS_NOT_CONFIGURED',
     );
+  if (options?.expanded) {
+    try {
+      return await searchStudioHotelInventory(
+        input,
+        location,
+        token,
+        (sandbox) => resolveProviderMode(token, sandbox),
+        signal,
+        options.offset || 0,
+      );
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw new ProviderError(
+        error instanceof Error
+          ? error.message
+          : 'The hotel provider could not complete the search.',
+      );
+    }
+  }
   let response: Response;
   try {
     response = await fetch('https://api.liteapi.travel/v3.0/hotels/rates', {
@@ -633,9 +654,14 @@ export async function searchHotels(
       body: JSON.stringify({
         checkin: input.checkin,
         checkout: input.checkout,
-        currency: 'USD',
+        currency: input.currency || 'USD',
         guestNationality: input.guestNationality,
-        occupancies: [{ adults: input.adults }],
+        occupancies: [
+          {
+            adults: input.adults,
+            ...(input.childAges?.length ? { children: input.childAges } : {}),
+          },
+        ],
         latitude: location.coordinates[0],
         longitude: location.coordinates[1],
         radius: 15000,

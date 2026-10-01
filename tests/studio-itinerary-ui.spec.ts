@@ -117,7 +117,7 @@ test('accepted route generates daily activities and chat refinements return to t
   const workspace = fixture();
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
-  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -138,10 +138,10 @@ test('accepted route generates daily activities and chat refinements return to t
     .getByRole('region', { name: 'Import client information' })
     .getByRole('textbox');
   await expect(composer).toHaveValue('Refine the day-by-day itinerary: ');
-  await page.getByRole('tab', { name: 'Services', exact: true }).click();
+  await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
   await composer.fill('Make day 2 quieter with more rest.');
   await page.getByRole('button', { name: 'Review brief', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -201,7 +201,7 @@ test('a chat route change returns an open itinerary to structure approval', asyn
   workspace.itinerary = itinerary();
   await mockWorkspace(page, workspace, 'change-route');
   await page.goto(`/studio/${workspace.id}`);
-  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -210,11 +210,11 @@ test('a chat route change returns an open itinerary to structure approval', asyn
     .getByRole('textbox');
   await composer.fill('Make London four nights.');
   await page.getByRole('button', { name: 'Review brief', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Structure', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Brief & route', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
-  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toBeDisabled();
   await expect(page.getByRole('region', { name: 'Day-by-day itinerary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Accept structure', exact: true })).toBeVisible();
 });
