@@ -108,7 +108,7 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     });
     expect(agency.status()).toBe(200);
     await page.goto(`/studio/${workspace.id}`);
-    await page.getByRole('tab', { name: 'Services', exact: true }).click();
+    await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
     for (const title of ['A quiet Bloomsbury hotel', 'Arrival transfer']) {
       await page
         .getByRole('article')

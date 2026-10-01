@@ -2,6 +2,12 @@ import type { StudioAgency, StudioWorkspace } from '../shared/studio.ts';
 import { reviewStudioBrief, studioRecommendations } from './studio-models.ts';
 import { generateStudioItinerary } from './studio-itinerary.ts';
 import { replaceStudioRecommendations } from './studio-domain.ts';
+import {
+  researchStudioDestinations,
+  checkStudioEntryRequirements,
+} from './studio-travel-research.ts';
+import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
+import type { StudioTravelHistoryEntry } from '../shared/studio-travel-research.ts';
 
 /** Each turn runs inside the route's revision-checked, atomic action transaction. */
 export async function runStudioAssistant(
@@ -9,10 +15,53 @@ export async function runStudioAssistant(
   message: string,
   agency: StudioAgency,
   signal?: AbortSignal,
+  history: StudioTravelHistoryEntry[] = [],
 ) {
   const previousItinerary = workspace.itinerary;
-  const review = await reviewStudioBrief(workspace, message, agency, signal);
+  const review = await reviewStudioBrief(workspace, message, agency, signal, history);
   const action = 'action' in review ? review.action : 'continue';
+  if (action === 'destinations') {
+    workspace.destinationResearch = await researchStudioDestinations(workspace, history, signal);
+    return {
+      ...review,
+      reply:
+        'The destination research is ready in Brief & route. Review current conditions and the travel advice before choosing a destination.',
+      nextAction: 'structure',
+    };
+  }
+  if (action === 'entry_check') {
+    if (!workspace.brief.passportNationality)
+      return {
+        ...review,
+        reply:
+          'Which country issued the client’s passport? I only need the nationality, never a passport number.',
+        nextAction: 'structure',
+      };
+    if (!workspace.stops.length)
+      return {
+        ...review,
+        reply:
+          'Choose a destination first, then I can check entry requirements for the client’s passport nationality.',
+        nextAction: 'structure',
+      };
+    const stop = workspace.stops[0];
+    if (!normalizeStudioCountry(stop.country))
+      return {
+        ...review,
+        reply: `Add the destination country for ${stop.name} in Brief & route, then I can check its entry requirements.`,
+        nextAction: 'structure',
+      };
+    const result = await checkStudioEntryRequirements(workspace, signal, stop.id);
+    workspace.entryRequirements = [
+      ...(workspace.entryRequirements || []).filter((value) => value.stopId !== stop.id),
+      result,
+    ];
+    return {
+      ...review,
+      reply: `Entry research for ${stop.name} is ready in Brief & route. Review the official sources and any unresolved checks.${workspace.stops.length > 1 ? ' Use the destination selector to check each other country.' : ''}`,
+      nextAction: 'structure',
+    };
+  }
   if (action === 'itinerary') {
     if (!workspace.stops.length)
       return {
@@ -43,6 +92,7 @@ export async function runStudioAssistant(
       message,
       signal,
     );
+    workspace.itineraryManual = false;
     workspace.stage = 'itinerary';
     return {
       ...review,

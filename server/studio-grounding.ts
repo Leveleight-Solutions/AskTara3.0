@@ -1,6 +1,7 @@
 import type { StudioBrief, StudioStop, StudioWorkspace } from '../shared/studio.ts';
 import { StudioError } from './studio-store.ts';
 import { detectDestinationIntent } from './planner.ts';
+import { normalizeStudioCountry, studioCountries } from '../shared/studio-travel-research.ts';
 
 const normal = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 const words: Record<string, number> = {
@@ -318,6 +319,236 @@ export function groundedStudioBrief(
   const valid = facts
     .map((fact) => ({ ...fact, sources: actualSources(fact.evidence, message, documentTexts) }))
     .filter((fact) => fact.sources.length);
+  // A residence, departure city or birthplace does not establish the passport held.
+  // Country names cover the global ISO list; common nationality adjectives supplement it.
+  const demonyms: Record<string, string> = {
+    australian: 'AU',
+    pakistani: 'PK',
+    british: 'GB',
+    american: 'US',
+    indian: 'IN',
+    canadian: 'CA',
+    german: 'DE',
+    french: 'FR',
+    italian: 'IT',
+    spanish: 'ES',
+    portuguese: 'PT',
+    irish: 'IE',
+    dutch: 'NL',
+    belgian: 'BE',
+    swiss: 'CH',
+    austrian: 'AT',
+    swedish: 'SE',
+    norwegian: 'NO',
+    danish: 'DK',
+    finnish: 'FI',
+    polish: 'PL',
+    czech: 'CZ',
+    greek: 'GR',
+    turkish: 'TR',
+    russian: 'RU',
+    ukrainian: 'UA',
+    chinese: 'CN',
+    japanese: 'JP',
+    'south korean': 'KR',
+    'north korean': 'KP',
+    taiwanese: 'TW',
+    indonesian: 'ID',
+    malaysian: 'MY',
+    singaporean: 'SG',
+    thai: 'TH',
+    vietnamese: 'VN',
+    filipino: 'PH',
+    bangladeshi: 'BD',
+    nepali: 'NP',
+    nepalese: 'NP',
+    'sri lankan': 'LK',
+    emirati: 'AE',
+    saudi: 'SA',
+    qatari: 'QA',
+    bahraini: 'BH',
+    kuwaiti: 'KW',
+    omani: 'OM',
+    iranian: 'IR',
+    iraqi: 'IQ',
+    egyptian: 'EG',
+    moroccan: 'MA',
+    kenyan: 'KE',
+    nigerian: 'NG',
+    ghanaian: 'GH',
+    'south african': 'ZA',
+    brazilian: 'BR',
+    argentinian: 'AR',
+    argentine: 'AR',
+    mexican: 'MX',
+    colombian: 'CO',
+    chilean: 'CL',
+    'new zealand': 'NZ',
+    'new zealander': 'NZ',
+    fiji: 'FJ',
+    fijian: 'FJ',
+  };
+  const countryWords = [
+    ...studioCountries.map(({ name, code }) => [name, code] as const),
+    ...Object.entries(demonyms),
+    ...[
+      'UK',
+      'USA',
+      'UAE',
+      'Turkey',
+      'Russia',
+      'South Korea',
+      'North Korea',
+      'Hong Kong',
+      'Macau',
+      'Laos',
+      'Vietnam',
+    ].map((name) => [name, normalizeStudioCountry(name)!.code]),
+  ];
+  const lastReply =
+    context.messages?.findLast((entry) => entry.role === 'assistant')?.content || '';
+  const lastQuestion = (lastReply.match(/[^.!?]+\?/g) || []).at(-1) || '';
+  const askedPassport = /\b(?:passport|nationality|citizenship)\b/i.test(lastQuestion);
+  for (const fact of valid.filter((fact) => fact.field === 'passportNationality')) {
+    const declared = new Set<string>();
+    for (const source of fact.sources) {
+      if (askedPassport && normal(source) === normal(message)) {
+        const answer = source
+          .trim()
+          .replace(/[.!]$/, '')
+          .replace(/\s+passport$/i, '');
+        const code = normalizeStudioCountry(answer)?.code || demonyms[normal(answer)];
+        if (code) declared.add(code);
+      }
+      for (const [phrase, code] of countryWords) {
+        const word = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (
+          new RegExp(
+            `\\b(?:not|never|no|isn.t|doesn.t|don.t|without)\\b.{0,45}\\b${word}\\b`,
+            'i',
+          ).test(source)
+        )
+          continue;
+        const before = new RegExp(
+          `\\b(?:passport(?: nationality| country)?|nationality|citizenship|citizen of)\\s*(?:(?:is|held|from|issued by|of)\\s*|[:=-]\\s*){0,2}${word}(?=$|[^\\p{L}])`,
+          'iu',
+        );
+        const after = new RegExp(
+          `(?:^|[^\\p{L}])${word}\\s+(?:(?:ordinary|regular|valid)\\s+)?(?:passport|nationality|citizenship|citizen|national|client|travell?er)\\b`,
+          'iu',
+        );
+        const adjective =
+          demonyms[normal(phrase)] &&
+          new RegExp(
+            `\\b(?:i am|i['’]m|he is|he['’]s|she is|she['’]s|they are|they['’]re|(?:the )?client is)\\s+(?:(?:a|an)\\s+)?${word}(?=$|[^\\p{L}])`,
+            'iu',
+          ).test(source);
+        if (before.test(source) || after.test(source) || adjective) declared.add(code);
+      }
+      const explicitCode = source.match(
+        /\b(?:passport nationality|passport country|nationality|citizenship)\s*[:=-]\s*([A-Z]{2})\b/i,
+      );
+      if (explicitCode) {
+        const country = normalizeStudioCountry(explicitCode[1]);
+        if (country) declared.add(country.code);
+      }
+    }
+    // Multiple declared passports still require the agent to select which one is used.
+    if (declared.size === 1) next.passportNationality = [...declared][0];
+  }
+  const askedTripType =
+    /\b(?:single|multi(?:ple)?|one destination)\b/i.test(lastQuestion) &&
+    /\b(?:destination|city|cities|trip|stop)\b/i.test(lastQuestion);
+  for (const fact of valid.filter((fact) => fact.field === 'tripType')) {
+    const source = fact.sources[0];
+    const direct =
+      askedTripType && normal(source) === normal(message)
+        ? normal(source).replace(/[.!]$/, '')
+        : '';
+    const destination = current.preferredDestination || proposed.preferredDestination || '';
+    const escapedDestination = destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const onlyDestination =
+      destination &&
+      new RegExp(
+        `(?:\\b(?:only|just)\\s+(?:visit\\s+)?${escapedDestination}(?=$|[^\\p{L}])|(?:^|[^\\p{L}])${escapedDestination}\\s+only\\b)`,
+        'iu',
+      ).test(source);
+    const single =
+      !/\b(?:not|maybe|possibly)\s+(?:a\s+)?(?:single|one|only)\b/i.test(source) &&
+      (/\b(?:single[- ](?:destination|city|stop)|(?:only |just )?one (?:destination|city|stop))\b/i.test(
+        source,
+      ) ||
+        Boolean(onlyDestination) ||
+        /^(?:single|one)$/.test(direct));
+    const multiple =
+      !/\b(?:not|maybe|possibly)\s+(?:a\s+)?(?:multi|multiple|several)\b/i.test(source) &&
+      (/\b(?:multi[- ](?:destination|city|stop)|(?:multiple|several|two|three|[2-9]|1\d|20) (?:destinations|cities|stops))\b/i.test(
+        source,
+      ) ||
+        /^(?:multiple|multi|several)$/.test(direct));
+    if (single !== multiple) next.tripType = single ? 'single' : 'multiple';
+    else if (/^(?:undecided|not sure(?: yet)?)$/.test(direct)) next.tripType = 'undecided';
+  }
+  const asksArrival =
+    /\b(?:outbound|outward|arrival|arriv(?:e|ing)|reach(?: the)? destination)\b/i.test(
+      lastQuestion,
+    );
+  const asksReturn = /\b(?:return|back|home)\b/i.test(lastQuestion);
+  const transportMode = (source: string): 'flight' | 'cruise' | undefined => {
+    const flight = /\b(?:flights?|fly|flying|planes?)\b/i.test(source);
+    const cruise = /\b(?:cruises?|cruising)\b/i.test(source);
+    return flight === cruise ? undefined : flight ? 'flight' : 'cruise';
+  };
+  const uncertainTransport = (source: string) =>
+    /\b(?:maybe|possibly|undecided|not sure)\b|\b(?:not|no|without)\s+(?:by\s+|a\s+)?(?:flights?|fly|flying|planes?|cruises?|cruising)\b/i.test(
+      source,
+    );
+  for (const fact of valid.filter(
+    (fact) => fact.field === 'outboundTransport' || fact.field === 'returnTransport',
+  )) {
+    const field = fact.field as 'outboundTransport' | 'returnTransport';
+    const source = fact.sources[0];
+    const applicable = new Set<'flight' | 'cruise'>();
+    const askedThisLeg =
+      field === 'outboundTransport' ? asksArrival && !asksReturn : asksReturn && !asksArrival;
+    if (
+      askedThisLeg &&
+      normal(source) === normal(message) &&
+      /^\s*(?:by\s+)?(?:flights?|fly|planes?|cruises?)(?:\s+please)?[.!]?\s*$/i.test(source)
+    ) {
+      const mode = transportMode(source);
+      if (mode) applicable.add(mode);
+    }
+    for (const sentence of source.split(/[.;\n]/)) {
+      const sharedMode = transportMode(sentence);
+      if (
+        sharedMode &&
+        !uncertainTransport(sentence) &&
+        /\b(?:arrival|outbound|outward)\s+and\s+return\b|\b(?:both ways|both legs|there and back|round[- ]trip)\b/i.test(
+          sentence,
+        )
+      ) {
+        applicable.add(sharedMode);
+        continue;
+      }
+      for (const clause of sentence.split(/\b(?:and|but|then)\b|,/i)) {
+        if (uncertainTransport(clause)) continue;
+        const mode = transportMode(clause);
+        if (!mode) continue;
+        const returning =
+          /\b(?:return(?:ing)?|homeward|back home|(?:fly|flight|cruise|cruising) (?:back|home))\b/i.test(
+            clause,
+          );
+        const arriving =
+          /\b(?:outbound|outward|arriv(?:e|ing|al)|reach(?:ing)?(?: the)? destination|(?:fly|flying|cruise|cruising) (?:out|to))\b/i.test(
+            clause,
+          );
+        if (field === 'returnTransport' ? returning && !arriving : arriving && !returning)
+          applicable.add(mode);
+      }
+    }
+    if (applicable.size === 1) next[field] = [...applicable][0];
+  }
   const critical = new Set<keyof StudioBrief>([
     'adults',
     'children',
@@ -327,6 +558,11 @@ export function groundedStudioBrief(
     'startDate',
     'endDate',
     'datesFlexible',
+    'passportNationality',
+    'tripType',
+    'outboundTransport',
+    'returnTransport',
+    'clientId',
   ]);
   for (const fact of valid)
     if (!critical.has(fact.field)) Object.assign(next, { [fact.field]: proposed[fact.field] });
@@ -553,7 +789,9 @@ function requestedNights(
     durations.length === 1 &&
     routeEntries(source).every((entry) => placeNormal(entry.name) === placeNormal(name)) &&
     !/\bnights?\s+(?:in|at|for)\s+[\p{L}]/iu.test(text) &&
-    !/\b(?:more|extra|another|add|remove|extend|lengthen|shorten|by)\b/i.test(text)
+    !/\b(?:more|extra|another)(?:\s+\d+)?\s+nights?\b|\b(?:add|remove|extend|lengthen|shorten)\b[^.;\n]{0,50}\bnights?\b|\bby\s+\d+\s+nights?\b/i.test(
+      text,
+    )
   )
     return Number(durations[0][1]);
   if (allowBare && bareNumber(text)) return Number(text.match(/\d+/)?.[0]);

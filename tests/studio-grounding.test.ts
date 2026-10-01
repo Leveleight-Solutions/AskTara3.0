@@ -22,6 +22,164 @@ const afterQuestion = (content: string) => ({
   messages: [{ role: 'assistant' as const, content }],
 });
 
+test('a full Stage 1 followup grounds the existing London stay despite unrelated by-flight wording', () => {
+  const message =
+    'The fictional client holds an Australian passport. This is a single-destination trip, arriving 2027-03-10 for 3 nights, 2 adults and no children, budget AUD 6000. Arrival and return by flight. Four-star hotels near the city centre, culture and vegetarian food.';
+  const current = brief();
+  const proposed = {
+    ...current,
+    passportNationality: 'AU',
+    startDate: '2027-03-10',
+    adults: 2,
+    children: 0,
+    budget: 6000,
+    currency: 'AUD',
+  };
+  const grounded = groundedStudioBrief(
+    current,
+    proposed,
+    (['passportNationality', 'startDate', 'adults', 'children', 'budget', 'currency'] as const).map(
+      (field) => fact(field, message),
+    ),
+    message,
+    [],
+  );
+  assert.equal(grounded.passportNationality, 'AU');
+  assert.equal(grounded.startDate, '2027-03-10');
+  assert.equal(grounded.adults, 2);
+  assert.equal(grounded.children, 0);
+  assert.equal(grounded.budget, 6000);
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding(
+      [stop('London', null, 'United Kingdom')],
+      [{ ...stop('London', 3, 'United Kingdom'), arrivalDate: '2027-03-10', arrivalFixed: true }],
+      message,
+      [],
+      'arriving 2027-03-10 for 3 nights',
+      { ...afterQuestion('What are the arrival date and number of nights?'), brief: grounded },
+    ),
+  );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [stop('London', 4)],
+        [stop('London', 3)],
+        'Shorten by 3 nights, return by flight.',
+        [],
+        'Shorten by 3 nights',
+      ),
+    StudioError,
+  );
+});
+
+test('trip scope requires an explicit single/multiple choice, never a lone city or an unrelated count', () => {
+  const current = { ...brief(), preferredDestination: 'London' };
+  for (const message of [
+    'to London',
+    'London for 3 nights',
+    'Only two adults',
+    'One client',
+    'Maybe a single-destination trip',
+  ]) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, tripType: 'single' },
+      [fact('tripType', message)],
+      message,
+      [],
+    );
+    assert.equal(result.tripType, 'undecided', message);
+  }
+  for (const [message, expected] of [
+    ['Single-destination trip', 'single'],
+    ['London only', 'single'],
+    ['Visit only London', 'single'],
+    ['Multiple destinations', 'multiple'],
+    ['Two cities', 'multiple'],
+    ['A multi-city trip', 'multiple'],
+  ] as const) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, tripType: 'undecided' },
+      [fact('tripType', message)],
+      message,
+      [],
+    );
+    assert.equal(result.tripType, expected, message);
+  }
+  const result = groundedStudioBrief(
+    current,
+    { ...current, tripType: 'multiple' },
+    [fact('tripType', 'single')],
+    'single',
+    [],
+    afterQuestion('Is this a single-destination or multi-destination trip?'),
+  );
+  assert.equal(result.tripType, 'single');
+});
+
+test('arrival and return modes need literal transport and leg evidence rather than any verbatim excerpt', () => {
+  const current = brief();
+  const fields = (message: string) => [
+    fact('outboundTransport', message),
+    fact('returnTransport', message),
+  ];
+  for (const message of [
+    'to London',
+    '2 adults',
+    'Cruise prices look expensive',
+    'Take flights between cities',
+    'Maybe arrive by cruise',
+    'Return by flight or cruise',
+  ]) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, outboundTransport: 'flight', returnTransport: 'cruise' },
+      fields(message),
+      message,
+      [],
+    );
+    assert.equal(result.outboundTransport, 'undecided', message);
+    assert.equal(result.returnTransport, 'undecided', message);
+  }
+  for (const [message, outbound, returning] of [
+    ['Arrive by cruise and return by flight.', 'cruise', 'flight'],
+    ['Arrival and return by flight.', 'flight', 'flight'],
+    ['Fly to London.', 'flight', 'undecided'],
+    ['Return by plane.', 'undecided', 'flight'],
+  ] as const) {
+    const result = groundedStudioBrief(
+      current,
+      { ...current, outboundTransport: 'cruise', returnTransport: 'cruise' },
+      fields(message),
+      message,
+      [],
+    );
+    assert.equal(result.outboundTransport, outbound, message);
+    assert.equal(result.returnTransport, returning, message);
+  }
+  const answer = groundedStudioBrief(
+    current,
+    { ...current, outboundTransport: 'flight' },
+    fields('cruise'),
+    'cruise',
+    [],
+    afterQuestion('Will the client reach the destination by flight or cruise?'),
+  );
+  assert.equal(answer.outboundTransport, 'cruise');
+  assert.equal(answer.returnTransport, 'undecided');
+  const returned = groundedStudioBrief(
+    current,
+    { ...current, outboundTransport: 'cruise' },
+    fields('plane'),
+    'plane',
+    [],
+    afterQuestion('Will the return be by flight or cruise?'),
+  );
+  assert.equal(returned.returnTransport, 'flight');
+  assert.equal(returned.outboundTransport, 'undecided');
+});
+
 test('literal evidence cannot turn two adults into ninety-nine or infer zero children', () => {
   const current = brief();
   const result = groundedStudioBrief(

@@ -29,7 +29,7 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
       .getByRole('button', { name: /^(Build route structure|Skip questions and build structure)$/ })
       .click();
     await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
-    await page.getByRole('tab', { name: 'Services', exact: true }).click();
+    await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
     await page.getByRole('button', { name: 'Add a service', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Add a service to the proposal' });
     await choose(page, dialog.getByRole('combobox', { name: 'Service type' }), 'Insurance');

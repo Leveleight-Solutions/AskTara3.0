@@ -148,7 +148,7 @@ function setup(
   return { app, db, store, workspace, calls, path: `/api/studio/workspaces/${workspace.id}` };
 }
 
-test('hotel search needs confirmed adults, no children, accepted structure, dates, nationality and preferences before any provider request', async () => {
+test('hotel search needs confirmed party, child ages, accepted structure, dates, nationality and preferences before any provider request', async () => {
   const { app, store, workspace, path, calls } = setup();
   const query = () => ({ revision: workspace.revision, stopId: 'london', guestNationality: 'AU' });
   workspace.structureAccepted = false;
@@ -161,7 +161,7 @@ test('hotel search needs confirmed adults, no children, accepted structure, date
   workspace.brief.children = 1;
   store.save('alice', workspace, workspace.revision);
   const family = await request(app).post(`${path}/hotels/search`).send(query()).expect(400);
-  assert.match(family.body.error, /adults only/);
+  assert.match(family.body.error, /age of every child/);
   workspace.brief.children = 0;
   workspace.brief.hotelStandard = '';
   store.save('alice', workspace, workspace.revision);
@@ -198,6 +198,7 @@ test('hotel quote selection uses the stored supplier price, retains sandbox labe
     checkin: future(101),
     checkout: future(106),
     adults: 2,
+    currency: workspace.brief.currency,
     guestNationality: 'AU',
   });
   await request(app)
@@ -362,4 +363,128 @@ test('unknown provider environment is an estimate and never promoted to a produc
     .expect(200);
   assert.equal(response.body.quotes[0].priceStatus, 'agent_estimate');
   assert.equal(response.body.quotes[0].currency, 'EUR');
+});
+
+test('family hotel quotes include exact child ages and adding a hotel preserves the manual daily plan', async () => {
+  const { app, store, workspace, path, calls } = setup();
+  workspace.brief.children = 1;
+  workspace.brief.childAges = [7];
+  workspace.itinerary = {
+    generatedAt: new Date().toISOString(),
+    notes: [],
+    days: [
+      {
+        day: 1,
+        date: future(101),
+        stopIds: ['london'],
+        title: 'My local recommendations',
+        summary: '',
+        activities: [
+          {
+            period: 'morning',
+            title: 'Agent-picked café',
+            description: 'Personal recommendation',
+            sources: [],
+          },
+        ],
+      },
+    ],
+  };
+  const expectedPlan = structuredClone(workspace.itinerary);
+  store.save('alice', workspace, workspace.revision);
+  const searched = await request(app)
+    .post(`${path}/hotels/search`)
+    .send({ revision: workspace.revision, stopId: 'london', guestNationality: 'AU' })
+    .expect(200);
+  assert.deepEqual((calls.hotelInput as { childAges: number[] }).childAges, [7]);
+  assert.deepEqual(searched.body.hotels[0].childAges, [7]);
+  assert.match(searched.body.quotes[0].description, /1 children \(ages 7\)/);
+  const selected = await request(app)
+    .post(`${path}/quotes/${searched.body.quotes[0].id}`)
+    .send({ revision: workspace.revision })
+    .expect(200);
+  assert.deepEqual(selected.body.workspace.itinerary, expectedPlan);
+  assert.equal(selected.body.workspace.items[0].included, true);
+});
+
+test('all supplier-returned hotel quotes remain selectable beyond the previous twelve-result cap', async () => {
+  const { app, workspace, path } = setup({
+    hotels: async (input) => ({
+      mode: 'test',
+      warning: 'Fixture availability.',
+      offers: Array.from({ length: 17 }, (_, index) => ({
+        id: `offer-${index}`,
+        hotelId: `hotel-${index}`,
+        name: `Hotel ${index}`,
+        image: '',
+        address: '',
+        room: 'Double',
+        board: '',
+        price: 100 + index,
+        currency: 'AUD',
+        checkin: input.checkin,
+        checkout: input.checkout,
+      })),
+    }),
+  });
+  const searched = await request(app)
+    .post(`${path}/hotels/search`)
+    .send({ revision: workspace.revision, stopId: 'london', guestNationality: 'AU' })
+    .expect(200);
+  assert.equal(searched.body.quotes.length, 17);
+  assert.equal(searched.body.hotels.length, 17);
+  const selected = await request(app)
+    .post(`${path}/quotes/${searched.body.quotes[16].id}`)
+    .send({ revision: workspace.revision })
+    .expect(200);
+  assert.equal(selected.body.workspace.items[0].title, 'Hotel 16');
+});
+
+test('loading another hotel inventory batch preserves earlier selectable quotes and rejects invalid offsets', async () => {
+  const offsets: number[] = [];
+  const { app, workspace, path, db } = setup({
+    hotels: async (input, _signal, _destination, options) => {
+      offsets.push(options?.offset || 0);
+      return {
+        mode: 'test',
+        warning: 'Fixture availability.',
+        offers: [
+          {
+            id: `offer-${options?.offset}`,
+            hotelId: `hotel-${options?.offset}`,
+            name: `Hotel at ${options?.offset}`,
+            image: '',
+            address: '',
+            room: 'Double',
+            board: '',
+            price: 100,
+            currency: 'AUD',
+            checkin: input.checkin,
+            checkout: input.checkout,
+          },
+        ],
+      };
+    },
+  });
+  const body = { revision: workspace.revision, stopId: 'london', guestNationality: 'AU' };
+  const first = await request(app).post(`${path}/hotels/search`).send(body).expect(200);
+  const second = await request(app)
+    .post(`${path}/hotels/search`)
+    .send({ ...body, offset: 150 })
+    .expect(200);
+  assert.deepEqual(offsets, [0, 150]);
+  assert.equal(second.body.recommendations.status, 'unavailable');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM studio_quotes').get()?.count, 2);
+  await request(app).post(`${path}/quotes/${first.body.quotes[0].id}`).send(body).expect(400);
+  await request(app)
+    .post(`${path}/quotes/${first.body.quotes[0].id}`)
+    .send({ revision: workspace.revision })
+    .expect(200);
+  const currentRevision = workspace.revision + 1;
+  for (const offset of [-1, 5001, 1.5])
+    await request(app)
+      .post(`${path}/hotels/search`)
+      .send({ ...body, revision: currentRevision, offset })
+      .expect(400);
+  assert.deepEqual(offsets, [0, 150]);
 });

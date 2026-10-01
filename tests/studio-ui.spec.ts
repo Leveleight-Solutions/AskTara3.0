@@ -9,6 +9,7 @@ import {
   type StudioWorkspace,
 } from '../shared/studio';
 import { choose } from './ui-helpers';
+import type { StudioClientProfile } from '../shared/studio-clients';
 
 const workspaceId = '60000000-0000-4000-8000-000000000001';
 const now = '2026-09-14T12:00:00Z';
@@ -97,7 +98,11 @@ function fixtureWorkspace(accepted = false): StudioWorkspace {
 async function mockStudio(
   page: Page,
   workspace: StudioWorkspace,
-  options: { failPatch?: boolean; clients?: StudioClient[] } = {},
+  options: {
+    failPatch?: boolean;
+    clients?: StudioClient[];
+    profiles?: StudioClientProfile[];
+  } = {},
 ) {
   const requests: { method: string; path: string; body: Record<string, unknown> }[] = [];
   const unexpected: string[] = [];
@@ -144,6 +149,7 @@ async function mockStudio(
       return json({ agency });
     }
     if (path === '/api/studio/clients') return json({ clients: options.clients || [] });
+    if (path === '/api/studio/client-profiles') return json({ clients: options.profiles || [] });
     if (path === '/api/studio/workspaces')
       return method === 'POST' ? json({ workspace }, 201) : json({ workspaces: [workspace] });
     if (path === `/api/studio/workspaces/${workspaceId}`) {
@@ -179,6 +185,17 @@ async function mockStudio(
       );
       workspace.revision++;
       return json({ workspace });
+    }
+    if (path === `/api/studio/workspaces/${workspaceId}/destinations/research`) {
+      workspace.destinationResearch = {
+        checkedAt: now,
+        inputKey: 'mock',
+        historyUsed: true,
+        candidates: [],
+        notes: ['Fixture research completed.'],
+      };
+      workspace.revision++;
+      return json({ workspace, research: workspace.destinationResearch });
     }
     if (path === `/api/studio/workspaces/${workspaceId}/structure`) {
       workspace.stops = stops();
@@ -243,7 +260,7 @@ test('Studio starts with brief review and explicit structure acceptance before s
   await expect(page.getByRole('region', { name: 'Brief review' })).toContainText(
     'When do they need to return?',
   );
-  await expect(page.getByRole('tab', { name: 'Services', exact: true })).toBeDisabled();
+  await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
   expect(mocked.requests.filter((r) => r.path.endsWith('/review'))).toHaveLength(1);
   expect(mocked.requests.some((r) => /structure|search|recommendations/.test(r.path))).toBe(false);
   await page.getByRole('button', { name: 'Skip questions and build structure' }).click();
@@ -254,11 +271,11 @@ test('Studio starts with brief review and explicit structure acceptance before s
   await expect(page.getByRole('button', { name: 'Send to Tara' })).toBeDisabled();
   await page.getByRole('button', { name: 'Save route changes' }).click();
   await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Itinerary', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );
-  await page.getByRole('tab', { name: 'Services', exact: true }).click();
+  await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What would you like help with?' })).toBeVisible();
   expect(workspace.structureAccepted).toBe(true);
   expect(
@@ -266,7 +283,7 @@ test('Studio starts with brief review and explicit structure acceptance before s
   ).toBe(true);
   expect(mocked.requests.some((r) => /search|recommendations/.test(r.path))).toBe(false);
   await page.reload();
-  await page.getByRole('tab', { name: 'Structure', exact: true }).click();
+  await page.getByRole('tab', { name: 'Brief & route', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Nights in Paris', exact: true })).toHaveValue(
     '4',
   );
@@ -371,6 +388,8 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
   const next = fixtureWorkspace(true);
   next.id = '60000000-0000-4000-8000-000000000020';
   next.title = 'Hendersons in London';
+  workspace.brief.clientId = '60000000-0000-4000-8000-000000000030';
+  next.brief.clientId = workspace.brief.clientId;
   next.stops = [
     {
       ...stops()[0],
@@ -382,6 +401,7 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
   const mocked = await mockStudio(page, workspace, {
     clients: [
       {
+        id: workspace.brief.clientId,
         name: 'Henderson',
         context: workspace.brief.context,
         previousWorkspaces: [{ id: next.id, title: next.title, updatedAt: now }],
@@ -442,7 +462,7 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
   expect(mocked.unexpected).toEqual([]);
 });
 
-test('family supplier quotes remain blocked until a supported confirmed party is provided', async ({
+test('family hotel quotes support confirmed child ages while family flights require manual quotes', async ({
   page,
 }) => {
   const workspace = fixtureWorkspace(true);
@@ -451,7 +471,7 @@ test('family supplier quotes remain blocked until a supported confirmed party is
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Search hotels quotes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Search hotels quotes' })).toBeEnabled();
   await choose(page, page.getByRole('combobox', { name: 'Search for', exact: true }), 'Flights');
   await expect(page.getByRole('button', { name: 'Search flights quotes' })).toBeDisabled();
   await expect(page.getByLabel('Flight departure date')).toHaveValue('');
@@ -465,7 +485,7 @@ test('recommendations are opt-in for selected destinations and never impose a da
   const workspace = fixtureWorkspace(true);
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
-  await page.getByRole('tab', { name: 'Recommendations', exact: true }).click();
+  await page.getByRole('tab', { name: 'Optional ideas', exact: true }).click();
   expect(mocked.requests.some((r) => r.path.endsWith('/recommendations'))).toBe(false);
   await page.getByRole('checkbox', { name: 'Amsterdam', exact: true }).uncheck();
   await choose(page, page.getByRole('combobox', { name: 'Recommendation type' }), 'Places to eat');
@@ -508,22 +528,33 @@ test('client context reuse stays explicit and never restores a past travelling p
   workspace.brief.children = null;
   workspace.brief.context = '';
   const mocked = await mockStudio(page, workspace, {
-    clients: [
+    profiles: [
       {
+        id: '60000000-0000-4000-8000-000000000020',
         name: 'Henderson',
         context: 'Past clients prefer architecture and small hotels.',
-        previousWorkspaces: [{ id: 'old', title: 'Previous family holiday', updatedAt: now }],
+        passportNationality: 'AU',
+        photoDataUrl: '',
+        interests: ['Architecture'],
+        foodPreferences: [],
+        history: [{ destination: 'Paris' }],
+        updatedAt: now,
       },
     ],
   });
   await page.goto(`/studio/${workspaceId}`);
+  await page.getByText('Client profiles · new or returning', { exact: true }).click();
+  await page
+    .getByLabel('Saved client', { exact: true })
+    .selectOption('60000000-0000-4000-8000-000000000020');
+  await expect.poll(() => workspace.brief.clientId).toBe('60000000-0000-4000-8000-000000000020');
   await page.getByRole('button', { name: 'Edit brief details' }).click();
   const dialog = page.getByRole('dialog', { name: 'Client brief' });
   await expect(dialog.getByLabel('Adults', { exact: true })).toHaveValue('');
   await expect(dialog.getByLabel('Children', { exact: true })).toHaveValue('');
-  await dialog
-    .getByRole('button', { name: 'Use this client’s previous background context' })
-    .click();
+  await expect(dialog.getByRole('textbox', { name: 'Client context', exact: true })).toHaveValue(
+    'Past clients prefer architecture and small hotels.',
+  );
   await expect(dialog.getByLabel('Adults', { exact: true })).toHaveValue('');
   await dialog.getByLabel('Adults', { exact: true }).fill('2');
   await dialog.getByLabel('Children', { exact: true }).fill('2');

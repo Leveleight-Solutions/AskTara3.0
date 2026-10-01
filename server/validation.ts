@@ -248,3 +248,12 @@ export const hotelSearchSchema = z
     (v) => v.checkin >= new Date().toISOString().slice(0, 10),
     'Check-in must be today or later',
   );
+
+/** Studio selects quotes only; legacy booking flows remain adults-only. */
+export const studioHotelSearchSchema = hotelSearchSchema.safeExtend({
+  childAges: z.array(z.number().int().min(0).max(17)).max(6).optional(),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/)
+    .optional(),
+});

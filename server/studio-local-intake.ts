@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { destinations } from '../shared/catalog.ts';
 import type { StudioAgency, StudioBrief, StudioStop, StudioWorkspace } from '../shared/studio.ts';
 import { applyStudioPatch, qualifyStudio, studioDate } from './studio-domain.ts';
-import { groundedStudioBrief } from './studio-grounding.ts';
+import { groundedStudioBrief, assertStudioRouteGrounding } from './studio-grounding.ts';
+import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 
 const normal = (value: string) => value.normalize('NFKC').trim().toLowerCase();
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -63,6 +64,16 @@ function changedDetails(before: StudioWorkspace, after: StudioWorkspace) {
     );
   const a = before.brief,
     b = after.brief;
+  if (a.passportNationality !== b.passportNationality && b.passportNationality)
+    facts.push(
+      `${normalizeStudioCountry(b.passportNationality)?.name || b.passportNationality} passport`,
+    );
+  if (a.tripType !== b.tripType && b.tripType !== 'undecided')
+    facts.push(b.tripType === 'single' ? 'single destination' : 'multiple destinations');
+  if (a.outboundTransport !== b.outboundTransport && b.outboundTransport !== 'undecided')
+    facts.push(`arrival by ${b.outboundTransport}`);
+  if (a.returnTransport !== b.returnTransport && b.returnTransport !== 'undecided')
+    facts.push(`return by ${b.returnTransport}`);
   if (a.adults !== b.adults) facts.push(`${b.adults} adult${b.adults === 1 ? '' : 's'}`);
   if (a.children !== b.children)
     facts.push(
@@ -242,6 +253,16 @@ function readBrief(
   include('adults', /\badults?\b|\b(?:travell?ing solo|solo traveller|just me)\b/i);
   include('children', /\b(?:children|kids?|infants?|adults only|all adults|only adults)\b/i);
   include('childAges', /\b(?:ages?|aged)\b/i);
+  if (
+    answering === 'passportNationality' ||
+    /\b(?:passport|nationality|citizenship|citizen|client|i am|i['’]m)\b/i.test(text)
+  )
+    facts.push({ field: 'passportNationality', evidence: text });
+  include(
+    'startDate',
+    /\b(?:start(?:s|ing)?|begin(?:s|ning)?|arrival date)\b|\barriv(?:e|es|ing|al)\s+(?:on\s+)?(?=\d)/i,
+  );
+  include('endDate', /\b(?:return(?:s|ing)?|end date|leav(?:e|ing))\b/i);
   include(
     'datesFlexible',
     /\b(?:flexible|fixed)\s+dates?\b|\bdates?\s+(?:are |is )?(?:flexible|fixed|not flexible)\b/i,
@@ -251,6 +272,59 @@ function readBrief(
     /\b(?:budget|spend)\b|\b(?:AUD|USD|GBP|EUR|NZD|CAD|JPY|SGD|CHF|HKD)\s*[\d$]|[$€£]\s*\d/i,
   );
   const brief = groundedStudioBrief(current, current, facts, text, [], { messages });
+  const single =
+    /\b(?:single[- ]destination|one destination|single[- ]city|one city)\b/i.test(text) ||
+    (answering === 'tripType' && /^\s*(?:single|one)[.!]?\s*$/i.test(text));
+  const multiple =
+    /\b(?:multi[- ]destination|multiple destinations|multi[- ]city|multiple cities)\b/i.test(
+      text,
+    ) ||
+    (answering === 'tripType' && /^\s*(?:multiple|multi|several)[.!]?\s*$/i.test(text));
+  if (single !== multiple) brief.tripType = single ? 'single' : 'multiple';
+  const mode = (value: string): 'flight' | 'cruise' | undefined => {
+    const flight = /\b(?:flight|fly|flying|plane|air)\b/i.test(value);
+    const cruise = /\b(?:cruise|cruising)\b/i.test(value);
+    return flight === cruise ? undefined : flight ? 'flight' : 'cruise';
+  };
+  const wholeMode = mode(text);
+  if (
+    wholeMode &&
+    !/\b(?:maybe|possibly|undecided|not sure|not by)\b/i.test(text) &&
+    /\b(?:arrival|outbound|outward)\s+and\s+return\b|\b(?:both ways|both legs|there and back|round[- ]trip)\b/i.test(
+      text,
+    )
+  )
+    brief.outboundTransport = brief.returnTransport = wholeMode;
+  else {
+    for (const clause of text.split(/\b(?:and|but|then)\b|[.;,\n]/i)) {
+      if (
+        /\b(?:maybe|possibly|undecided|not sure)\b|\b(?:not|no|without)\s+(?:by\s+|a\s+)?(?:flight|fly|flying|plane|air|cruise|cruising)\b/i.test(
+          clause,
+        )
+      )
+        continue;
+      const transport = mode(clause);
+      if (!transport) continue;
+      if (
+        /\b(?:return(?:ing)?|homeward|back home|(?:fly|flight|cruise|cruising) (?:back|home))\b/i.test(
+          clause,
+        )
+      )
+        brief.returnTransport = transport;
+      else if (
+        /\b(?:outbound|outward|arriv(?:e|ing|al)|reach(?:ing)?(?: the)? destination|(?:fly|flying|cruise|cruising) (?:out|to))\b/i.test(
+          clause,
+        )
+      )
+        brief.outboundTransport = transport;
+    }
+    if (
+      (answering === 'outboundTransport' || answering === 'returnTransport') &&
+      /^\s*(?:by\s+)?(?:flight|fly|plane|air|cruise)(?:\s+please)?[.!]?\s*$/i.test(text) &&
+      wholeMode
+    )
+      brief[answering] = wholeMode;
+  }
   if (
     answering === 'children' &&
     /^\s*(?:no|none|nope)(?:\s+(?:thanks|thank you))?[.!]?\s*$/i.test(text)
@@ -342,6 +416,21 @@ export function localStudioReview(
         context === 'nights' && text.match(/^\s*(\d{1,3})\s*(?:please)?[.!]?\s*$/i);
       if (stops.length === 1 && contextualNights && +contextualNights[1] <= 120)
         stops[0].nights = +contextualNights[1];
+      // Combined replies can supply duration together with passport, dates and transport.
+      // Reuse route grounding so another city's nights or a relative adjustment cannot leak in.
+      const durations = [...text.matchAll(/\b(\d{1,3})\s+nights?\b/gi)];
+      if (stops.length === 1 && durations.length === 1 && +durations[0][1] <= 120) {
+        const proposed = [{ ...stops[0], nights: +durations[0][1] }];
+        try {
+          assertStudioRouteGrounding(stops, proposed, text, [], text, {
+            messages: workspace.messages,
+            brief,
+          });
+          stops = proposed;
+        } catch {
+          /* An ambiguous stay remains unchanged for the agent to clarify. */
+        }
+      }
     }
     readDates(text, brief, stops);
   }

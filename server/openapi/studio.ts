@@ -12,6 +12,8 @@ import {
 import { studioImportSchema } from '../studio-imports.ts';
 import { flightSearchSchema } from '../validation.ts';
 import { studioItinerarySchema } from '../../shared/studio-itinerary.ts';
+import { studioCruiseDraftSchema } from '../../shared/studio-cruise.ts';
+import { studioClientProfileSchema } from '../studio-clients.ts';
 import { fromZod, jsonBody, jsonResponse, operation } from './helpers.ts';
 
 type Schema = OpenAPIV3_1.SchemaObject | OpenAPIV3_1.ReferenceObject;
@@ -81,6 +83,17 @@ const actionResult = (extra: Record<string, Schema>) =>
     'workspace',
     ...Object.keys(extra).filter((name) => name !== 'model' && name !== 'nextAction'),
   ]);
+const visaCategory: Schema = {
+  type: 'string',
+  enum: ['visa_free', 'visa_on_arrival', 'e_visa', 'visa_required', 'unknown'],
+};
+const evidenceKind: Schema = {
+  type: 'string',
+  enum: ['advisory', 'conditions', 'official_immigration', 'index', 'other'],
+};
+const hotelPhoto = object({ url: { type: 'string', format: 'uri' }, caption: text });
+const hotelMode: Schema = { type: 'string', enum: ['test', 'live', 'provider'] };
+const clientProfileInput = fromZod(studioClientProfileSchema);
 
 export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
   StudioAgency: fromZod(studioAgencySchema),
@@ -90,6 +103,126 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
   StudioRecommendation: fromZod(studioRecommendationSchema),
   StudioItinerary: fromZod(studioItinerarySchema),
   StudioPricing: fromZod(studioPricingSchema),
+  StudioClientProfile: object({
+    ...clientProfileInput.properties,
+    id: { type: 'string', format: 'uuid' },
+    updatedAt: timestamp,
+  }),
+  StudioCruiseDraft: fromZod(studioCruiseDraftSchema),
+  StudioTravelEvidence: object({
+    label: text,
+    url: { type: 'string', format: 'uri' },
+    checkedAt: timestamp,
+    kind: evidenceKind,
+    publishedAt: text,
+  }),
+  StudioDestinationResearch: object({
+    checkedAt: timestamp,
+    inputKey: text,
+    historyUsed: { type: 'boolean' },
+    notes: array(text),
+    candidates: array(
+      object({
+        destination: text,
+        country: text,
+        countryCode: text,
+        reason: text,
+        suggestedDays: { type: 'integer' },
+        thingsToDo: array(text),
+        conditions: text,
+        seasonalGuidance: text,
+        status: { type: 'string', enum: ['checked', 'warning', 'blocked', 'unknown'] },
+        advisory: text,
+        recommendable: { type: 'boolean' },
+        sources: array(ref('StudioTravelEvidence')),
+      }),
+    ),
+  }),
+  StudioEntryRequirements: object({
+    checkedAt: timestamp,
+    inputKey: text,
+    stopId: text,
+    passportCountry: text,
+    passportCountryCode: text,
+    destination: text,
+    destinationCountry: text,
+    destinationCountryCode: text,
+    category: visaCategory,
+    status: { type: 'string', enum: ['corroborated', 'conflicting', 'unverified'] },
+    summary: text,
+    conditions: array(text),
+    electronicAuthorisation: text,
+    sources: array(ref('StudioTravelEvidence')),
+    notes: array(text),
+    observations: array(
+      object({ category: visaCategory, summary: text, sourceUrl: text, kind: evidenceKind }),
+    ),
+  }),
+  StudioHotelQuote: object({
+    quoteId: { type: 'string', format: 'uuid' },
+    hotelKey: {
+      type: 'string',
+      description: 'Opaque property grouping key, not a provider booking identifier.',
+    },
+    name: text,
+    address: text,
+    room: text,
+    board: text,
+    price: { type: 'number', minimum: 0 },
+    currency: text,
+    checkin: text,
+    checkout: text,
+    quotedAt: timestamp,
+    mode: hotelMode,
+    adults: { type: 'integer' },
+    childAges: array({ type: 'integer', minimum: 0, maximum: 17 }),
+    photos: array(hotelPhoto),
+    roomPhotos: array(hotelPhoto),
+    description: text,
+    roomDescription: text,
+    amenities: array(text),
+    roomAmenities: array(text),
+    group: text,
+    stars: { type: ['number', 'null'], minimum: 0, maximum: 5 },
+    distanceKm: {
+      type: ['number', 'null'],
+      description:
+        'Straight-line distance from the destination centre, not the requested neighbourhood.',
+    },
+    cancellation: text,
+    taxes: text,
+    detailsStatus: { type: 'string', enum: ['available', 'unavailable'] },
+  }),
+  StudioHotelSearchResult: object({
+    quotes: array(ref('StudioItem')),
+    hotels: array(ref('StudioHotelQuote')),
+    mode: hotelMode,
+    warning: text,
+    recommendations: object({
+      status: { type: 'string', enum: ['ai', 'unavailable'] },
+      picks: { ...array(object({ quoteId: text, reason: text })), maxItems: 4 },
+      message: text,
+    }),
+    inventory: object({
+      returnedHotels: { type: 'integer' },
+      returnedQuotes: { type: 'integer' },
+      limit: { type: 'integer' },
+      hasMore: {
+        type: 'boolean',
+        description:
+          'More inventory may exist; a short available-rate page does not prove exhaustion.',
+      },
+      searchRadiusKm: { type: 'number' },
+      pagesSearched: { type: 'integer' },
+      incomplete: { type: 'boolean' },
+      nextOffset: {
+        type: ['integer', 'null'],
+        description:
+          'Pass this as the next hotel search offset. Null at the application pagination cap does not prove supplier exhaustion; check hasMore/searchLimitReached.',
+      },
+      searchLimitReached: { type: 'boolean' },
+    }),
+  }),
   StudioImport: object({
     id: { type: 'string', format: 'uuid' },
     kind: { type: 'string', enum: ['text', 'image', 'pdf', 'url', 'audio'] },
@@ -122,6 +255,10 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
       items: array(ref('StudioItem')),
       recommendations: array(ref('StudioRecommendation')),
       itinerary: { anyOf: [ref('StudioItinerary'), { type: 'null' }] },
+      itineraryManual: { type: 'boolean' },
+      cruises: array(ref('StudioCruiseDraft')),
+      destinationResearch: { anyOf: [ref('StudioDestinationResearch'), { type: 'null' }] },
+      entryRequirements: array(ref('StudioEntryRequirements')),
       imports: array(ref('StudioImport')),
       messages: array(
         object({
@@ -300,7 +437,7 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
       },
     }),
     patch: operation('Studio', 'Edit a proposal workspace', {
-      description: `${revisionDescription} Arrays replace their current contents. Route changes clear structure approval and mark existing items for review. Researched recommendations may only change their included flag. Supplier quote identities, dates, and prices cannot be relabelled. Dates may be empty or real YYYY-MM-DD values.`,
+      description: `${revisionDescription} Arrays replace their current contents. Route changes clear structure approval and mark existing items for review. itinerary accepts a complete manually edited daily plan or null; manual plans need no AI request and preserve citations only for unchanged sourced activities. Researched recommendations may only change their included flag. Supplier quote identities, dates, and prices cannot be relabelled. Dates may be empty or real YYYY-MM-DD values.`,
       requestBody: jsonBody(fromZod(studioPatchSchema), {
         revision: 2,
         title: 'Paris proposal',
@@ -349,6 +486,123 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
             ),
           }),
         ),
+      },
+    }),
+  },
+  '/api/studio/client-profiles': {
+    get: operation('Studio', 'List private client profiles', {
+      description:
+        'Returns up to 500 profiles owned by the current session. Separate profile IDs distinguish clients with identical names. Photos are for agent display only and are excluded from AI requests and public proposals.',
+      responses: {
+        '200': jsonResponse(
+          'Owned client profiles.',
+          object({ clients: array(ref('StudioClientProfile')) }),
+        ),
+      },
+    }),
+    post: operation('Studio', 'Create a private client profile', {
+      description:
+        'Stores a name, optional context, declared passport nationality, travel history and preferences. Optional photoDataUrl must be a PNG/JPEG/WebP data URL no longer than 200,000 characters with a matching file signature. Do not submit passport numbers, identity documents or payment information. Nationality is normalised to an ISO-2 country code; it never establishes visa eligibility by itself.',
+      requestBody: jsonBody(clientProfileInput),
+      responses: {
+        '201': jsonResponse(
+          'Created client profile.',
+          object({ client: ref('StudioClientProfile') }),
+        ),
+      },
+    }),
+  },
+  '/api/studio/client-profiles/{clientId}': {
+    parameters: [
+      {
+        name: 'clientId',
+        in: 'path',
+        required: true,
+        schema: { type: 'string', format: 'uuid' },
+        description: 'Owned profile ID, independent of display name.',
+      },
+    ],
+    patch: operation('Studio', 'Replace editable client profile fields', {
+      description:
+        'Submit the complete editable profile body, excluding id and updatedAt; omitted optional fields reset to their defaults. Profile identity is retained. No workspace revision is required.',
+      requestBody: jsonBody(clientProfileInput),
+      responses: {
+        '200': jsonResponse('Updated profile.', object({ client: ref('StudioClientProfile') })),
+        '404': error('Client profile not found for this session.'),
+      },
+    }),
+    delete: operation('Studio', 'Delete a private client profile', {
+      description:
+        'Deletes the owned profile and clears its clientId references in the owner’s workspaces. Existing itinerary text is retained.',
+      responses: {
+        '204': { description: 'Profile deleted; no response body.' },
+        '404': error('Client profile not found for this session.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/destinations/research': {
+    parameters: workspaceParameters,
+    post: operation('Studio', 'Research destination suggestions and current conditions', {
+      description: `${actionDescription} Uses declared preferences and the linked client's travel history, excluding profile photos and identity details. Researches a small set of candidates with current advisory and conditions evidence. Blocked or unverifiable destinations are not promoted as safe recommendations. Supports country inputs independently of the inspiration catalogue. This action does not select a destination or check visas. Requires OPENAI_API_KEY and accessible evidence.`,
+      requestBody: jsonBody(fromZod(actionSchema)),
+      responses: {
+        '200': jsonResponse(
+          'Workspace and evidence-backed candidate results.',
+          actionResult({ research: ref('StudioDestinationResearch') }),
+        ),
+        '409': error('Revision or requestId conflict.'),
+        '502': error('Research failed evidence validation.'),
+        '503': error('Research unavailable; no fabricated fallback.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/entry-requirements': {
+    parameters: workspaceParameters,
+    post: operation('Studio', 'Check entry requirements after selecting a destination', {
+      description: `${actionDescription} Requires explicitly declared passportNationality and a chosen preferredDestination/destinationCountry or an existing stopId. This independent action researches that exact passport/destination pair, dates and travel mode. Compares accessible official immigration and secondary index evidence; unavailable, conflicting or insufficient evidence remains unverified/unknown. Electronic authorisations are separate from visa categories. No passport numbers, paid visa API, automatic Henley scraping or entry guarantee.`,
+      requestBody: jsonBody(
+        fromZod(actionSchema.extend({ stopId: z.string().max(80).optional() })),
+      ),
+      responses: {
+        '200': jsonResponse(
+          'Workspace and one destination entry check.',
+          actionResult({ entryRequirements: ref('StudioEntryRequirements') }),
+        ),
+        '409': error('Revision or requestId conflict.'),
+        '502': error(
+          'Research changed the selected passport/destination or lacked valid evidence.',
+        ),
+        '503': error('Entry research unavailable.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/cruises/preview': {
+    parameters: workspaceParameters,
+    post: operation('Studio imports', 'Preview an editable cruise itinerary', {
+      description: `${actionDescription} Extracts ordered days, ports, times, notes and any evidenced full fare from an accessible cruise source. The returned draft is editable and is not applied to the plan until cruises/apply. URLs use the same public-source safety checks as other imports; blocked pages require pasted text or an accessible attachment. No booking or payment is made.`,
+      requestBody: jsonBody(fromZod(actionSchema.extend({ input: studioImportSchema }))),
+      responses: {
+        '200': jsonResponse(
+          'Workspace and editable cruise draft.',
+          actionResult({ cruise: ref('StudioCruiseDraft') }),
+        ),
+        '409': error('Revision or requestId conflict.'),
+        '502': error('Cruise extraction failed validation.'),
+        '503': error('Source or extraction unavailable.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/cruises/apply': {
+    parameters: workspaceParameters,
+    post: operation('Studio imports', 'Apply the agent-reviewed cruise draft', {
+      description: `${revisionDescription} Adds or replaces this draft's cruise days while preserving other manually entered days. Every cruise field/day remains editable. disembarkAfterDay truncates travelled days without prorating fullFare; the complete fare remains payable and early departure permission needs cruise-line confirmation. Explicit onwardTransport adds an unpriced flight/cruise placeholder; returnTransport is recorded separately. No route optimisation, reservation, payment or segment refund is performed.`,
+      requestBody: jsonBody(
+        fromZod(z.object({ revision: positiveRevision, cruise: studioCruiseDraftSchema }).strict()),
+      ),
+      responses: {
+        '200': jsonResponse('Workspace with cruise days and selected service.', workspaceResponse),
+        '404': error('Workspace not found.'),
+        '409': error('Revision conflict.'),
       },
     }),
   },
@@ -562,13 +816,14 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
   '/api/studio/workspaces/{id}/hotels/search': {
     parameters: workspaceParameters,
     post: operation('Studio suppliers', 'Search hotel quotes for an approved stop', {
-      description: `${revisionDescription} Search does not change the revision. Requires an approved route, confirmed adults and zero children, hotel standard/location, destination country, and stay dates starting today or later. Uses LiteAPI rates (LITEAPI_API_KEY); destinations outside the built-in catalog also require AI resolution (OPENAI_API_KEY). Returns up to 12 unselected quotes and replaces this workspace’s previous unselected quote list. Quotes expire after at most 30 minutes. Selecting a quote does not reserve a room.`,
+      description: `${revisionDescription} Search does not change the revision. Requires an approved route, confirmed adults/children, exact ages (0–17) for every child, hotel standard/location, destination country, and stay dates starting today or later. Requests the complete party in one room and the brief currency. Each request uses documented LiteAPI rates pagination (three pages of 50 candidate hotels within 15 km), retaining all returned valid room quotes. Pass optional offset from inventory.nextOffset to load another batch; offsets are bounded to 5000. Later batches preserve earlier scoped quotes and retain the first-batch AI shortlist; the cap is explicitly labelled rather than claiming inventory exhaustion; inventory is bounded and not all worldwide hotels. Fetches supplier hotel details and only photos mapped to the quoted room; missing details remain unknown. An optional AI shortlist selects up to four distinct hotels strictly from returned quotes using location, availability and budget preferences; unavailable AI never hides the full list. Hotel group and amenity filters are ordinary client-side filters. Requires LITEAPI_API_KEY; noncatalogue destination resolution and the shortlist require OPENAI_API_KEY. A new zero-offset search replaces this workspace's previous unselected quote list after successful scope checks; a positive offset appends quotes. Quotes expire within 30 minutes. Selecting a quote includes a service and preserves the manual daily plan; it never reserves a room.`,
       requestBody: jsonBody(
         fromZod(
           z
             .object({
               revision: positiveRevision,
               stopId: z.string().min(1).max(150),
+              offset: z.number().int().min(0).max(5000).optional(),
               guestNationality: z.string().regex(/^[A-Za-z]{2}$/),
             })
             .strict(),
@@ -576,7 +831,10 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         { revision: 5, stopId: 'paris', guestNationality: 'AU' },
       ),
       responses: {
-        '200': jsonResponse('Hotel quote suggestions and provider warning.', quoteResult),
+        '200': jsonResponse(
+          'All returned hotel quotes, mapped supplier details, optional AI shortlist, inventory coverage and provider warning.',
+          ref('StudioHotelSearchResult'),
+        ),
         '404': error('Workspace not found.'),
         '409': error('Revision conflict, including edits made while searching.'),
         '502': error('Provider returned an error or invalid rates.'),

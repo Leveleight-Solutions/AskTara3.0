@@ -310,3 +310,77 @@ test('changing child count clears stale ages and leaves unknown ages unset', asy
   assert.equal(value.brief.children, 1);
   assert.deepEqual(value.brief.childAges, []);
 });
+
+test('local conversation collects passport, trip scope and independent arrival/return answers after the core brief', async () => {
+  const value = newStudioWorkspace();
+  const complete = await converse(
+    value,
+    'Paris for 3 nights. 2 adults, no children, dates flexible, budget AUD 3000 and 4-star hotels.',
+  );
+  assert.match(complete.reply, /country issued the passport/);
+  const nationality = await converse(value, 'Pakistani');
+  assert.equal(value.brief.passportNationality, 'PK');
+  assert.match(nationality.reply, /single-destination or multi-destination/);
+  const scope = await converse(value, 'single');
+  assert.equal(value.brief.tripType, 'single');
+  assert.match(scope.reply, /reach the destination by flight or cruise/);
+  const outbound = await converse(value, 'cruise');
+  assert.equal(value.brief.outboundTransport, 'cruise');
+  assert.equal(value.brief.returnTransport, 'undecided');
+  assert.match(outbound.reply, /return be by flight or cruise/);
+  await converse(value, 'flight');
+  assert.equal(value.brief.returnTransport, 'flight');
+  assert.equal(value.stops.length, 1);
+});
+
+test('local Stage 1 declarations work without a prior question and residence never establishes passport nationality', async () => {
+  const value = newStudioWorkspace();
+  await review(value, 'We live in Australia and were born in Pakistan.');
+  assert.equal(value.brief.passportNationality, '');
+  await review(
+    value,
+    'Passport nationality: Burkina Faso. This is a multi-destination trip. Arrive by cruise and return by flight.',
+  );
+  assert.equal(value.brief.passportNationality, 'BF');
+  assert.equal(value.brief.tripType, 'multiple');
+  assert.equal(value.brief.outboundTransport, 'cruise');
+  assert.equal(value.brief.returnTransport, 'flight');
+  await review(value, 'Arrival and return by flight.');
+  assert.equal(value.brief.outboundTransport, 'flight');
+  assert.equal(value.brief.returnTransport, 'flight');
+});
+
+test('ambiguous transport and unprompted short scope/country answers do not invent Stage 1 facts', async () => {
+  const value = newStudioWorkspace();
+  for (const message of [
+    'Pakistani',
+    'single',
+    'cruise',
+    'Maybe arrive by cruise.',
+    'Arrival by flight or cruise.',
+  ])
+    await review(value, message);
+  assert.equal(value.brief.passportNationality, '');
+  assert.equal(value.brief.tripType, 'undecided');
+  assert.equal(value.brief.outboundTransport, 'undecided');
+  assert.equal(value.brief.returnTransport, 'undecided');
+});
+
+test('the live-smoke London followup also completes the core Stage 1 fields in local mode', async () => {
+  const value = newStudioWorkspace();
+  await converse(value, 'hi');
+  await converse(value, 'London');
+  await converse(
+    value,
+    'The fictional client holds an Australian passport. This is a single-destination trip, arriving 2027-03-10 for 3 nights, 2 adults and no children, budget AUD 6000. Arrival and return by flight. Four-star hotels near the city centre, culture and vegetarian food.',
+  );
+  assert.equal(value.brief.passportNationality, 'AU');
+  assert.equal(value.brief.tripType, 'single');
+  assert.equal(value.brief.startDate, '2027-03-10');
+  assert.equal(value.stops[0].nights, 3);
+  assert.equal(value.brief.adults, 2);
+  assert.equal(value.brief.children, 0);
+  assert.equal(value.brief.budget, 6000);
+  assert.equal(value.brief.outboundTransport, 'flight');
+  assert.equal(value.brief.returnTransport, 'flight');
+});

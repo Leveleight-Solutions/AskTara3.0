@@ -52,7 +52,7 @@ export function redactStudioPrivateText(text: string): string {
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[private email removed]');
 }
 
-function redactIdentityAndPayment(text: string): string {
+export function redactIdentityAndPayment(text: string): string {
   return text
     .replace(
       /\b(?:passport\s+(?:number|no\.?|id)|passport\s*[:#=]|credit card(?: number)?|debit card(?: number)?|card number|cvv|cvc|security code)\s*[:#=-]?\s*[A-Z0-9][A-Z0-9 -]{2,30}/gi,

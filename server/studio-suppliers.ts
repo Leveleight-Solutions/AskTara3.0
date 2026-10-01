@@ -7,13 +7,15 @@ import { searchFlights, searchHotels } from './integrations.ts';
 import { studioHotelDestination } from './studio-models.ts';
 import { StudioError, type StudioStore } from './studio-store.ts';
 import { structureFingerprint } from './studio-domain.ts';
-import { flightSearchSchema, hotelSearchSchema } from './validation.ts';
+import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
+import { publicHotelQuote, recommendStudioHotels } from './studio-hotels.ts';
 
 const revisionSchema = z.number().int().positive();
 const hotelRequest = z
   .object({
     revision: revisionSchema,
     stopId: z.string().min(1).max(150),
+    offset: z.number().int().min(0).max(5000).optional(),
     guestNationality: z
       .string()
       .regex(/^[A-Za-z]{2}$/, 'Enter the guest nationality as a two-letter country code.'),
@@ -25,6 +27,7 @@ type SupplierDependencies = {
   flights?: typeof searchFlights;
   hotels?: typeof searchHotels;
   hotelDestination?: typeof studioHotelDestination;
+  hotelRecommendations?: typeof recommendStudioHotels;
 };
 
 export function studioQuoteFingerprint(workspace: StudioWorkspace) {
@@ -35,6 +38,7 @@ export function studioQuoteFingerprint(workspace: StudioWorkspace) {
         adults: workspace.brief.adults,
         children: workspace.brief.children,
         childAges: workspace.brief.childAges,
+        passportNationality: workspace.brief.passportNationality,
         currency: workspace.brief.currency,
         pricingCurrency: workspace.pricing.currency,
         hotelStandard: workspace.brief.hotelStandard,
@@ -46,7 +50,7 @@ export function studioQuoteFingerprint(workspace: StudioWorkspace) {
     .digest('hex');
 }
 
-function requireSearchableParty(workspace: StudioWorkspace) {
+function requireSearchableParty(workspace: StudioWorkspace, hotels = false) {
   if (!workspace.structureAccepted || !workspace.stops.length)
     throw new StudioError(400, 'Accept the trip structure before searching for services.');
   if (
@@ -55,7 +59,18 @@ function requireSearchableParty(workspace: StudioWorkspace) {
     workspace.brief.children === null
   )
     throw new StudioError(400, 'Confirm the adults and children for this trip before searching.');
-  if (workspace.brief.children > 0)
+  if (
+    hotels &&
+    workspace.brief.children > 0 &&
+    (workspace.brief.childAges.length !== workspace.brief.children ||
+      workspace.brief.childAges.some((age) => !Number.isInteger(age) || age < 0 || age > 17))
+  )
+    throw new StudioError(
+      400,
+      'Confirm the age of every child (0–17) before searching hotel availability.',
+      'STUDIO_CHILD_AGES_REQUIRED',
+    );
+  if (!hotels && workspace.brief.children > 0)
     throw new StudioError(
       400,
       'Automatic supplier search currently supports adults only. Add a reviewed family quote from your supplier manually; adult-only prices are not valid for this party.',
@@ -120,21 +135,24 @@ export function installStudioSupplierRoutes(
     flights: options.providers?.flights || searchFlights,
     hotels: options.providers?.hotels || searchHotels,
     hotelDestination: options.providers?.hotelDestination || studioHotelDestination,
+    hotelRecommendations: options.providers?.hotelRecommendations || recommendStudioHotels,
   };
   function remember(
     ownerId: string,
     workspace: StudioWorkspace,
     quotes: { item: StudioItem; expiresAt?: string }[],
+    append = false,
   ) {
     const now = Date.now();
     const valid = quotes.filter((quote) => !quote.expiresAt || Date.parse(quote.expiresAt) > now);
     db.exec('BEGIN IMMEDIATE');
     try {
       // New search results replace only this owner's old, unselected quote list.
-      db.prepare('DELETE FROM studio_quotes WHERE owner_id=? AND workspace_id=?').run(
-        ownerId,
-        workspace.id,
-      );
+      if (!append)
+        db.prepare('DELETE FROM studio_quotes WHERE owner_id=? AND workspace_id=?').run(
+          ownerId,
+          workspace.id,
+        );
       const insert = db.prepare(
         'INSERT INTO studio_quotes(id,owner_id,workspace_id,structure,data,created_at) VALUES(?,?,?,?,?,?)',
       );
@@ -165,7 +183,7 @@ export function installStudioSupplierRoutes(
     const input = hotelRequest.parse(req.body),
       ownerId = session(res).owner_id;
     const workspace = store.require(ownerId, String(req.params.id), input.revision);
-    requireSearchableParty(workspace);
+    requireSearchableParty(workspace, true);
     if (!workspace.brief.hotelStandard.trim() || !workspace.brief.hotelLocation.trim())
       throw new StudioError(
         400,
@@ -178,11 +196,13 @@ export function installStudioSupplierRoutes(
     const requestScope = abortOnDisconnect(req, res);
     try {
       // Validate dates and party before spending a destination-research request.
-      const validated = hotelSearchSchema.parse({
+      const validated = studioHotelSearchSchema.parse({
         destinationId: stop.id,
         checkin: stop.arrivalDate,
         checkout: stop.departureDate,
         adults: workspace.brief.adults,
+        ...(workspace.brief.children ? { childAges: workspace.brief.childAges } : {}),
+        currency: workspace.brief.currency,
         guestNationality: input.guestNationality,
       });
       const destination = await providers.hotelDestination(stop, requestScope.signal);
@@ -191,37 +211,72 @@ export function installStudioSupplierRoutes(
         { ...validated, destinationId: destination.id },
         requestScope.signal,
         destination,
+        { expanded: true, offset: input.offset || 0 },
       );
       requestScope.signal.throwIfAborted();
       requireActiveSession(res);
       const current = store.require(ownerId, workspace.id, input.revision);
-      requireSearchableParty(current);
+      requireSearchableParty(current, true);
       const now = new Date().toISOString();
-      const quotes = remember(
+      const quotes = result.offers.map((offer) => ({
+        ...baseItem('hotel', result.mode, now),
+        title: offer.name,
+        description: [
+          offer.address,
+          offer.room,
+          offer.board,
+          `Full stay for ${validated.adults} adults${validated.childAges?.length ? ` and ${validated.childAges.length} children (ages ${validated.childAges.join(', ')})` : ''} in one room. Hotel star category, precise location, accessibility, taxes and cancellation terms need agent verification.`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        stopId: stop.id,
+        startDate: validated.checkin,
+        endDate: validated.checkout,
+        price: offer.price,
+        currency: offer.currency,
+      }));
+      const hotels = quotes.map((quote, index) =>
+        publicHotelQuote(
+          result.offers[index],
+          quote.id,
+          now,
+          result.mode,
+          validated.adults,
+          validated.childAges || [],
+        ),
+      );
+      const recommendations = input.offset
+        ? {
+            status: 'unavailable' as const,
+            picks: [],
+            message:
+              'Additional supplier inventory; the original AI shortlist covers the first batch.',
+          }
+        : await providers.hotelRecommendations(current, hotels, requestScope.signal);
+      requestScope.signal.throwIfAborted();
+      requireActiveSession(res);
+      store.require(ownerId, workspace.id, input.revision);
+      remember(
         ownerId,
         current,
-        result.offers.slice(0, 12).map((offer) => ({
-          item: {
-            ...baseItem('hotel', result.mode, now),
-            title: offer.name,
-            description: [
-              offer.address,
-              offer.room,
-              offer.board,
-              `Full stay for ${validated.adults} adults. Hotel star category, precise location, accessibility, taxes and cancellation terms need agent verification.`,
-            ]
-              .filter(Boolean)
-              .join('\n'),
-            stopId: stop.id,
-            startDate: validated.checkin,
-            endDate: validated.checkout,
-            price: offer.price,
-            currency: offer.currency,
-          },
-        })),
+        quotes.map((item) => ({ item })),
+        Boolean(input.offset),
       );
       res.json({
         quotes,
+        hotels,
+        recommendations,
+        inventory: result.inventory || {
+          returnedHotels: new Set(hotels.map((hotel) => hotel.hotelKey)).size,
+          returnedQuotes: quotes.length,
+          limit: quotes.length,
+          hasMore: true,
+          searchRadiusKm: 15,
+          pagesSearched: 1,
+          incomplete: false,
+          nextOffset: (input.offset || 0) + 150 <= 5000 ? (input.offset || 0) + 150 : null,
+          searchLimitReached: (input.offset || 0) + 150 > 5000,
+        },
         mode: result.mode,
         warning: `${result.warning} Requested hotel standard and neighbourhood are not verified by this rate feed. Review each property's location, room and terms. Selecting a quote only adds it to the proposal; it does not reserve a room.`,
       });
@@ -288,7 +343,6 @@ export function installStudioSupplierRoutes(
     const { revision } = selectRequest.parse(req.body),
       ownerId = session(res).owner_id;
     const workspace = store.require(ownerId, String(req.params.id), revision);
-    requireSearchableParty(workspace);
     const quoteId = z.string().uuid().parse(req.params.quoteId);
     const row = db
       .prepare(
@@ -300,6 +354,8 @@ export function installStudioSupplierRoutes(
         404,
         'This quote is unavailable. Search again for current suggestions.',
       );
+    const item = JSON.parse(String(row.data)) as StudioItem;
+    requireSearchableParty(workspace, item.kind === 'hotel');
     const scope = JSON.parse(String(row.structure)) as { fingerprint: string; expiresAt: string };
     if (scope.fingerprint !== studioQuoteFingerprint(workspace))
       throw new StudioError(
@@ -317,10 +373,18 @@ export function installStudioSupplierRoutes(
         400,
         'This proposal already has 100 services. Remove an item before adding another.',
       );
-    const item = JSON.parse(String(row.data)) as StudioItem;
     requireActiveSession(res);
     workspace.items.push({ ...item, included: true });
-    workspace.itinerary = null;
+    if (item.kind !== 'hotel') {
+      if (!workspace.itineraryManual) workspace.itinerary = null;
+      else if (workspace.itinerary)
+        workspace.itinerary.notes = [
+          ...new Set([
+            ...workspace.itinerary.notes,
+            'A transport service changed. Review the daily plan against its schedule.',
+          ]),
+        ].slice(-20);
+    }
     res.json({ workspace: store.save(ownerId, workspace, revision) });
   });
 }
