@@ -51,6 +51,8 @@ import { Modal, Spinner, TaraMark } from '../components/ui';
 import { useRouteLoading } from '../components/TopLoadingBar';
 import { useComposerLayout } from '../components/useComposerLayout';
 import { StudioImportComposer, type StudioImportMode } from '../components/StudioImportComposer';
+import { StudioClarifyTray, type ClarifyResult } from '../components/StudioClarifyTray';
+import { clarifyMessage, type ClarifyPlan } from '../../shared/studio-clarify';
 import StudioProposalControls from '../components/StudioProposalControls';
 import StudioHotelResults from '../components/StudioHotelResults';
 import type { StudioHotelSearchResult } from '../../shared/studio-hotels';
@@ -62,7 +64,6 @@ import type { StudioClientProfile } from '../../shared/studio-clients';
 import { studioCountries } from '../../shared/studio-travel-research';
 import { StudioItineraryPanel } from '../components/StudioItineraryPanel';
 import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
-import { useRowHover } from '../components/SidebarNavItem';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { onStudioWorkspaceEvent } from '../studioEvents';
 import { ChatTurn } from '../components/ChatTurn';
@@ -71,7 +72,6 @@ import MarkdownText from '../components/MarkdownText';
 import type {
   StudioAgency,
   StudioQualification,
-  StudioQuestion,
   StudioBrief,
   StudioClient,
   StudioItem,
@@ -151,9 +151,13 @@ function StructureGateBadge({ accepted, size = '2' }: { accepted: boolean; size?
 function StudioTopBar({
   workspace,
   stageIndex,
+  editDisabled,
+  onEditBrief,
 }: {
   workspace: StudioWorkspace;
   stageIndex: number;
+  editDisabled: boolean;
+  onEditBrief: () => void;
 }) {
   const gateOpen = workspace.structureAccepted;
   return (
@@ -184,6 +188,34 @@ function StudioTopBar({
                 : ' · Start with a destination')}
           </Text>
         </Flex>
+        {/* The brief belongs to the whole workspace, not to one card on the canvas, so its editor
+            sits in the bar every pane shares. Quiet, so it never competes with the one solid action
+            below; a labelled icon on a phone, where the title needs the width. */}
+        <Box flexShrink="0" display={{ initial: 'none', sm: 'block' }}>
+          <Button
+            size="2"
+            variant="ghost"
+            color="gray"
+            disabled={editDisabled}
+            onClick={onEditBrief}
+          >
+            Edit brief details <Settings2 size={14} />
+          </Button>
+        </Box>
+        <Box flexShrink="0" display={{ initial: 'block', sm: 'none' }}>
+          <Tooltip content="Edit brief details">
+            <IconButton
+              size="2"
+              variant="ghost"
+              color="gray"
+              aria-label="Edit brief details"
+              disabled={editDisabled}
+              onClick={onEditBrief}
+            >
+              <Settings2 size={16} />
+            </IconButton>
+          </Tooltip>
+        </Box>
       </header>
     </Flex>
   );
@@ -217,6 +249,10 @@ export default function Studio() {
      this app streams, and a brief review can run for a minute or more, so without this the pane
      simply sits there and the agent cannot tell whether the send landed. */
   const [pendingTurn, setPendingTurn] = useState('');
+  /* The question tray: open by default until the route is approved, after which the questions are
+     optional and it waits behind a one-line prompt. Remembered per workspace, so closing it on one
+     proposal does not hide it on the next. */
+  const [clarify, setClarify] = useState<{ id: string; open: boolean; focus: number } | null>(null);
   const logEnd = useRef<HTMLDivElement>(null);
   const [importRequest, setImportRequest] = useState<{
     mode: StudioImportMode;
@@ -377,13 +413,13 @@ export default function Studio() {
   /* One turn, from either source: the agent pressing send, or a brief carried in from the home
      page. Shows the turn and empties the composer straight away, and hands the words back if it
      fails, so a failed send never costs the agent what they typed. */
-  async function sendToTara(text: string) {
+  async function sendToTara(text: string, restoreOnFailure = true) {
     if (
       actionLock.current?.epoch === epoch.current ||
       switching ||
       (id && latestWorkspace.current?.id !== id)
     )
-      return;
+      return false;
     const submittedEpoch = epoch.current;
     setPendingTurn(text);
     setMessage('');
@@ -400,9 +436,26 @@ export default function Studio() {
       await mutate('/review', { message: text, requestId });
       requestIds.current.delete(requestKey);
     });
-    if (submittedEpoch !== epoch.current) return;
+    if (submittedEpoch !== epoch.current) return false;
     setPendingTurn('');
-    if (!sent) setMessage(text);
+    if (!sent && restoreOnFailure) setMessage(text);
+    return sent;
+  }
+  /* The tray's answers: the picks in one PATCH, then whatever was written in one turn to Tara.
+     The written half waits for the saved half, so Tara reads them against the updated brief and
+     the review carries the revision the PATCH returned. A failed half stays in the tray's draft,
+     not in the composer, so the agent fixes it where they wrote it. */
+  async function applyClarify(plan: ClarifyPlan): Promise<ClarifyResult> {
+    let saved = false;
+    if (plan.saved.length) {
+      saved = await act('Saving your answers', async () => {
+        await mutate('', { brief: plan.brief, ...(plan.stops ? { stops: plan.stops } : {}) });
+      });
+      if (!saved) return { saved, sent: false };
+    }
+    const text = clarifyMessage(plan);
+    const sent = text ? await sendToTara(text, false) : false;
+    return { saved, sent };
   }
   /* A brief typed on the home page arrives as `?q=`. The home composer navigates the moment the
      workspace exists rather than waiting out the review, so the review runs here, where there is a
@@ -525,6 +578,17 @@ export default function Studio() {
   /* Exactly one solid Button is live at a time: the chat composer owns it until a route
      exists, then the canvas action for the open tab owns it. */
   const routeStarted = !!workspace?.stops.length;
+  const clarifyOpen =
+    !!workspace && (clarify?.id === workspace.id ? clarify.open : !workspace.structureAccepted);
+  const openClarify = () => {
+    if (!workspace) return;
+    setPane('primary');
+    setClarify((current) => ({
+      id: workspace.id,
+      open: true,
+      focus: (current?.id === workspace.id ? current.focus : 0) + 1,
+    }));
+  };
   const stageIndex = activeTab === 'structure' ? 0 : activeTab === 'services' ? 1 : 2;
   const dialogs = (
     <>
@@ -575,7 +639,15 @@ export default function Studio() {
           background={<AuroraBackground variant="spread" />}
           topBar={
             <>
-              <StudioTopBar workspace={workspace} stageIndex={stageIndex} />
+              <StudioTopBar
+                workspace={workspace}
+                stageIndex={stageIndex}
+                editDisabled={!!busy}
+                onEditBrief={() => {
+                  if (!routeDirty) setBriefOpen(true);
+                  else setError('Save or discard your route edits before editing the brief.');
+                }}
+              />
               {/* Errors come from both panes, so they belong to neither. Outside both scroll
                   containers this can never be scrolled out of sight. */}
               {error && (
@@ -652,22 +724,12 @@ export default function Studio() {
               {/* Standing background about the client reads as the head of the conversation, and
                   has to sit outside the log: inside it, opening it would be announced as a new
                   message. */}
-              <Flex align="center" justify="between" gap="2">
-                <Text size="2" weight="medium">
-                  {workspace.brief.clientName
-                    ? `Client brief · ${workspace.brief.clientName}`
-                    : 'Client brief'}
-                </Text>
-                <Button
-                  size="1"
-                  variant="ghost"
-                  color="gray"
-                  disabled={!!busy || routeDirty}
-                  onClick={() => setBriefOpen(true)}
-                >
-                  Edit brief <Settings2 size={13} />
-                </Button>
-              </Flex>
+              {/* Editing the brief lives in the top bar; this line only names whose brief it is. */}
+              <Text size="2" weight="medium">
+                {workspace.brief.clientName
+                  ? `Client brief · ${workspace.brief.clientName}`
+                  : 'Client brief'}
+              </Text>
               {!!workspace.brief.clientName && (
                 <>
                   <Reset>
@@ -778,6 +840,38 @@ export default function Studio() {
                   </Callout.Text>
                 </Callout.Root>
               )}
+              {/* Out of sight, not unmounted, while a turn is with Tara: her reply usually settles
+                  some of these questions, and the list on screen would be the one from before she
+                  read it. Staying mounted lets an Apply in flight finish and report back. */}
+              {/* Mounted even with nothing left to ask, so the tray can confirm the Apply that
+                  emptied it; with no questions and no notice it renders nothing. */}
+              <Box display={pendingTurn ? 'none' : 'block'}>
+                {clarifyOpen ? (
+                  <StudioClarifyTray
+                    workspace={workspace}
+                    disabled={!!busy || routeDirty}
+                    focusRequest={clarify?.id === workspace.id ? clarify.focus : 0}
+                    onApply={applyClarify}
+                    onClose={() => {
+                      setClarify({ id: workspace.id, open: false, focus: 0 });
+                      requestAnimationFrame(() =>
+                        document.getElementById('studio-message')?.focus(),
+                      );
+                    }}
+                  />
+                ) : workspace.qualification.questions.length ? (
+                  <Flex align="center" justify="between" gap="2" px="1">
+                    <Text size="2" color="gray">
+                      {workspace.qualification.questions.length}{' '}
+                      {workspace.qualification.questions.length === 1 ? 'detail' : 'details'} to
+                      clarify
+                    </Text>
+                    <Button size="2" variant="ghost" onClick={openClarify}>
+                      Answer now
+                    </Button>
+                  </Flex>
+                ) : null}
+              </Box>
               <form onSubmit={submit}>
                 <StudioImportComposer
                   workspace={workspace}
@@ -903,14 +997,7 @@ export default function Studio() {
           }
           secondary={
             <>
-              <BriefReview
-                workspace={workspace}
-                onAnswer={askTara}
-                onEdit={() => {
-                  if (!routeDirty) setBriefOpen(true);
-                  else setError('Save or discard your route edits before editing the brief.');
-                }}
-              />
+              <BriefReview workspace={workspace} onAnswerAll={openClarify} />
               <Tabs.Content value="structure">
                 <StudioTravelResearch
                   workspace={workspace}
@@ -922,9 +1009,16 @@ export default function Studio() {
                   research={workspace.destinationResearch}
                   entryResults={workspace.entryRequirements}
                   onResearch={() =>
-                    act('Researching destinations', async () => {
-                      await mutate('/destinations/research', { requestId: crypto.randomUUID() });
-                    })
+                    act(
+                      workspace.stops.length
+                        ? 'Checking travel conditions'
+                        : 'Researching destinations',
+                      async () => {
+                        await mutate('/destinations/research', {
+                          requestId: crypto.randomUUID(),
+                        });
+                      },
+                    )
                   }
                   onCheckEntry={(stopId) =>
                     act('Checking entry requirements', async () => {
@@ -1326,52 +1420,6 @@ const titleCase = (value: string) =>
 
    The wash is the neutral grey `SidebarNavItem` uses, not an accent one — this app reserves the
    accent tint for "you are here", and a hovered question is not a selected question. */
-function QuestionRow({ question, onAsk }: { question: StudioQuestion; onAsk: () => void }) {
-  const { hovered, handlers } = useRowHover();
-  return (
-    <Reset>
-      <button
-        type="button"
-        {...handlers}
-        onClick={onAsk}
-        style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
-      >
-        <Flex
-          align="start"
-          gap="3"
-          p="2"
-          style={{
-            borderRadius: 'var(--radius-3)',
-            backgroundColor: hovered ? 'var(--gray-a3)' : 'transparent',
-            transition: 'background-color 120ms ease-out',
-          }}
-        >
-          <Box flexGrow="1" minWidth="0">
-            <Text as="div" size="2" weight="medium" style={{ color: 'var(--accent-11)' }}>
-              {question.label}
-            </Text>
-            <Text as="div" size="1" color="gray" mt="1">
-              {question.reason}
-            </Text>
-          </Box>
-          {/* Says what the click does. These read as links but they do not navigate — they put
-              the question in the composer for the agent to answer. */}
-          <Box
-            flexShrink="0"
-            mt="1"
-            style={{
-              color: hovered ? 'var(--gray-11)' : 'var(--gray-8)',
-              transition: 'color 120ms ease-out',
-            }}
-          >
-            <MessageCircle size={14} aria-hidden="true" />
-          </Box>
-        </Flex>
-      </button>
-    </Reset>
-  );
-}
-
 /* Twelve facts read as a list of twelve unrelated things. Three groups read as what an agent
    actually holds in their head: when the trip is, who is going, and what they like. The icons are
    the ones the home page already uses for dates and party, so the vocabulary is one app's, not
@@ -1429,12 +1477,10 @@ function briefSummary(known: StudioQualification['known']): string {
 
 function BriefReview({
   workspace,
-  onAnswer,
-  onEdit,
+  onAnswerAll,
 }: {
   workspace: StudioWorkspace;
-  onAnswer: (text: string) => void;
-  onEdit: () => void;
+  onAnswerAll: () => void;
 }) {
   const { qualification } = workspace;
   /* Nothing left to ask and nothing left to fill in: the card has become a receipt, so it steps
@@ -1550,11 +1596,6 @@ function BriefReview({
                 </summary>
               </Reset>
               {facts}
-              <Box mt="4">
-                <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
-                  Edit brief details <Settings2 size={13} />
-                </Button>
-              </Box>
             </details>
           </Reset>
         </section>
@@ -1575,55 +1616,25 @@ function BriefReview({
           />
         </Box>
         {facts}
+        {/* The questions themselves are asked in the tray above the composer, where they can be
+            answered together and applied once. The card only says how many are open. */}
         {!!qualification.questions.length && (
-          <Box mt="4">
-            <Reset>
-              <details open={!workspace.structureAccepted}>
-                <Reset>
-                  <summary style={{ cursor: 'pointer' }}>
-                    <Text size="2" weight="medium">
-                      {qualification.questions.length}{' '}
-                      {qualification.questions.length === 1 ? 'detail' : 'details'} to clarify{' '}
-                      {qualification.skipped && '· skipped for now'}
-                    </Text>
-                  </summary>
-                </Reset>
-                {/* The list's own `margin: 0` reset beats Radix's `mt` utility class, so the
-                    space below the summary has to be set inline. Two columns halve a run that
-                    reached seven questions in a single narrow strip. */}
-                <Grid asChild columns={{ initial: '1', md: '2' }} gapX="4" gapY="1">
-                  <ul
-                    style={{
-                      listStyle: 'none',
-                      margin: 0,
-                      marginTop: 'var(--space-3)',
-                      padding: 0,
-                    }}
-                  >
-                    {qualification.questions.map((question) => (
-                      <li key={question.id} style={{ listStyle: 'none' }}>
-                        <QuestionRow
-                          question={question}
-                          onAsk={() => onAnswer(`${question.label}\n`)}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </Grid>
-                <Text as="p" size="1" color="gray" mt="3">
-                  You can answer in chat or continue with incomplete details.
+          <Flex align="center" justify="between" gap="3" wrap="wrap" mt="4">
+            <Text size="2" weight="medium">
+              {qualification.questions.length}{' '}
+              {qualification.questions.length === 1 ? 'detail' : 'details'} to clarify
+              {qualification.skipped && (
+                <Text color="gray" weight="regular">
+                  {' '}
+                  · skipped for now
                 </Text>
-              </details>
-            </Reset>
-          </Box>
+              )}
+            </Text>
+            <Button size="2" variant="soft" onClick={onAnswerAll}>
+              Answer now
+            </Button>
+          </Flex>
         )}
-        {/* mt-4 rather than mt-3: the ghost's own -6px margin comes off the top, and this
-            control sits directly under the details summary, which is a target too. */}
-        <Box mt="4">
-          <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
-            Edit brief details <Settings2 size={13} />
-          </Button>
-        </Box>
       </section>
     </Card>
   );

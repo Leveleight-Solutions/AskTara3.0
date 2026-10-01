@@ -165,3 +165,97 @@ a {
   background-color: var(--color-panel-solid);
   box-shadow: var(--shadow-2);
 }
+
+/* The clarifying-question tray above the Studio composer (src/components/StudioClarifyTray.tsx).
+   Each option is a full-width row with its keyboard digit in a key cap, so the number the agent
+   presses is the number they see. 44px tall: these rows are what a fingertip aims at on a phone.
+   The selected row is told apart by its border, its tick and its weight, not by colour alone. */
+.clarify-option {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-3);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+.clarify-option:hover:not(:disabled) {
+  background-color: var(--gray-a3);
+}
+.clarify-option:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: 1px;
+}
+.clarify-option[data-selected] {
+  background-color: var(--accent-a3);
+  border-color: var(--accent-a7);
+}
+.clarify-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.clarify-key {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-2);
+  background-color: var(--gray-a3);
+  color: var(--gray-11);
+  font-size: var(--font-size-1);
+  font-variant-numeric: tabular-nums;
+}
+.clarify-option[data-selected] .clarify-key {
+  background-color: var(--accent-9);
+  color: var(--accent-contrast);
+}
+
+/* The Travel conditions header is the card's open/close control (StudioTravelResearch.tsx). The
+   place name is the button; the rest of the header forwards pointer clicks to it. */
+.conditions-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  border-radius: var(--radius-2);
+}
+.conditions-toggle:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: 2px;
+}
+
+/* Conditions broken into sentences (StudioTravelResearch.tsx): a small dot, a readable measure and
+   enough air between items that each reads as its own point. */
+.conditions-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 65ch;
+}
+.conditions-list li {
+  position: relative;
+  padding-left: var(--space-4);
+}
+.conditions-list li + li {
+  margin-top: var(--space-2);
+}
+.conditions-list li::before {
+  content: '';
+  position: absolute;
+  left: var(--space-1);
+  top: 0.6em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--gray-8);
+}

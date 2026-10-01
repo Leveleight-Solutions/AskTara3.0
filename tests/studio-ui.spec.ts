@@ -257,8 +257,12 @@ test('Studio starts with brief review and explicit structure acceptance before s
     .fill('Plan a simple Paris and Amsterdam route for the Hendersons.');
   await page.getByRole('button', { name: 'Start planning your trip' }).click();
   await expect(page).toHaveURL(`/studio/${workspaceId}`);
-  await expect(page.getByRole('region', { name: 'Brief review' })).toContainText(
+  // The open questions are asked in the tray above the composer; the card only counts them.
+  await expect(page.getByRole('region', { name: 'Questions from Tara' })).toContainText(
     'When do they need to return?',
+  );
+  await expect(page.getByRole('region', { name: 'Brief review' })).toContainText(
+    '1 detail to clarify',
   );
   await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
   expect(mocked.requests.filter((r) => r.path.endsWith('/review'))).toHaveLength(1);
