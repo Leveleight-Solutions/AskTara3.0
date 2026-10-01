@@ -276,6 +276,246 @@ test('reviewed cruise apply keeps full fare through early exit and reapply prese
   assert.match(publicPreview.itinerary.notes.join(' '), /Full cruise fare/);
 });
 
+test('dated cruise days merge between land stays without replacing the declared origin flight', async () => {
+  const { client } = setup();
+  let workspace = await create(client);
+  const land = manual();
+  land.days = [
+    { ...land.days[0], day: 1, date: '2027-09-30', title: 'Hong Kong before sailing' },
+    { ...land.days[0], day: 2, date: '2027-10-04', title: 'Taipei land stay' },
+  ];
+  workspace = await patch(client, workspace, {
+    brief: { outboundTransport: 'flight', returnTransport: 'flight' },
+    itinerary: land,
+  });
+  const draft = { ...cruise(), returnTransport: 'undecided' as const };
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: draft })
+      .expect(200)
+  ).body.workspace;
+  assert.equal(workspace.brief.outboundTransport, 'flight');
+  assert.equal(workspace.brief.returnTransport, 'flight');
+  assert.deepEqual(
+    workspace.itinerary?.days.map((day) => day.date),
+    ['2027-09-30', '2027-10-01', '2027-10-02', '2027-10-03', '2027-10-04'],
+  );
+  assert.equal(workspace.itinerary?.days[2].title, 'At sea');
+  assert.equal(workspace.items.find((item) => item.id === `cruise:${draft.id}`)?.price, 4500);
+});
+
+test('reapplying a cruise preserves edited cruise-day activities and updates the early-exit notice', async () => {
+  const { client } = setup();
+  let workspace = await create(client);
+  const draft = { ...cruise(), disembarkAfterDay: null };
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: draft })
+      .expect(200)
+  ).body.workspace;
+  const plan = structuredClone(workspace.itinerary!);
+  plan.days[2].activities.push({
+    period: 'evening',
+    title: 'Reviewed Taipei hotel transfer',
+    description: 'Agent-arranged transfer details need reconfirmation.',
+    sources: [],
+  });
+  workspace = await patch(client, workspace, { itinerary: plan });
+  for (const selection of [draft, { ...draft, disembarkAfterDay: 3 }]) {
+    workspace = (
+      await client
+        .post(path(workspace, '/cruises/apply'))
+        .send({ revision: workspace.revision, cruise: selection })
+        .expect(200)
+    ).body.workspace;
+    const day = workspace.itinerary!.days.find((day) => day.title === 'Taipei')!;
+    assert.equal(
+      day.activities.filter((activity) => activity.title === 'Reviewed Taipei hotel transfer')
+        .length,
+      1,
+    );
+  }
+  assert.match(workspace.itinerary!.days.at(-1)!.summary, /Disembark here/);
+  assert.equal(workspace.items.find((item) => item.id === `cruise:${draft.id}`)?.price, 4500);
+  assert.equal(workspace.itinerary!.days.length, 3);
+});
+
+test('edited source cruise details refresh without silently deleting a manual activity', async () => {
+  const { client } = setup();
+  let workspace = await create(client);
+  const draft = cruise();
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: draft })
+      .expect(200)
+  ).body.workspace;
+  const plan = structuredClone(workspace.itinerary!);
+  plan.days[2].activities.push({
+    period: 'evening',
+    title: 'Manual dinner suggestion',
+    description: 'Recheck after any port change.',
+    sources: [],
+  });
+  workspace = await patch(client, workspace, { itinerary: plan });
+  draft.days[2].details = 'Updated source disembarkation instructions.';
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: draft })
+      .expect(200)
+  ).body.workspace;
+  const activities = workspace.itinerary!.days[2].activities;
+  assert.equal(activities.length, 2);
+  assert.equal(activities[0].description, draft.days[2].details);
+  assert.equal(activities[1].title, 'Manual dinner suggestion');
+});
+
+for (const legacy of [false, true]) {
+  test(`cruise reapply restores deleted and reordered rows without moving custom transfers (${legacy ? 'legacy' : 'stable identities'})`, async () => {
+    const { app, client } = setup();
+    let workspace = await create(client);
+    workspace = (
+      await client
+        .post(path(workspace, '/cruises/apply'))
+        .send({ revision: workspace.revision, cruise: cruise() })
+        .expect(200)
+    ).body.workspace;
+    if (legacy) {
+      // Simulate a saved workspace from before source-day identities were introduced.
+      for (const day of workspace.cruises![0].days) delete day.id;
+      for (const day of workspace.itinerary!.days) delete day.cruiseDayId;
+      app.locals.db
+        .prepare('UPDATE studio_workspaces SET data = ? WHERE id = ?')
+        .run(JSON.stringify(workspace), workspace.id);
+    }
+    const source = structuredClone(workspace.cruises![0]);
+    const edited = structuredClone(workspace.itinerary!);
+    edited.days[2].activities.push({
+      period: 'evening',
+      title: 'Transfer to Taipei hotel',
+      description: 'Separately reviewed land transfer; availability unconfirmed.',
+      sources: [],
+    });
+    edited.days = [edited.days[2], edited.days[1]];
+    workspace = await patch(client, workspace, { itinerary: edited });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      workspace = (
+        await client
+          .post(path(workspace, '/cruises/apply'))
+          .send({ revision: workspace.revision, cruise: source })
+          .expect(200)
+      ).body.workspace;
+      assert.deepEqual(
+        workspace.itinerary!.days.map((day) => day.title),
+        ['Hong Kong', 'At sea', 'Taipei'],
+      );
+      assert.deepEqual(
+        workspace.itinerary!.days.map((day) => day.date),
+        ['2027-10-01', '2027-10-02', '2027-10-03'],
+      );
+      assert.deepEqual(
+        workspace.itinerary!.days.flatMap((day) =>
+          day.activities.some((activity) => activity.title === 'Transfer to Taipei hotel')
+            ? [day.title]
+            : [],
+        ),
+        ['Taipei'],
+      );
+      assert.equal(
+        workspace.items.find((item) => item.kind === 'cruise' && item.price !== null)?.price,
+        4500,
+      );
+      if (attempt === 0)
+        workspace = await patch(client, workspace, {
+          itinerary: { ...workspace.itinerary!, days: [...workspace.itinerary!.days].reverse() },
+        });
+    }
+  });
+}
+
+test('source day deletion preserves the correct surviving manual activity and refreshes changed details', async () => {
+  const { client } = setup();
+  let workspace = await create(client);
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: cruise() })
+      .expect(200)
+  ).body.workspace;
+  const source = structuredClone(workspace.cruises![0]);
+  const edited = structuredClone(workspace.itinerary!);
+  edited.days[1].activities.push({
+    period: 'flexible',
+    title: 'Sea-day lunch',
+    description: 'At sea only.',
+    sources: [],
+  });
+  edited.days[2].activities.push({
+    period: 'evening',
+    title: 'Taipei hotel transfer',
+    description: 'At Taipei only.',
+    sources: [],
+  });
+  // A stable source identity must still find this row after its manual title/date change.
+  edited.days[2].title = 'Reviewed hotel arrival';
+  edited.days[2].date = '2027-10-04';
+  workspace = await patch(client, workspace, { itinerary: edited });
+  source.days = source.days
+    .filter((_, index) => index !== 1)
+    .map((day, index) => ({ ...day, day: index + 1 }));
+  source.disembarkAfterDay = 2;
+  source.days[1].details = 'Updated disembarkation instructions for Taipei.';
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: source })
+      .expect(200)
+  ).body.workspace;
+  assert.deepEqual(
+    workspace.itinerary!.days.map((day) => day.title),
+    ['Hong Kong', 'Taipei'],
+  );
+  assert.deepEqual(
+    workspace.itinerary!.days[1].activities.map((activity) => activity.title),
+    ['Cruise day details', 'Taipei hotel transfer'],
+  );
+  assert.equal(workspace.itinerary!.days[1].activities[0].description, source.days[1].details);
+  assert.ok(
+    !workspace.itinerary!.days.some((day) =>
+      day.activities.some((activity) => activity.title === 'Sea-day lunch'),
+    ),
+  );
+  assert.equal(workspace.itinerary!.days[1].cruiseDayId, source.days[1].id);
+  assert.equal(
+    workspace.items.find((item) => item.kind === 'cruise' && item.price !== null)?.price,
+    4500,
+  );
+});
+
+test('cruise dates without a year do not reorder an agent-reviewed manual sequence', async () => {
+  const { client } = setup();
+  let workspace = await create(client);
+  workspace = await patch(client, workspace, { itinerary: manual() });
+  const draft = cruise();
+  draft.days[1].date = '2 October';
+  workspace = (
+    await client
+      .post(path(workspace, '/cruises/apply'))
+      .send({ revision: workspace.revision, cruise: draft })
+      .expect(200)
+  ).body.workspace;
+  assert.equal(workspace.itinerary!.days[0].title, 'Agent recommendations');
+  assert.deepEqual(
+    workspace.itinerary!.days.slice(1).map((day) => day.title),
+    ['Hong Kong', 'At sea', 'Taipei'],
+  );
+  assert.equal(workspace.itinerary!.days[2].date, '');
+  assert.equal(workspace.brief.outboundTransport, 'undecided');
+});
+
 test('changing cruise disembarkation preserves arranged transport and requests route review', async () => {
   const { client } = setup();
   let workspace = await create(client);
@@ -348,6 +588,7 @@ test('manual cruise day edits and deletions retain the full fare without claimin
       .send({ revision: workspace.revision, cruise: draft })
       .expect(200)
   ).body.workspace;
+  const storedDraft = structuredClone(workspace.cruises?.[0]);
   const edited = structuredClone(workspace.itinerary!);
   edited.days.splice(1, 1);
   edited.days[1].activities[0].description = 'A new recommendation personally added by the agent.';
@@ -361,7 +602,7 @@ test('manual cruise day edits and deletions retain the full fare without claimin
     workspace.itinerary?.days[1].activities[0].description,
     'A new recommendation personally added by the agent.',
   );
-  assert.deepEqual(workspace.cruises?.[0], draft);
+  assert.deepEqual(workspace.cruises?.[0], storedDraft);
   assert.equal(workspace.items.find((item) => item.id === 'cruise:reviewed-cruise-1')?.price, 4500);
   assert.deepEqual(
     workspace.itinerary?.days.map((day) => day.day),

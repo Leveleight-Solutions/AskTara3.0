@@ -20,6 +20,7 @@ const extractionSchema = z
     days: z
       .array(
         studioCruiseDaySchema
+          .omit({ id: true })
           .extend({
             sourceExcerpt: z.string().min(1).max(1800),
           })

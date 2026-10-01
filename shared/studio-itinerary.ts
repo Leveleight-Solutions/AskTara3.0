@@ -15,6 +15,8 @@ export interface StudioItineraryActivity {
 export interface StudioItineraryDay {
   /** Links reviewed cruise rows to their source draft for safe reapplication. */
   cruiseId?: string;
+  /** Stable source row identity survives deletions, reordering and manual title/date edits. */
+  cruiseDayId?: string;
   day: number;
   date: string;
   stopIds: string[];
@@ -36,6 +38,7 @@ export const studioItinerarySchema = z
         z
           .object({
             cruiseId: z.string().min(1).max(80).optional(),
+            cruiseDayId: z.string().min(1).max(80).optional(),
             day: z.number().int().min(1).max(STUDIO_MANUAL_ITINERARY_MAX_DAYS),
             date: z
               .string()

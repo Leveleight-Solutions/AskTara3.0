@@ -46,6 +46,9 @@ export function studioQuoteFingerprint(workspace: StudioWorkspace) {
         hotelLocation: workspace.brief.hotelLocation,
         cabin: workspace.brief.cabin,
         origin: workspace.brief.origin,
+        departureDate: workspace.brief.departureDate || '',
+        outboundTransport: workspace.brief.outboundTransport || 'undecided',
+        returnTransport: workspace.brief.returnTransport || 'undecided',
       }),
     )
     .digest('hex');

@@ -174,6 +174,8 @@ Run `npm run test:e2e` for browser journeys using installed Google Chrome (`chan
 
 For the complete fictional London business-trip replay, including the exact messages, Tara replies, supplier searches and private PDF checks, see [the traveller test walkthrough](docs/FICTIONAL_TRAVELLER_WALKTHROUGH.md). See [client profiles and history-based recommendations](docs/CLIENT_PROFILES.md) for profile fields, trip feedback, private history and the recommendation workflow. The opt-in `tests/studio-fictional-replay.spec.ts` exercises configured OpenAI and LiteAPI sandbox services and removes its own temporary workspace.
 
+For broader coverage, use [the travel scenario matrix](docs/TRIP_SCENARIO_TESTING.md): honeymoon, Nepal hiking, US business and family holidays, Japan rail travel, accessibility needs, one-way travel, year boundaries, route replacement and mixed land/cruise trips. It links the exact prompts, expected facts and opt-in scripts that save actual replies, private PDFs and cleanup results.
+
 ## API overview
 
 Interactive Swagger documentation is available at **[/api/docs](http://localhost:3001/api/docs)**

@@ -36,7 +36,7 @@ export function StudioCruiseImport({
   disabled: boolean;
   initialDraft?: StudioCruiseDraft | null;
   onExtract: (input: StudioImportInput) => Promise<StudioCruiseDraft | undefined>;
-  onApply: (draft: StudioCruiseDraft) => Promise<boolean | undefined>;
+  onApply: (draft: StudioCruiseDraft) => Promise<StudioCruiseDraft | undefined>;
 }) {
   const [draft, setDraft] = useState<StudioCruiseDraft | null>(initialDraft || null);
   const [sourceType, setSourceType] = useState<'url' | 'text'>('url');
@@ -488,7 +488,12 @@ export function StudioCruiseImport({
                     setBusy(true);
                     setError('');
                     void onApply(checked.data)
-                      .then((result) => setSaved(Boolean(result)))
+                      .then((result) => {
+                        // Only this completed save may replace the local draft. In particular,
+                        // newly added days need their server-assigned IDs before further edits.
+                        if (result) setDraft(result);
+                        setSaved(Boolean(result));
+                      })
                       .catch((failure: unknown) =>
                         setError(
                           failure instanceof Error

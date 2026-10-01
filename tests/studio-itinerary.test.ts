@@ -307,6 +307,59 @@ test('itinerary history keeps feedback and planned-versus-visited context withou
   assert.equal(generated.days.length, 3);
 });
 
+test('unverified activity sources get one freshly researched repair without relaxing evidence checks', async () => {
+  const value = workspace();
+  const before = structuredClone(value);
+  let calls = 0;
+  globalThis.fetch = async (_address, init) => {
+    calls++;
+    const payload = JSON.parse(JSON.parse(String(init?.body)).input[0].content);
+    const data = answer(value);
+    if (calls === 1) data.days[0].activities[0].sourceUrls = ['https://invented.example/venue'];
+    else {
+      assert.match(payload.validationFeedback, /unverified source.*days\[0\].activities\[0\]/);
+      assert.match(payload.validationFeedback, /Research again/);
+      assert.doesNotMatch(payload.validationFeedback, /invented.example/);
+    }
+    return response(data);
+  };
+  const generated = await generateStudioItinerary(value, 'Plan a family holiday.');
+  assert.equal(calls, 2);
+  assert.equal(generated.days[0].activities[0].sources[0].url, url);
+  assert.deepEqual(value, before);
+});
+
+test('repeated invalid sources stop after two drafts and never save an unsupported itinerary', async () => {
+  const value = workspace();
+  const before = structuredClone(value);
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    const data = answer(value);
+    data.days[0].activities[0].sourceUrls = ['https://invented.example/venue'];
+    return response(data);
+  };
+  await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unverified source/));
+  assert.equal(calls, 2);
+  assert.deepEqual(value, before);
+});
+
+test('a source repair cannot reuse evidence missing from its own new search results', async () => {
+  const value = workspace();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    const data = answer(value);
+    if (calls === 1) {
+      data.notes = ['See https://invented.example for details.'];
+      return response(data);
+    }
+    return response(data, [{ url: 'https://different.example/other', title: 'Unrelated source' }]);
+  };
+  await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unverified source/));
+  assert.equal(calls, 2);
+});
+
 test('a second unsupported draft fails after two calls and leaves the workspace unchanged', async () => {
   const value = workspace();
   const original = structuredClone(value);

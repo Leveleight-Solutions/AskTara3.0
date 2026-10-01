@@ -1078,12 +1078,15 @@ export default function Studio() {
                       });
                       return cruise;
                     }}
-                    onApply={async (cruise) =>
-                      act('Saving cruise itinerary', async () => {
-                        await mutate('/cruises/apply', { cruise });
-                        setSelectedCruise(cruise.id);
-                      })
-                    }
+                    onApply={async (cruise) => {
+                      let saved: StudioCruiseDraft | undefined;
+                      await act('Saving cruise itinerary', async () => {
+                        const updated = await mutate('/cruises/apply', { cruise });
+                        saved = updated?.cruises?.find((value) => value.id === cruise.id);
+                        if (saved) setSelectedCruise(cruise.id);
+                      });
+                      return saved;
+                    }}
                   />
                 </Box>
                 <RouteEditor

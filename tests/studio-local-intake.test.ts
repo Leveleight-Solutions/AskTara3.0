@@ -78,6 +78,19 @@ test('local conversation progresses from a greeting through a short client brief
   assert.equal(value.stops[0].nights, 3);
 });
 
+test('local intake accepts adjacent currency codes without reading codes inside words', async () => {
+  for (const message of ['budget AUD3000', 'budget 3000AUD', 'budget eur3000', 'budget NPR3000']) {
+    const value = newStudioWorkspace();
+    await converse(value, message);
+    assert.equal(value.brief.budget, 3000, message);
+    assert.equal(value.brief.currency, message.match(/AUD|eur|NPR/)![0].toUpperCase(), message);
+  }
+  const value = newStudioWorkspace();
+  await converse(value, 'Our budget is 3000 in total; all meals included, try local places.');
+  assert.equal(value.brief.budget, 3000);
+  assert.equal(value.brief.currency, 'AUD');
+});
+
 test('short answers use only the last targeted question and keep unknown party facts unknown', async () => {
   const value = newStudioWorkspace();
   await converse(value, 'hi');

@@ -82,3 +82,69 @@ test('reviewed cruise flows through route, services, manual activities and a rea
     if (id) expect((await page.request.delete(`/api/studio/workspaces/${id}`)).status()).toBe(204);
   }
 });
+
+test('a newly saved cruise day retains its identity when edited without reopening the editor', async ({
+  page,
+}) => {
+  let id = '';
+  try {
+    const created = await page.request.post('/api/studio/workspaces', { data: {} });
+    expect(created.status()).toBe(201);
+    const workspace = (await created.json()).workspace as StudioWorkspace;
+    id = workspace.id;
+    const cruise = {
+      id: crypto.randomUUID(),
+      name: 'Fictional source identity check',
+      ship: 'Example ship',
+      sourceUrl: '',
+      sourceName: 'Synthetic authored schedule',
+      extractedAt: new Date().toISOString(),
+      currency: 'USD',
+      fullFare: 4500,
+      disembarkAfterDay: null,
+      onwardTransport: 'undecided',
+      returnTransport: 'undecided',
+      warnings: [],
+      days: [
+        { day: 1, date: '2027-10-01', port: 'Hong Kong', arrival: '', departure: '', details: '' },
+      ],
+    };
+    const initial = await page.request.post(`/api/studio/workspaces/${id}/cruises/apply`, {
+      data: { revision: workspace.revision, cruise },
+    });
+    expect(initial.status()).toBe(200);
+    await page.goto(`/studio/${id}`);
+    await page.getByLabel('Saved cruise to edit', { exact: true }).selectOption(cruise.id);
+    const importer = page.getByRole('region', { name: 'Cruise itinerary import' });
+    await importer.getByRole('button', { name: 'Add cruise day', exact: true }).click();
+    await importer.getByLabel('Port or sea day · day 2', { exact: true }).fill('Taipei');
+    await importer.getByLabel('Cruise date · day 2', { exact: true }).fill('2027-10-03');
+    const firstSave = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/cruises/apply') && response.request().method() === 'POST',
+    );
+    await importer.getByRole('button', { name: 'Apply reviewed cruise', exact: true }).click();
+    const saved = ((await (await firstSave).json()).workspace as StudioWorkspace).cruises![0];
+    expect(saved.days[1].id).toBeTruthy();
+    await expect(importer.getByRole('status')).toContainText('Reviewed cruise saved');
+    await importer.getByLabel('Port or sea day · day 2', { exact: true }).fill('Keelung');
+    await importer.getByLabel('Cruise date · day 2', { exact: true }).fill('2027-10-04');
+    const secondSave = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/cruises/apply') && response.request().method() === 'POST',
+    );
+    await importer.getByRole('button', { name: 'Apply reviewed cruise', exact: true }).click();
+    const updated = (await (await secondSave).json()).workspace as StudioWorkspace;
+    expect(updated.cruises![0].days[1]).toMatchObject({
+      id: saved.days[1].id,
+      port: 'Keelung',
+      date: '2027-10-04',
+    });
+    expect(updated.itinerary!.days[1].cruiseDayId).toBe(saved.days[1].id);
+    expect(updated.items.find((item) => item.kind === 'cruise' && item.price !== null)?.price).toBe(
+      4500,
+    );
+  } finally {
+    if (id) expect((await page.request.delete(`/api/studio/workspaces/${id}`)).status()).toBe(204);
+  }
+});

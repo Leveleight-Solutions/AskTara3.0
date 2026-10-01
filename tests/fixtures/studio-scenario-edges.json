@@ -1,0 +1,126 @@
+[
+  {
+    "id": "solo-one-way-lisbon",
+    "title": "Solo one-way Lisbon holiday with a firm budget and no nightlife",
+    "turns": [
+      {
+        "prompt": "This is a fictional solo holiday. I am one adult, no children, flying one way from Dublin to Lisbon, Portugal. I arrive in Lisbon on 10 November 2026 and stay four nights, leaving the hotel on 14 November. Do not plan a return flight; I will arrange onward travel myself. My total trip budget is EUR 1800. I want a modest 3-star hotel, vegetarian meals, quiet cafes and gentle walks. No nightlife. Do not book anything."
+      },
+      {
+        "prompt": "Keep Lisbon as the only destination. Prioritise quiet neighbourhood walks and gardens; leave arrival and departure days flexible. The budget is EUR 1800 for the whole trip, not per day."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 1,
+        "children": 0,
+        "budget": 1800,
+        "currency": "EUR",
+        "startDate": "2026-11-10",
+        "endDate": "2026-11-14"
+      },
+      "stops": [
+        {
+          "name": "Lisbon",
+          "nights": 4,
+          "arrivalDate": "2026-11-10",
+          "departureDate": "2026-11-14"
+        }
+      ],
+      "preferences": ["vegetarian", "quiet", "one.way|no return|return flight|onward travel"]
+    },
+    "itineraryPrompt": "Build the complete day-by-day Lisbon itinerary for 10–14 November 2026 using the agreed details. Keep travel days flexible, suggest sourced vegetarian dining, quiet gardens and gentle walks, with no nightlife or return-flight arrangements. Do not book anything or invent prices."
+  },
+  {
+    "id": "new-year-sydney",
+    "title": "Four-adult Sydney holiday across a year boundary",
+    "turns": [
+      {
+        "prompt": "This is a fictional holiday for four adults and no children. We arrive in Sydney, Australia on 29 December 2026, stay six nights and leave on 4 January 2027. Our total group budget is AUD 8000. We like beaches, harbour views and relaxed cultural visits. Use a 3-star hotel and keep the pace easy; no guaranteed event tickets or fireworks viewing."
+      },
+      {
+        "prompt": "Yes, keep the exact dates 29 December 2026 to 4 January 2027, six nights for all four adults. Avoid scheduling a paid New Year event unless we explicitly choose one later."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 4,
+        "children": 0,
+        "budget": 8000,
+        "currency": "AUD",
+        "startDate": "2026-12-29",
+        "endDate": "2027-01-04"
+      },
+      "stops": [
+        {
+          "name": "Sydney",
+          "nights": 6,
+          "arrivalDate": "2026-12-29",
+          "departureDate": "2027-01-04"
+        }
+      ],
+      "preferences": ["beach", "harbour|harbor", "relax|easy"]
+    },
+    "itineraryPrompt": "Build the complete seven-calendar-day Sydney holiday itinerary, 29 December 2026 through 4 January 2027, for our four adults. Keep the arrival and departure days flexible, use sourced beach/harbour/cultural suggestions, and clearly flag future holiday opening times and event availability as needing confirmation. Do not invent bookings, ticket availability or prices."
+  },
+  {
+    "id": "replace-destination-and-dates",
+    "title": "Change the destination and dates without retaining the old route",
+    "turns": [
+      {
+        "prompt": "Fictional holiday for one adult, no children: Lisbon, Portugal, arriving 10 November 2026 and staying four nights until 14 November. Total budget EUR 1600. I like museums, architecture and vegetarian food."
+      },
+      {
+        "prompt": "Change the whole trip: replace Lisbon with Porto, Portugal. Arrive in Porto on 12 November 2026 and leave on 16 November 2026, four nights. Keep one adult, no children, the EUR 1600 total budget, museums, architecture and vegetarian food. Lisbon is no longer part of this trip."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 1,
+        "children": 0,
+        "budget": 1600,
+        "currency": "EUR",
+        "startDate": "2026-11-12",
+        "endDate": "2026-11-16"
+      },
+      "stops": [
+        { "name": "Porto", "nights": 4, "arrivalDate": "2026-11-12", "departureDate": "2026-11-16" }
+      ],
+      "preferences": ["museum", "architecture", "vegetarian"]
+    },
+    "itineraryPrompt": "Build the complete day-by-day Porto itinerary for 12–16 November 2026 with the revised route. Do not include Lisbon. Plan sourced museums, architecture and vegetarian dining at a relaxed pace, with flexible travel days and no bookings or invented costs."
+  },
+  {
+    "id": "incomplete-then-mauritius-honeymoon",
+    "title": "Incomplete honeymoon brief completed without invented dates or destination",
+    "turns": [
+      {
+        "prompt": "We are two adults planning a fictional honeymoon. We have not chosen a destination or dates, and we do not want you to choose them yet. Please ask for the missing details; do not invent a route.",
+        "expected": { "brief": { "adults": 2, "startDate": "", "endDate": "" }, "stops": [] }
+      },
+      {
+        "prompt": "We choose Mauritius. We arrive on 5 December 2026 and leave on 11 December 2026, six nights. Two adults, no children. Our total couple budget is GBP 5000. We want a relaxed beach honeymoon with a 4-star hotel, vegetarian dining and plenty of unscheduled time. Do not book anything."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 0,
+        "budget": 5000,
+        "currency": "GBP",
+        "startDate": "2026-12-05",
+        "endDate": "2026-12-11"
+      },
+      "stops": [
+        {
+          "name": "Mauritius",
+          "nights": 6,
+          "arrivalDate": "2026-12-05",
+          "departureDate": "2026-12-11"
+        }
+      ],
+      "preferences": ["honeymoon", "vegetarian", "relax"]
+    },
+    "itineraryPrompt": "Build the complete seven-calendar-day Mauritius honeymoon itinerary for 5–11 December 2026. Keep a relaxed pace and plenty of free time, suggest sourced beaches and vegetarian-friendly dining, leave travel days flexible, and avoid guaranteed weather, availability, prices or bookings."
+  }
+]

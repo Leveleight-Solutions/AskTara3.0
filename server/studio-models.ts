@@ -19,6 +19,7 @@ import {
   groundedStudioBrief,
   assertStudioRouteGrounding,
   groundedStudioDates,
+  readStudioDateReferences,
   requestedStudioNights,
 } from './studio-grounding.ts';
 import {
@@ -165,27 +166,76 @@ routeEvidence is a verbatim excerpt from the latest message justifying a route c
     current = workspace.brief,
   ) => {
     const route = workspace.stops.length > 1 ? workspace.stops : candidate.route;
-    const mentions = (source: string) =>
-      route.filter((stop) =>
-        new RegExp(
-          `(?:^|[^\\p{L}\\p{N}])${stop.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\p{L}\\p{N}])`,
-          'iu',
-        ).test(source),
+    const boundaryDate = (source: string, field: 'startDate' | 'endDate') => {
+      const boundary = field === 'startDate' ? route[0] : route.at(-1);
+      const context = {
+        messages: workspace.messages,
+        brief: { ...current, preferredDestination: boundary?.name || current.preferredDestination },
+      };
+      const value = groundedStudioDates(source, context)[field];
+      if (!value) return;
+      const references = readStudioDateReferences(source, context).filter(
+        (reference) => reference.date === value,
       );
+      for (const reference of references) {
+        const prefix =
+          source
+            .slice(0, reference.index)
+            .split(/[.;\n]/)
+            .at(-1) || '';
+        const roles = [
+          ...prefix.matchAll(
+            /\b(?:arriv\w*|start\w*|begin\w*|depart\w*|leav\w*|return\w*|end\w*)\b/gi,
+          ),
+        ];
+        const lastRoleIndex = roles.at(-1)?.index;
+        const beforeRole = lastRoleIndex === undefined ? '' : prefix.slice(0, lastRoleIndex);
+        const declaration = lastRoleIndex === undefined ? prefix : prefix.slice(lastRoleIndex);
+        const named = route
+          .flatMap((stop) =>
+            [
+              ...declaration.matchAll(
+                new RegExp(
+                  `(?:^|[^\\p{L}\\p{N}])${stop.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\p{L}\\p{N}])`,
+                  'giu',
+                ),
+              ),
+            ].map((match) => ({ stop, index: match.index })),
+          )
+          .sort((left, right) => right.index - left.index);
+        const subject = route.find((stop) =>
+          new RegExp(
+            `${stop.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:['’]s)?\\s*$`,
+            'iu',
+          ).test(beforeRole),
+        );
+        // A date attached to an intermediate stop is not a whole-trip boundary.
+        // Separate arrival/departure clauses may name several stops in one message.
+        if (named.length ? named[0].stop === boundary : !subject || subject === boundary)
+          return value;
+      }
+    };
     const facts = candidate.facts.filter((fact) => {
       if (route.length <= 1 || !['startDate', 'endDate'].includes(fact.field)) return true;
-      const citedStops = mentions(fact.evidence);
-      const namedStops = citedStops.length ? citedStops : mentions(message);
-      const boundary = fact.field === 'startDate' ? route[0] : route.at(-1);
-      // A named later arrival or intermediate departure belongs to that stop,
-      // not to the whole trip. The validated route still carries its new date.
-      return !namedStops.length || (namedStops.length === 1 && namedStops[0] === boundary);
+      const source = [message, ...documentTexts].find((text) =>
+        norm(text).includes(norm(fact.evidence)),
+      );
+      return Boolean(source && boundaryDate(source, fact.field as 'startDate' | 'endDate'));
     });
+    const boundaryDates =
+      route.length > 1
+        ? Object.fromEntries(
+            (['startDate', 'endDate'] as const)
+              .map((field) => [field, boundaryDate(message, field)])
+              .filter((entry) => Boolean(entry[1])),
+          )
+        : {};
     return {
       ...groundedStudioBrief(current, candidate.brief, facts, message, documentTexts, {
         messages: workspace.messages,
       }),
       ...(workspace.stops.length <= 1 && candidate.route.length <= 1 ? explicitDates : {}),
+      ...boundaryDates,
     };
   };
   const validateRoute = (candidate: z.infer<typeof studioReviewSchema>, brief: StudioBrief) => {

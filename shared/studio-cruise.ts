@@ -16,6 +16,8 @@ export function cruiseIsoDate(value: string): string {
 
 export const studioCruiseDaySchema = z
   .object({
+    /** Stable reviewed-source identity; optional for older saved drafts. */
+    id: z.string().min(1).max(80).optional(),
     day: z.number().int().min(1).max(STUDIO_MANUAL_ITINERARY_MAX_DAYS),
     /** Literal dates are retained when a source omits the year. */
     date: z.string().max(80),
@@ -70,6 +72,13 @@ export const studioCruiseDraftSchema = z
         path: ['days'],
         message: 'Cruise days must be in sequential order.',
       });
+    const ids = draft.days.flatMap((day) => (day.id ? [day.id] : []));
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['days'],
+        message: 'Cruise day identifiers must be unique.',
+      });
   });
 
 export type StudioCruiseDay = z.infer<typeof studioCruiseDaySchema>;
@@ -88,6 +97,7 @@ export function cruiseDraftToItinerary(
     generatedAt: draft.extractedAt,
     days: selected.map((day, index) => ({
       cruiseId: draft.id,
+      ...(day.id ? { cruiseDayId: day.id } : {}),
       day: index + 1,
       date: cruiseIsoDate(day.date),
       stopIds: stopIds[index] ? [stopIds[index]] : [],

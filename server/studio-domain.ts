@@ -398,6 +398,15 @@ export function applyStudioPatch(
   agency: StudioAgency,
 ): StudioWorkspace {
   const previous = structureFingerprint(workspace);
+  const transportBasis = (value: StudioWorkspace) =>
+    JSON.stringify({
+      origin: value.brief.origin,
+      departureDate: value.brief.departureDate || '',
+      outbound: value.brief.outboundTransport || 'undecided',
+      returning: value.brief.returnTransport || 'undecided',
+    });
+  const previousTransport = transportBasis(workspace);
+  const previousCabin = workspace.brief.cabin;
   const entryBasis = (value: StudioWorkspace) =>
     JSON.stringify({
       passport: value.brief.passportNationality || '',
@@ -556,6 +565,17 @@ export function applyStudioPatch(
       JSON.stringify([workspace.brief.adults, workspace.brief.children, workspace.brief.childAges])
   )
     workspace.items = workspace.items.map((item) => ({ ...item, needsReview: true }));
+  else if (
+    previousTransport !== transportBasis(workspace) ||
+    previousCabin !== workspace.brief.cabin
+  ) {
+    const transportChanged = previousTransport !== transportBasis(workspace);
+    workspace.items = workspace.items.map((item) =>
+      item.kind === 'flight' || (transportChanged && ['cruise', 'transfer'].includes(item.kind))
+        ? { ...item, needsReview: true }
+        : item,
+    );
+  }
   if (changed || previousItineraryBasis !== itineraryBasis(workspace)) {
     // Agent-authored plans remain editable after preferences or supplier selections change.
     if (!workspace.itineraryManual) workspace.itinerary = null;

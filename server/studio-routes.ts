@@ -18,7 +18,7 @@ import { parseStudioImport, studioImportSchema, StudioImportError } from './stud
 import { planningFailureReason } from './agents/failures.ts';
 import { OpenAIPlanningError } from './agents/openai.ts';
 import { runStudioAssistant } from './studio-assistant.ts';
-import { generateStudioItinerary } from './studio-itinerary.ts';
+import { generateStudioItinerary, studioTripEndConflicts } from './studio-itinerary.ts';
 import {
   installStudioClientRoutes,
   getStudioClientProfile,
@@ -343,10 +343,9 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
   app.post('/api/studio/workspaces/:id/accept-structure', (req, res) => {
     const body = z.object({ revision }).strict().parse(req.body),
       workspace = owned(req, res, body.revision);
-    if (!workspace.stops.length)
+    if (!workspace.stops.length && !workspace.cruises?.length)
       throw new StudioError(400, 'Add a destination before approving the route.');
-    const end = workspace.stops.at(-1)?.departureDate;
-    if (end && workspace.brief.endDate && end !== workspace.brief.endDate)
+    if (studioTripEndConflicts(workspace))
       throw new StudioError(
         400,
         'The route end differs from the requested end date. Adjust the nights or the brief before approving.',
@@ -372,7 +371,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
           workspace.id,
         ),
       );
-      workspace.itineraryManual = false;
+      workspace.itineraryManual = workspace.itinerary.days.some((day) => Boolean(day.cruiseId));
       workspace.stage = 'itinerary';
       return { nextAction: 'itinerary', days: workspace.itinerary.days.length };
     });
@@ -521,9 +520,41 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     const body = z.object({ revision, cruise: studioCruiseDraftSchema }).strict().parse(req.body);
     const workspace = owned(req, res, body.revision),
       cruise = body.cruise;
+    const oldCruise = workspace.cruises?.find((value) => value.id === cruise.id);
+    const oldSourceDays = oldCruise?.days || [];
+    const matchedSourceDays = new Map<string, number>();
+    const usedSourceIndexes = new Set<number>();
+    cruise.days = cruise.days.map((day) => {
+      const uniqueIndex = (matches: (candidate: typeof day) => boolean) => {
+        const indexes = oldSourceDays.flatMap((candidate, index) =>
+          matches(candidate) ? [index] : [],
+        );
+        return indexes.length === 1 &&
+          cruise.days.filter(matches).length === 1 &&
+          !usedSourceIndexes.has(indexes[0])
+          ? indexes[0]
+          : -1;
+      };
+      // Explicit IDs survive source edits. Legacy drafts may only match a unique literal row.
+      let oldIndex = day.id ? uniqueIndex((candidate) => candidate.id === day.id) : -1;
+      if (!day.id) {
+        oldIndex = uniqueIndex(
+          (candidate) => candidate.date === day.date && candidate.port === day.port,
+        );
+        if (oldIndex < 0 && day.date)
+          oldIndex = uniqueIndex((candidate) => candidate.date === day.date);
+        if (oldIndex < 0) oldIndex = uniqueIndex((candidate) => candidate.port === day.port);
+      }
+      const id = day.id || (oldIndex >= 0 ? oldSourceDays[oldIndex].id : undefined) || randomUUID();
+      if (oldIndex >= 0) {
+        matchedSourceDays.set(id, oldIndex);
+        usedSourceIndexes.add(oldIndex);
+      }
+      return { ...day, id };
+    });
     const selected = cruise.days.slice(0, cruise.disembarkAfterDay ?? cruise.days.length);
     const early = selected.length < cruise.days.length;
-    const oldCruise = workspace.cruises?.find((value) => value.id === cruise.id);
+    const cruiseStartsTrip = !workspace.stops.length && !workspace.itinerary?.days.length;
     const oldNotes = oldCruise ? cruiseDraftToItinerary(oldCruise).notes : [];
     const schedule = (value: typeof cruise) =>
       JSON.stringify([
@@ -557,6 +588,69 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       ),
     );
     const previous = workspace.itinerary;
+    const previousCruiseDays = (previous?.days || []).filter((day) => day.cruiseId === cruise.id);
+    const oldPlan = oldCruise ? cruiseDraftToItinerary(oldCruise) : null;
+    const usedEditedDays = new Set<(typeof previousCruiseDays)[number]>();
+    plan.days = plan.days.map((day, index) => {
+      const oldIndex = matchedSourceDays.get(cruise.days[index].id!);
+      const original = oldIndex === undefined ? undefined : oldPlan?.days[oldIndex];
+      if (!original || oldIndex === undefined) return day;
+      const uniqueEdited = (matches: (candidate: typeof day) => boolean) => {
+        const candidates = previousCruiseDays.filter(matches);
+        return candidates.length === 1 && !usedEditedDays.has(candidates[0])
+          ? candidates[0]
+          : undefined;
+      };
+      let edited = original.cruiseDayId
+        ? uniqueEdited((candidate) => candidate.cruiseDayId === original.cruiseDayId)
+        : undefined;
+      if (!edited) {
+        const legacy = (candidate: typeof day) => !candidate.cruiseDayId;
+        if (
+          oldPlan!.days.filter(
+            (value) => value.date === original.date && value.title === original.title,
+          ).length === 1
+        )
+          edited = uniqueEdited(
+            (candidate) =>
+              legacy(candidate) &&
+              candidate.date === original.date &&
+              candidate.title === original.title,
+          );
+        if (
+          !edited &&
+          original.date &&
+          oldPlan!.days.filter((value) => value.date === original.date).length === 1
+        )
+          edited = uniqueEdited(
+            (candidate) => legacy(candidate) && candidate.date === original.date,
+          );
+        if (!edited && oldPlan!.days.filter((value) => value.title === original.title).length === 1)
+          edited = uniqueEdited(
+            (candidate) => legacy(candidate) && candidate.title === original.title,
+          );
+      }
+      if (!edited) return day;
+      usedEditedDays.add(edited);
+      const literalDay = (value: (typeof cruise.days)[number]) =>
+        JSON.stringify([value.date, value.port, value.arrival, value.departure, value.details]);
+      if (oldCruise && literalDay(oldCruise.days[oldIndex]) === literalDay(cruise.days[index]))
+        return {
+          ...edited,
+          cruiseDayId: day.cruiseDayId,
+          day: day.day,
+          // Update an early-disembarkation notice without erasing an agent's own summary.
+          summary: edited.summary === original.summary ? day.summary : edited.summary,
+        };
+      // Refresh changed source details while retaining separately authored activities for review.
+      const manualActivities = edited.activities.filter(
+        (activity) =>
+          !original.activities.some(
+            (source) => JSON.stringify(source) === JSON.stringify(activity),
+          ),
+      );
+      return { ...day, activities: [...day.activities, ...manualActivities] };
+    });
     const firstIndex = previous?.days.findIndex((day) => day.cruiseId === cruise.id) ?? -1;
     const remaining = (previous?.days || []).filter((day) => day.cruiseId !== cruise.id);
     remaining.splice(
@@ -564,6 +658,16 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       0,
       ...plan.days,
     );
+    const chronological = (days: typeof remaining) =>
+      days.every(
+        (day, index) =>
+          Boolean(cruiseIsoDate(day.date)) && (!index || day.date >= days[index - 1].date),
+      );
+    const landDays = (previous?.days || []).filter((day) => day.cruiseId !== cruise.id);
+    // Merge fully dated sequences by calendar date, preserving the order within each sequence.
+    // Incomplete or nonchronological source dates remain in their reviewed source order.
+    if (chronological(landDays) && chronological(plan.days))
+      remaining.sort((left, right) => left.date.localeCompare(right.date));
     workspace.itinerary = studioItinerarySchema.parse({
       generatedAt: new Date().toISOString(),
       days: remaining.map((day, index) => ({ ...day, day: index + 1 })),
@@ -721,8 +825,13 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       workspace.stage = 'structure';
       workspace.structureAccepted = false;
     }
-    workspace.brief.outboundTransport = 'cruise';
-    workspace.brief.returnTransport = cruise.returnTransport;
+    if (
+      cruiseStartsTrip &&
+      (!workspace.brief.outboundTransport || workspace.brief.outboundTransport === 'undecided')
+    )
+      workspace.brief.outboundTransport = 'cruise';
+    if (cruise.returnTransport !== 'undecided')
+      workspace.brief.returnTransport = cruise.returnTransport;
     workspace.qualification = qualifyStudio(workspace, store.getAgency(session(res).owner_id));
     workspace.entryRequirements = [];
     res.json({ workspace: save(res, workspace, body.revision) });

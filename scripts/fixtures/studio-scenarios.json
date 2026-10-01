@@ -1,0 +1,269 @@
+[
+  {
+    "id": "bali_honeymoon",
+    "title": "Bali honeymoon for two adults",
+    "turns": [
+      {
+        "prompt": "This is a fictional test couple called Demo Bali Couple. We are two adults, no children, travelling from Sydney on Australian passports for a honeymoon holiday. Arrive in Ubud, Bali, Indonesia on 12 November 2026 for four nights, leaving on 16 November. Total budget AUD 5000. We prefer a 4-star hotel, quiet gardens, vegetarian food and a relaxed romantic pace. Start with the brief and route only."
+      },
+      {
+        "prompt": "Please extend Ubud to five nights and leave on 17 November 2026. Keep it one destination, two adults and no children. We prefer gentle cultural visits and pool downtime, no nightlife. Keep the AUD 5000 budget and vegetarian meals."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 0,
+        "childAges": [],
+        "startDate": "2026-11-12",
+        "endDate": "2026-11-17",
+        "budget": 5000,
+        "currency": "AUD",
+        "tripPurpose": "tourism",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "Ubud",
+          "nights": 5,
+          "arrivalDate": "2026-11-12",
+          "departureDate": "2026-11-17",
+          "nameAliases": ["Ubud, Bali", "Ubud (Bali)"]
+        }
+      ],
+      "preferences": ["vegetarian", "relax|gentle|slow", "honeymoon|romantic"]
+    },
+    "itineraryPrompt": "Build the complete day-by-day itinerary for our confirmed Ubud honeymoon, 12\u201317 November 2026, five nights for two adults. Include sourced gentle cultural visits, quiet gardens, vegetarian dining and generous downtime. Keep arrival and departure flexible. Do not book anything, invent prices or promise availability."
+  },
+  {
+    "id": "nepal_hiking",
+    "title": "Nepal day hikes for five adults",
+    "turns": [
+      {
+        "prompt": "Fictional test group Demo Nepal Hikers: five adults, no children, from Melbourne with Australian passports. This is a tourism holiday. Arrive Kathmandu, Nepal on 10 November 2026 for two nights, then Pokhara for three nights, leaving Pokhara on 15 November. Group budget AUD 9000, simple 3-star hotels, vegetarian meals and easy day hikes with scenic views. Start with route planning only.",
+        "expected": {
+          "brief": {
+            "startDate": "2026-11-10",
+            "endDate": "2026-11-15",
+            "passportNationality": "AU"
+          },
+          "stops": [
+            {
+              "name": "Kathmandu",
+              "nights": 2,
+              "arrivalDate": "2026-11-10",
+              "departureDate": "2026-11-12"
+            },
+            {
+              "name": "Pokhara",
+              "nights": 3,
+              "arrivalDate": "2026-11-12",
+              "departureDate": "2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "Change the split to one night in Kathmandu and four nights in Pokhara, still arriving 10 November and leaving 15 November 2026. We want day hikes only, no high-altitude expedition or overnight trek. Keep five adults and no children. Leave transfers flexible and explain any guide or permit checks without assuming they are arranged."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 5,
+        "children": 0,
+        "childAges": [],
+        "startDate": "2026-11-10",
+        "endDate": "2026-11-15",
+        "budget": 9000,
+        "currency": "AUD",
+        "tripPurpose": "tourism",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "Kathmandu",
+          "nights": 1,
+          "arrivalDate": "2026-11-10",
+          "departureDate": "2026-11-11"
+        },
+        {
+          "name": "Pokhara",
+          "nights": 4,
+          "arrivalDate": "2026-11-11",
+          "departureDate": "2026-11-15"
+        }
+      ],
+      "preferences": ["vegetarian", "hik|trek", "easy|gentle|low|day"]
+    },
+    "itineraryPrompt": "Build our complete 10\u201315 November 2026 itinerary: Kathmandu one night then Pokhara four nights, five adults. Use sourced suggestions for easy day hikes, scenic views and vegetarian meals. Preserve travel time on the transfer day. Avoid high-altitude or overnight treks, unsupported fitness assurances, booked guides or invented permit arrangements. No bookings or invented prices."
+  },
+  {
+    "id": "new_york_business",
+    "title": "New York business trip with corrected arrival",
+    "turns": [
+      {
+        "prompt": "Fictional traveller Demo New York Business, one adult with an Australian passport from Sydney, no children. I need a business trip for meetings in New York, United States. Arrive 9 November 2026, stay five nights and depart 14 November. Budget AUD 6500, a 4-star hotel in Midtown, vegetarian meals. Keep Wednesday through Friday 9 am to 5 pm free for business meetings. Start with the route only."
+      },
+      {
+        "prompt": "Correction: my arrival in New York is 10 November 2026. Keep five nights, so depart on 15 November 2026. I am attending meetings only, no local employment or paid work. Keep one adult, no children, and all weekday 9 am to 5 pm meeting windows free. Any sightseeing should be gentle and after meetings or on Saturday."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 1,
+        "children": 0,
+        "childAges": [],
+        "startDate": "2026-11-10",
+        "endDate": "2026-11-15",
+        "budget": 6500,
+        "currency": "AUD",
+        "tripPurpose": "business",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "New York",
+          "nights": 5,
+          "arrivalDate": "2026-11-10",
+          "departureDate": "2026-11-15"
+        }
+      ],
+      "preferences": ["vegetarian", "Midtown", "meeting|business"],
+      "businessDates": ["2026-11-11", "2026-11-12", "2026-11-13"]
+    },
+    "itineraryPrompt": "Build my complete New York business itinerary for 10\u201315 November 2026, five nights, one adult. Keep 9 am\u20135 pm on Wednesday, Thursday and Friday free for meetings. Use sourced vegetarian dining and gentle optional evening sightseeing, with a relaxed Saturday. Arrival and departure times are unconfirmed. Do not make bookings or invent prices."
+  },
+  {
+    "id": "orlando_family",
+    "title": "Orlando family with children aged six and ten",
+    "turns": [
+      {
+        "prompt": "Fictional Demo Orlando Family from Brisbane with Australian passports: two adults and two children, exactly ages 6 and 10. We want a tourism holiday in Orlando, Florida, United States, arriving 1 December 2026 for five nights and leaving 6 December. Total family budget AUD 14000, a 4-star family hotel, theme parks with pool breaks. Start with the brief and route only."
+      },
+      {
+        "prompt": "Keep two adults and the two children aged 6 and 10. We want one major park outing every other day with rest or pool days between, vegetarian meal options and early evenings. Do not assume the children meet ride height requirements. Avoid inventing tickets or treating future opening hours as confirmed."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 2,
+        "childAges": [6, 10],
+        "startDate": "2026-12-01",
+        "endDate": "2026-12-06",
+        "budget": 14000,
+        "currency": "AUD",
+        "tripPurpose": "tourism",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "Orlando",
+          "nights": 5,
+          "arrivalDate": "2026-12-01",
+          "departureDate": "2026-12-06"
+        }
+      ],
+      "preferences": ["vegetarian", "rest|pool|break", "theme|park"]
+    },
+    "itineraryPrompt": "Build the complete Orlando family itinerary for 1\u20136 December 2026, five nights, two adults and children aged 6 and 10. Use sourced park options, alternating major park outings with rest or pool time, vegetarian meals and early evenings. Keep travel days light; do not assert ride eligibility, tickets, opening hours or bookings. No invented prices."
+  },
+  {
+    "id": "japan_multiple_stops",
+    "title": "Tokyo and Kyoto with a corrected night split",
+    "turns": [
+      {
+        "prompt": "Fictional Demo Japan Couple from Perth, two adults with Australian passports, no children. We want a tourism holiday in Japan: arrive Tokyo on 7 December 2026 for three nights, then Kyoto for three nights, leaving Kyoto on 13 December. Budget AUD 10000. Prefer 4-star hotels near train stations, vegetarian food, gardens and traditional culture. Start with the route only.",
+        "expected": {
+          "brief": {
+            "startDate": "2026-12-07",
+            "endDate": "2026-12-13",
+            "passportNationality": "AU"
+          },
+          "stops": [
+            {
+              "name": "Tokyo",
+              "nights": 3,
+              "arrivalDate": "2026-12-07",
+              "departureDate": "2026-12-10"
+            },
+            {
+              "name": "Kyoto",
+              "nights": 3,
+              "arrivalDate": "2026-12-10",
+              "departureDate": "2026-12-13"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "Please change Tokyo to two nights and Kyoto to four nights while keeping arrival 7 December and final departure 13 December 2026. Take a train between Tokyo and Kyoto, with exact train times to be confirmed. Keep two adults, no children and vegetarian meals, and avoid a rushed sightseeing pace."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 0,
+        "childAges": [],
+        "startDate": "2026-12-07",
+        "endDate": "2026-12-13",
+        "budget": 10000,
+        "currency": "AUD",
+        "tripPurpose": "tourism",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "Tokyo",
+          "nights": 2,
+          "arrivalDate": "2026-12-07",
+          "departureDate": "2026-12-09",
+          "onwardTransport": "train"
+        },
+        {
+          "name": "Kyoto",
+          "nights": 4,
+          "arrivalDate": "2026-12-09",
+          "departureDate": "2026-12-13"
+        }
+      ],
+      "preferences": ["vegetarian", "garden|culture", "station|train"]
+    },
+    "itineraryPrompt": "Build the complete Japan itinerary for two adults, 7\u201313 December 2026: Tokyo two nights, Kyoto four nights, train transfer on 9 December. Use sourced gardens, cultural visits and vegetarian dining at a relaxed pace. Keep the transfer day manageable, arrival and final departure flexible, and all schedules subject to confirmation. Do not book anything or invent prices."
+  },
+  {
+    "id": "paris_step_free",
+    "title": "Paris at a slow pace with explicit step-free requirements",
+    "turns": [
+      {
+        "prompt": "Fictional Demo Paris Pair, two adults aged 68 and 71 from Adelaide with Australian passports, no children. We want a tourism holiday arriving Paris, France on 2 December 2026 for four nights, leaving 6 December. Total budget AUD 7000, 4-star central hotel, vegetarian food, art and gardens at a slow pace. We explicitly need step-free routes and lifts where stairs would otherwise be required. Start with route planning only."
+      },
+      {
+        "prompt": "Keep Paris 2\u20136 December 2026 for two adults, no children. Plan at most one main attraction per day with frequent seated breaks. Neither traveller uses a wheelchair; do not infer a disability from our ages. We still require step-free access and minimal walking, which must be verified with each venue and transport provider instead of guaranteed."
+      }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 0,
+        "childAges": [],
+        "startDate": "2026-12-02",
+        "endDate": "2026-12-06",
+        "budget": 7000,
+        "currency": "AUD",
+        "tripPurpose": "tourism",
+        "passportNationality": "AU"
+      },
+      "stops": [
+        {
+          "name": "Paris",
+          "nights": 4,
+          "arrivalDate": "2026-12-02",
+          "departureDate": "2026-12-06"
+        }
+      ],
+      "preferences": ["vegetarian", "step[ -]?free|lift", "slow|relax|gentle", "walk|seated|break"]
+    },
+    "itineraryPrompt": "Build the complete Paris itinerary for 2\u20136 December 2026, four nights, two adults. Keep a slow pace, at most one main attraction daily, seated breaks, minimal walking and sourced vegetarian dining. Research step-free routes and lifts without guaranteeing accessibility or assuming a wheelchair user. Keep arrival and departure flexible. Do not make bookings or invent prices."
+  }
+]

@@ -1,6 +1,6 @@
 import type { StudioAgency, StudioWorkspace } from '../shared/studio.ts';
 import { reviewStudioBrief, studioRecommendations } from './studio-models.ts';
-import { generateStudioItinerary } from './studio-itinerary.ts';
+import { generateStudioItinerary, studioTripEndConflicts } from './studio-itinerary.ts';
 import { replaceStudioRecommendations } from './studio-domain.ts';
 import {
   researchStudioDestinations,
@@ -63,7 +63,7 @@ export async function runStudioAssistant(
     };
   }
   if (action === 'itinerary') {
-    if (!workspace.stops.length)
+    if (!workspace.stops.length && !workspace.cruises?.length)
       return {
         ...review,
         reply: 'I can build the complete itinerary. Where would you like to travel?',
@@ -76,8 +76,7 @@ export async function runStudioAssistant(
         reply: `How many nights would you like in ${missing.map((stop) => stop.name).join(', ')}? Then I can build the day-by-day itinerary.`,
         nextAction: 'structure',
       };
-    const end = workspace.stops.at(-1)?.departureDate;
-    if (end && workspace.brief.endDate && end !== workspace.brief.endDate)
+    if (studioTripEndConflicts(workspace))
       return {
         ...review,
         reply:
@@ -93,7 +92,7 @@ export async function runStudioAssistant(
       signal,
       history,
     );
-    workspace.itineraryManual = false;
+    workspace.itineraryManual = workspace.itinerary.days.some((day) => Boolean(day.cruiseId));
     workspace.stage = 'itinerary';
     return {
       ...review,

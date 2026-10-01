@@ -85,7 +85,7 @@ function count(
     /\b(?:travell?ing solo|solo traveller|just me|one adult)\b/i.test(source)
   )
     return 1;
-  const label = field === 'adults' ? 'adults?' : '(?:children|kids?|infants?)';
+  const label = field === 'adults' ? 'adults?' : '(?:child(?:ren)?|kids?|infants?)';
   const matches = [...text.matchAll(new RegExp(`\\b(\\d{1,3})\\s*${label}\\b`, 'gi'))];
   const value = matches.length
     ? Number(matches.at(-1)![1])
@@ -136,6 +136,7 @@ function literalDates(
   source: string,
   today: string,
   referenceDate?: string,
+  context: StudioGroundingContext = {},
 ): StudioDateReference[] {
   const dates: StudioDateReference[] = [];
   const occupied: [number, number][] = [];
@@ -144,8 +145,24 @@ function literalDates(
     if (validDate(date) && !dates.some((entry) => entry.date === date && entry.index === index))
       dates.push({ date, index });
   };
-  const yearFor = (month: number, day: number, explicit?: string) => {
+  const yearFor = (month: number, day: number, explicit: string | undefined, index: number) => {
     if (explicit) return Number(explicit);
+    const role = dateRole(source, { date: '', index }, context);
+    const answeringReturn = !role && answersField(questionFields(context), 'endDate');
+    if (role === 'endDate' || answeringReturn) {
+      const arrival =
+        dates
+          .filter(
+            (entry) => entry.index < index && dateRole(source, entry, context) === 'startDate',
+          )
+          .sort((a, b) => b.index - a.index)[0]?.date || context.brief?.startDate;
+      if (arrival && validDate(arrival)) {
+        const year = Number(arrival.slice(0, 4));
+        // Only the month boundary implies a new year. An earlier day in the
+        // same month remains a date conflict, and explicit years are untouched.
+        return month < Number(arrival.slice(5, 7)) ? year + 1 : year;
+      }
+    }
     if (referenceDate) return Number(referenceDate.slice(0, 4));
     const year = Number(today.slice(0, 4));
     const candidate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -174,7 +191,7 @@ function literalDates(
   )) {
     if (!claim(match)) continue;
     const month = months[match[3].toLowerCase()];
-    const year = yearFor(month, +match[1], match[4]);
+    const year = yearFor(month, +match[1], match[4], match.index);
     add(year, month, +match[1], match.index);
     add(year, month, +match[2], match.index + match[0].indexOf(match[2], match[1].length));
   }
@@ -186,7 +203,7 @@ function literalDates(
   )) {
     if (!claim(match)) continue;
     const month = months[match[2].toLowerCase()];
-    add(yearFor(month, +match[1], match[3]), month, +match[1], match.index);
+    add(yearFor(month, +match[1], match[3], match.index), month, +match[1], match.index);
   }
   for (const match of source.matchAll(
     new RegExp(
@@ -196,7 +213,7 @@ function literalDates(
   )) {
     if (!claim(match)) continue;
     const month = months[match[1].toLowerCase()];
-    add(yearFor(month, +match[2], match[3]), month, +match[2], match.index);
+    add(yearFor(month, +match[2], match[3], match.index), month, +match[2], match.index);
   }
   // An ordinal alone borrows a month/year only from supplied trip context, never
   // from today's month or an assistant's suggestion.
@@ -253,7 +270,7 @@ function suppliedDateContext(context: StudioGroundingContext) {
   let latest: StudioDateReference[] = [];
   for (const entry of context.messages || []) {
     if (entry.role !== 'user') continue;
-    const dates = literalDates(entry.content, today, reference);
+    const dates = literalDates(entry.content, today, reference, context);
     if (!dates.length) continue;
     latest = dates;
     reference =
@@ -269,7 +286,7 @@ export function readStudioDateReferences(
   context: StudioGroundingContext = {},
 ): StudioDateReference[] {
   const supplied = suppliedDateContext(context);
-  const dates = literalDates(source, supplied.today, supplied.reference);
+  const dates = literalDates(source, supplied.today, supplied.reference, context);
   const reference = source.match(
     /\b(?:same date|same day|that date|that day|(?:it(?:['’]s| is|s)|that(?:['’]s| is)|this is)\s+(?:my |the )?(?:arrival|departure|return|start|end) date)\b/i,
   );
@@ -334,6 +351,24 @@ function dateRole(
   if (/^(?:depart|leav)/i.test(latest.word)) {
     const scoped = movementDateRole(prefix, context);
     if (scoped) return scoped;
+    if (/\b(?:final|return|homeward)\s+departure(?:\s+date)?\s*$/i.test(prefix)) return 'endDate';
+    const destination = context.brief?.preferredDestination?.trim();
+    if (latest.field === 'departureDate' && destination) {
+      const escapedDestination = destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const precedingStay = source
+        .slice(0, entry.index)
+        .match(
+          new RegExp(
+            `\\barriv(?:e|al|ing)\\s+(?:(?:in|at)\\s+)?${escapedDestination}(?=$|[^\\p{L}\\p{N}])[^!?]{0,180}`,
+            'iu',
+          ),
+        )?.[0];
+      if (
+        precedingStay &&
+        /\b(?:keep|stay|for|after)\b[^.;!?]{0,30}\bnights?\b/i.test(precedingStay)
+      )
+        return 'endDate';
+    }
     // A short "departure" answer to an explicit return question refers to the
     // destination departure. The origin-versus-arrival question remains distinct.
     if (latest.field === 'departureDate' && answersField(questionFields(context), 'endDate'))
@@ -389,6 +424,12 @@ export function groundedStudioDates(
   return result;
 }
 
+// Use the runtime's ISO currency data, rather than accepting arbitrary three-
+// letter text or restricting legitimate destinations to a few dollar currencies.
+const supportedCurrencies = new Set(Intl.supportedValuesOf('currency'));
+const currencyWords = [...supportedCurrencies].join('|');
+const ordinaryCurrencyWords = new Set(['ALL', 'TRY', 'TOP']);
+
 function money(source: string): {
   amount?: number;
   currency?: string;
@@ -404,7 +445,19 @@ function money(source: string): {
     euros: 'EUR',
     'pounds sterling': 'GBP',
   };
-  const codeMatch = text.match(/\b(AUD|USD|GBP|EUR|NZD|CAD|JPY|SGD|CHF|HKD)\b/i);
+  const codeMatch = [
+    ...text.matchAll(new RegExp(`(?<![A-Za-z])(${currencyWords})(?![A-Za-z])`, 'gi')),
+  ].find((match) => {
+    if (match[1] === match[1].toUpperCase()) return true;
+    if (ordinaryCurrencyWords.has(match[1].toUpperCase())) return false;
+    const before = text.slice(0, match.index);
+    const after = text.slice(match.index! + match[0].length);
+    return (
+      /^\s*\$?\s*\d/.test(after) ||
+      /\d\s*$/.test(before) ||
+      /\b(?:currency(?: is)?|use|in)\s*$/i.test(before)
+    );
+  });
   const named = Object.entries(codes).find(([label]) => text.toLowerCase().includes(label));
   const currency =
     codeMatch?.[1].toUpperCase() ||
@@ -420,29 +473,58 @@ function money(source: string): {
             : /£/.test(text)
               ? 'GBP'
               : undefined);
+  const code = codeMatch?.[1] || '(?!)';
   const amountMatch =
     text.match(
-      /(?:\b(?:AUD|USD|GBP|EUR|NZD|CAD|JPY|SGD|CHF|HKD)\s*\$?|(?:US|AU|NZ|A)?\$|€|£)\s*(\d[\d,]*(?:\.\d{1,2})?)/i,
+      new RegExp(
+        `(?:\\b(?:${code})\\s*\\$?|(?:US|AU|NZ|A)?\\$|€|£)\\s*(\\d[\\d,]*(?:\\.\\d{1,2})?)`,
+        'i',
+      ),
     ) ||
     text.match(
-      /\b(\d[\d,]*(?:\.\d{1,2})?)\s*(?:AUD|USD|GBP|EUR|NZD|CAD|JPY|SGD|CHF|HKD|Australian dollars|US dollars|euros|pounds sterling)\b/i,
+      new RegExp(
+        `\\b(\\d[\\d,]*(?:\\.\\d{1,2})?)\\s*(?:${code}|Australian dollars|US dollars|euros|pounds sterling)\\b`,
+        'i',
+      ),
     ) ||
     text.match(
       /\b(?:budget|spend|total|price point)(?:\s+is|\s+of|\s+around)?\s*[:=]?\s*(\d[\d,]*(?:\.\d{1,2})?)\b/i,
     );
+  const amountStart = amountMatch
+    ? amountMatch.index! + amountMatch[0].lastIndexOf(amountMatch[1])
+    : -1;
+  const adjacentCode = amountMatch
+    ? text.slice(amountStart + amountMatch[1].length).match(/^\s*([A-Z]{3})\b/)?.[1]
+    : undefined;
+  const unknownAmountCode =
+    adjacentCode &&
+    !supportedCurrencies.has(adjacentCode) &&
+    !['NOT', 'FOR', 'PER', 'AND', 'THE'].includes(adjacentCode);
   const amount = amountMatch
     ? Number(amountMatch[1].replaceAll(',', ''))
     : bareNumber(text)
       ? Number(text.match(/[\d.,]+/)?.[0].replaceAll(',', ''))
       : undefined;
+  const affirmativeBasis = (pattern: RegExp) =>
+    [...text.matchAll(new RegExp(pattern.source, 'gi'))].some((match) => {
+      const clause =
+        text
+          .slice(0, match.index)
+          .split(/[,;.!?\n]|\bbut\b/i)
+          .at(-1) || '';
+      return !/\b(?:no|not|never|instead of|rather than|maybe|possibly)\b/i.test(clause);
+    });
   return {
-    amount: amount !== undefined && amount >= 0 && amount <= 10000000 ? amount : undefined,
+    amount:
+      !unknownAmountCode && amount !== undefined && amount >= 0 && amount <= 10000000
+        ? amount
+        : undefined,
     currency,
-    perPerson: /\b(?:per person|per traveller|per traveler|each person|pp)\b|\/\s*person\b/i.test(
-      text,
+    perPerson: affirmativeBasis(
+      /\b(?:per person|per traveller|per traveler|each person|pp)\b|\/\s*person\b/,
     ),
-    perDay: /\b(?:per day|a day|daily)\b|\/\s*day\b/i.test(text),
-    perNight: /\b(?:per night|a night|nightly)\b|\/\s*night\b/i.test(text),
+    perDay: affirmativeBasis(/\b(?:per day|a day|daily)\b|\/\s*day\b/),
+    perNight: affirmativeBasis(/\b(?:per night|a night|nightly)\b|\/\s*night\b/),
   };
 }
 
@@ -465,9 +547,9 @@ function questionFields(
   const fields = new Set<string>();
   if (/\badults?\b/i.test(question)) fields.add('adults');
   const ages = /\b(?:ages?|how old)\b/i.test(question);
-  if (ages && (/\b(?:children|kids?|infants?|their)\b/i.test(question) || current.children))
+  if (ages && (/\b(?:child(?:ren)?|kids?|infants?|their)\b/i.test(question) || current.children))
     fields.add('childAges');
-  else if (/\b(?:children|kids?|infants?)\b/i.test(question)) fields.add('children');
+  else if (/\b(?:child(?:ren)?|kids?|infants?)\b/i.test(question)) fields.add('children');
   if (/\b(?:budget|spend|price point|group total)\b/i.test(question)) fields.add('budget');
   if (/\b(?:nights?|length of stay|how long)\b/i.test(question)) fields.add('nights');
   if (/\b(?:arrival|arrive|start(?:ing)? date|when.*(?:travel|go|begin|start))\b/i.test(question))
@@ -600,7 +682,7 @@ export function groundedStudioBrief(
   const lastReply =
     context.messages?.findLast((entry) => entry.role === 'assistant')?.content || '';
   const lastQuestion = (lastReply.match(/[^.!?]+\?/g) || []).at(-1) || '';
-  const askedPassport = /\b(?:passport|nationality|citizenship)\b/i.test(lastQuestion);
+  const askedPassport = /\b(?:passports?|nationality|citizenship)\b/i.test(lastQuestion);
   for (const fact of valid.filter((fact) => fact.field === 'passportNationality')) {
     const declared = new Set<string>();
     for (const source of fact.sources) {
@@ -608,25 +690,27 @@ export function groundedStudioBrief(
         const answer = source
           .trim()
           .replace(/[.!]$/, '')
-          .replace(/\s+passport$/i, '');
+          .replace(/\s+passports?$/i, '');
         const code = normalizeStudioCountry(answer)?.code || demonyms[normal(answer)];
         if (code) declared.add(code);
       }
       for (const [phrase, code] of countryWords) {
         const word = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Negate the passport declaration itself, including coordinated passports.
+        // Unrelated facts such as "no children" must not erase nationality.
         if (
           new RegExp(
-            `\\b(?:not|never|no|isn.t|doesn.t|don.t|without)\\b.{0,45}\\b${word}\\b`,
-            'i',
+            `\\b(?:not|never|no|isn.t|doesn.t|don.t|without)\\s+(?:(?:an?|any|the|have|has|hold|holds|holding|carry|carrying|use|using|with|valid|ordinary|regular|passports?|nationality|citizenship|is|are|issued|by|of)\\s+){0,8}(?:[\\p{L}]+(?:\\s+[\\p{L}]+){0,3}\\s+passports?\\s+(?:or|and)\\s+(?:(?:an?|any|the)\\s+)?)?${word}(?=$|[^\\p{L}])`,
+            'iu',
           ).test(source)
         )
           continue;
         const before = new RegExp(
-          `\\b(?:passport(?: nationality| country)?|nationality|citizenship|citizen of)\\s*(?:(?:is|held|from|issued by|of)\\s*|[:=-]\\s*){0,2}${word}(?=$|[^\\p{L}])`,
+          `\\b(?:passports?(?: nationality| country)?|nationality|citizenship|citizen of)\\s*(?:(?:is|are|held|from|issued by|of)\\s*|[:=-]\\s*){0,2}${word}(?=$|[^\\p{L}])`,
           'iu',
         );
         const after = new RegExp(
-          `(?:^|[^\\p{L}])${word}\\s+(?:(?:ordinary|regular|valid)\\s+)?(?:passport|nationality|citizenship|citizen|national|client|travell?er)\\b`,
+          `(?:^|[^\\p{L}])${word}\\s+(?:(?:ordinary|regular|valid)\\s+)?(?:passports?|nationality|citizenship|citizen|national|client|travell?er)\\b`,
           'iu',
         );
         const adjective =
@@ -692,7 +776,7 @@ export function groundedStudioBrief(
     return flight === cruise ? undefined : flight ? 'flight' : 'cruise';
   };
   const uncertainTransport = (source: string) =>
-    /\b(?:maybe|possibly|undecided|not sure)\b|\b(?:not|no|without)\s+(?:by\s+|a\s+)?(?:flights?|fly|flying|planes?|cruises?|cruising)\b/i.test(
+    /\b(?:maybe|possibly|undecided|not sure)\b|\b(?:not|no|without)\s+(?:by\s+|a\s+)?(?:return\s+|outbound\s+)?(?:flights?|fly|flying|planes?|cruises?|cruising)\b/i.test(
       source,
     );
   for (const fact of valid.filter(
@@ -724,6 +808,20 @@ export function groundedStudioBrief(
         continue;
       }
       for (const clause of sentence.split(/\b(?:and|but|then)\b|,/i)) {
+        if (
+          field === 'returnTransport' &&
+          !/\b(?:maybe|possibly|if|consider(?:ing)?|not sure)\b|\?/i.test(clause) &&
+          ((/\bone[- ]way\b/i.test(clause) && !/\bnot\s+one[- ]way\b/i.test(clause)) ||
+            /\b(?:no|without)\s+(?:(?:a|any)\s+)?return\b|\b(?:do not|don't|will not|won't|not)\s+(?:(?:want|need|book|take)\s+)?(?:a\s+)?return\b/i.test(
+              clause,
+            ))
+        ) {
+          const excluded = transportMode(clause);
+          if (!excluded || next[field] === excluded) next[field] = 'undecided';
+          if (excluded) applicable.delete(excluded);
+          else applicable.clear();
+          continue;
+        }
         if (uncertainTransport(clause)) continue;
         const mode = transportMode(clause);
         if (!mode) continue;
@@ -753,7 +851,7 @@ export function groundedStudioBrief(
       )
         candidates.add('business');
       if (
-        /\b(?:tourism|holiday|vacation)\b|\b(?:leisure|tourist)\s+(?:trip|travel|visit)\b/i.test(
+        /\b(?:tourism|holiday|vacation|honeymoon)\b|\b(?:leisure|tourist)\s+(?:trip|travel|visit)\b/i.test(
           clause,
         )
       )
@@ -866,6 +964,14 @@ export function groundedStudioBrief(
     const source = moneyFact.sources[0];
     const budgetScope = source.match(/\b(?:budget|spend|total group price)[^;\n]{0,250}/i)?.[0];
     const detail = money(budgetScope || source);
+    if (!detail.currency && budgetScope) {
+      // A currency can precede its label ("Use EUR for the budget"). Only
+      // borrow currency from that sentence, never an unrelated earlier quote.
+      const budgetSentence = source
+        .split(/(?<=[.!?])\s+|[;\n]/)
+        .find((sentence) => /\b(?:budget|spend|total group price)\b/i.test(sentence));
+      detail.currency = money(budgetSentence || budgetScope).currency;
+    }
     if (bareNumber(source) && !contextual(source, 'budget')) detail.amount = undefined;
     const currency = detail.currency || next.currency;
     if (detail.amount !== undefined) {
@@ -914,9 +1020,12 @@ const countryNormal = (value: string) =>
   })[placeNormal(value)] || placeNormal(value);
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function containsPlace(text: string, name: string) {
-  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escape(normal(name))}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(
-    normal(text),
-  );
+  const locality = (value: string) =>
+    normal(value).replace(/[,()]/g, ' ').replace(/\s+/g, ' ').trim();
+  return new RegExp(
+    `(?:^|[^\\p{L}\\p{N}])${escape(locality(name))}(?=$|[^\\p{L}\\p{N}])`,
+    'iu',
+  ).test(locality(text));
 }
 function sameRoute(current: GroundingStop[], proposed: GroundingStop[]) {
   return (
@@ -942,8 +1051,8 @@ function routeEntries(source: string): { name: string; country: string; nights: 
     /(?:^|[,;:\n]|\bthen\s+|\band\s+)\s*([\p{L}][\p{L} .’'-]{1,70}?)(?:,\s*([\p{L}][\p{L} .’'-]{1,70}?))?\s+(?:for\s+)?(\d{1,3})\s+nights?\b/giu;
   for (const match of text.matchAll(pattern)) {
     const name = match[1]
-      .replace(/^(?:change|switch|replace)\b.*\b(?:to|with)\s+/i, '')
-      .replace(/^(?:change|update|set|make)\s+/i, '')
+      .replace(/^(?:please\s+)?(?:change|switch|replace)\b.*\b(?:to|with)\s+/i, '')
+      .replace(/^(?:please\s+)?(?:change|update|set|make|extend|lengthen|shorten)\s+/i, '')
       .replace(/\s+(?:to|at)$/i, '')
       .replace(
         /^(?:(?:and|then|visit|plan|stay in|go to|travel to|a trip to|trip to|to|we want|we would like)\s+)+/i,
@@ -993,7 +1102,11 @@ export function requestedStudioNights(
   allowBare = false,
 ): number | undefined {
   const text = numeric(source),
-    place = escape(name);
+    place =
+      singleStop && /[,(]/.test(name)
+        ? `(?:${escape(name)}|${escape(name.split(/[,(]/)[0].trim())})`
+        : escape(name);
+  const optionalArrival = `(?:\\s+(?:on|from)\\s+(?:20\\d{2}-\\d{2}-\\d{2}|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:${monthWords})(?:\\s+20\\d{2})?|(?:${monthWords})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:\\s+20\\d{2})?))?`;
   const add =
     text.match(
       new RegExp(
@@ -1012,7 +1125,7 @@ export function requestedStudioNights(
   const absolute =
     text.match(
       new RegExp(
-        `${place}(?:\\s*,\\s*[\\p{L} .'-]+)?\\s+(?:(?:for|to|at)\\s+)?(\\d+)\\s+nights?\\b`,
+        `${place}(?:\\s*,\\s*[\\p{L} .'-]+){0,3}${optionalArrival}\\s+(?:(?:for|to|at)\\s+)?(\\d+)\\s+nights?\\b`,
         'iu',
       ),
     ) ||
@@ -1149,7 +1262,7 @@ export function assertStudioRouteGrounding(
         // "London on 3 October for 3 nights" anchors a hotel stay. A trip
         // described only as "four days on 3 October" still needs its date role.
         const cityOnDate = new RegExp(
-          `${escape(entry.name)}(?:\\s*,\\s*[\\p{L} .'-]+)?(?:\\s+for\\s+[\\w -]+\\s+nights?)?\\s+(?:on|from)\\s*$`,
+          `${escape(entry.name)}(?:\\s*,\\s*[\\p{L} .'-]+){0,3}(?:\\s+for\\s+[\\w -]+\\s+nights?)?\\s+(?:on|from)\\s*$`,
           'iu',
         ).test(source.slice(Math.max(0, date.index - 100), date.index));
         return (
@@ -1187,8 +1300,20 @@ export function assertStudioRouteGrounding(
     if (explicit.length) {
       let cursor = -1;
       for (const entry of explicit) {
+        // A short locality name may refer to one grounded qualified stop, never
+        // an arbitrary choice between multiple places sharing that name.
+        const exactName = proposed.some(
+          (next) => placeNormal(next.name) === placeNormal(entry.name),
+        );
+        const qualifiedMatches = proposed.filter(
+          (next) => placeNormal(next.name.split(/[,(]/)[0]) === placeNormal(entry.name),
+        );
         const index = proposed.findIndex(
-          (next, at) => at > cursor && placeNormal(next.name) === placeNormal(entry.name),
+          (next, at) =>
+            at > cursor &&
+            (exactName
+              ? placeNormal(next.name) === placeNormal(entry.name)
+              : qualifiedMatches.length === 1 && next === qualifiedMatches[0]),
         );
         if (
           index < 0 ||
@@ -1211,8 +1336,14 @@ export function assertStudioRouteGrounding(
     }
     if (!explicit.length && !current.length) {
       const intent = detectDestinationIntent(source);
+      // The curated destination catalogue is coarser than a supplied stay: Ubud
+      // is explicitly named even when the catalogue recognises the wider Bali.
+      const namedStay = proposed.some(
+        (entry) => requestedStudioNights(source, entry.name, null, false) !== undefined,
+      );
       if (
         intent.kind === 'explicit' &&
+        !namedStay &&
         !proposed.some(
           (entry) =>
             containsPlace(intent.name, entry.name) || containsPlace(entry.name, intent.name),
