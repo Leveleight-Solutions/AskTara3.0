@@ -130,6 +130,68 @@ function routeDates(stops: StudioStop[], startDate: string): StudioStop[] {
   });
 }
 
+function StayDateChoices({
+  workspace,
+  disabled,
+  onChoose,
+}: {
+  workspace: StudioWorkspace;
+  disabled: boolean;
+  onChoose: (message: string) => void;
+}) {
+  const clarification = workspace.clarification;
+  if (clarification?.kind !== 'stay_dates') return null;
+  const stop = workspace.stops.find((item) => item.id === clarification.stopId);
+  if (!stop) return null;
+  const { arrivalDate, departureDate, statedNights, proposedNights } = clarification;
+  const shorterDeparture = new Date(`${arrivalDate}T12:00:00Z`);
+  shorterDeparture.setUTCDate(shorterDeparture.getUTCDate() + statedNights);
+  if (!Number.isFinite(shorterDeparture.getTime())) return null;
+  const statedDeparture = shorterDeparture.toISOString().slice(0, 10);
+  const showYear = arrivalDate.slice(0, 4) !== departureDate.slice(0, 4);
+  const shortDate = (value: string) =>
+    new Date(`${value}T12:00:00Z`).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      ...(showYear ? { year: 'numeric' as const } : {}),
+      timeZone: 'UTC',
+    });
+  const sameMonth = arrivalDate.slice(0, 7) === departureDate.slice(0, 7);
+  const range = sameMonth
+    ? `${Number(arrivalDate.slice(8))}–${shortDate(departureDate)}`
+    : `${shortDate(arrivalDate)}–${shortDate(departureDate)}`;
+  const choose = (end: string, nights: number) =>
+    onChoose(`Use arrival ${arrivalDate} and return ${end} for ${nights} nights in ${stop.name}.`);
+  const nightsLabel = (nights: number) => `${nights} ${nights === 1 ? 'night' : 'nights'}`;
+  return (
+    <Flex direction="column" gap="2" role="group" aria-label="Resolve trip dates">
+      <Text size="2" weight="medium">
+        Confirm the stay in {stop.name}
+      </Text>
+      <Flex gap="2" wrap="wrap">
+        <Button
+          type="button"
+          size="2"
+          variant="soft"
+          disabled={disabled}
+          onClick={() => choose(departureDate, proposedNights)}
+        >
+          Use {nightsLabel(proposedNights)} · {range}
+        </Button>
+        <Button
+          type="button"
+          size="2"
+          variant="outline"
+          disabled={disabled}
+          onClick={() => choose(statedDeparture, statedNights)}
+        >
+          Keep {nightsLabel(statedNights)} · leave {shortDate(statedDeparture)}
+        </Button>
+      </Flex>
+    </Flex>
+  );
+}
+
 /** Text + icon status of the hard gate that gates supplier search and publishing. */
 function StructureGateBadge({ accepted, size = '2' }: { accepted: boolean; size?: '1' | '2' }) {
   return (
@@ -628,16 +690,19 @@ export default function Studio() {
                     await patch({ brief: { clientId: '' } });
                     return;
                   }
-                  await patch({
-                    brief: {
-                      clientId: profile.id,
-                      clientName: profile.name,
-                      context: profile.context,
-                      passportNationality: profile.passportNationality,
-                      interests: profile.interests,
-                      foodPreferences: profile.foodPreferences,
-                    },
-                  });
+                  // Profile defaults initialise a newly selected client. Updating an
+                  // already-linked profile must retain this trip's explicit preferences.
+                  if (latestWorkspace.current?.brief.clientId !== profile.id)
+                    await patch({
+                      brief: {
+                        clientId: profile.id,
+                        clientName: profile.name,
+                        context: profile.context,
+                        passportNationality: profile.passportNationality,
+                        interests: profile.interests,
+                        foodPreferences: profile.foodPreferences,
+                      },
+                    });
                   if (
                     integrations.ai &&
                     (profile.history.some((trip) => trip.destination.trim()) ||
@@ -768,6 +833,11 @@ export default function Studio() {
               p="3"
               style={{ borderTop: '1px solid var(--gray-a5)' }}
             >
+              <StayDateChoices
+                workspace={workspace}
+                disabled={!!busy || !!pendingTurn || routeDirty || switching}
+                onChoose={(text) => void sendToTara(text)}
+              />
               {routeDirty && (
                 <Callout.Root color="amber" size="1">
                   <Callout.Icon>
@@ -1306,7 +1376,8 @@ export default function Studio() {
    formatters live, so the card reads the way the rest of the app does rather than the way the
    record is stored. Anything unrecognised is passed through untouched. */
 function factValue(id: string, value: string): string {
-  if (id === 'startDate' || id === 'endDate') return readableDate(value) || value;
+  if (id === 'departureDate' || id === 'startDate' || id === 'endDate')
+    return readableDate(value) || value;
   if (id === 'route') return value.split(' → ').map(titleCase).join(' → ');
   if (id === 'budget') {
     const [currency, amount] = value.split(' ');
@@ -1381,7 +1452,7 @@ const FACT_GROUPS = [
     id: 'trip',
     label: 'Trip details',
     icon: CalendarDays,
-    ids: ['route', 'startDate', 'dates', 'endDate', 'nights', 'budget'],
+    ids: ['route', 'departureDate', 'startDate', 'dates', 'endDate', 'nights', 'budget'],
   },
   { id: 'party', label: 'Travellers', icon: Users, ids: ['adults', 'children', 'childAges'] },
   {
@@ -2774,6 +2845,26 @@ function BriefDialog({
               <option value="multiple">Multiple destinations · keep my order</option>
             </select>
           </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Travel purpose
+            </Text>
+            <select
+              aria-label="Travel purpose"
+              value={brief.tripPurpose || 'undecided'}
+              onChange={(e) =>
+                update({ tripPurpose: e.target.value as StudioBrief['tripPurpose'] })
+              }
+              style={{ width: '100%', padding: 10 }}
+            >
+              <option value="undecided">Not specified</option>
+              <option value="tourism">Tourism / holiday</option>
+              <option value="business">Business visit</option>
+              <option value="study">Study</option>
+              <option value="employment">Employment / paid work</option>
+              <option value="other">Other / mixed purposes</option>
+            </select>
+          </label>
           {(['outboundTransport', 'returnTransport'] as const).map((field) => (
             <label key={field}>
               <Text as="div" size="2" weight="medium" mb="1">
@@ -2831,7 +2922,18 @@ function BriefDialog({
           )}
           <label>
             <Text as="div" size="2" weight="medium" mb="1">
-              Start date
+              Departure from origin
+            </Text>
+            <TextField.Root
+              size="3"
+              type="date"
+              value={brief.departureDate || ''}
+              onChange={(e) => update({ departureDate: e.target.value })}
+            />
+          </label>
+          <label>
+            <Text as="div" size="2" weight="medium" mb="1">
+              Arrival at first destination
             </Text>
             <TextField.Root
               size="3"

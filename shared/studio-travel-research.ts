@@ -71,6 +71,9 @@ export interface StudioTravelHistoryEntry {
   country?: string;
   visitedAt?: string;
   interests?: string[];
+  feedback?: 'liked' | 'neutral' | 'disliked';
+  notes?: string;
+  experience?: 'visited' | 'planned';
 }
 export interface StudioTravelEvidence extends StudioSource {
   kind: 'advisory' | 'conditions' | 'official_immigration' | 'index' | 'other';

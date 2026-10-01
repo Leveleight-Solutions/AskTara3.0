@@ -24,12 +24,15 @@ export interface StudioBrief {
   preferredDestination?: string;
   destinationCountry?: string;
   tripType?: 'undecided' | 'single' | 'multiple';
+  tripPurpose?: 'undecided' | 'tourism' | 'business' | 'study' | 'employment' | 'other';
   outboundTransport?: 'undecided' | 'flight' | 'cruise';
   returnTransport?: 'undecided' | 'flight' | 'cruise';
   foodPreferences?: string[];
   clientName: string;
   context: string;
   request: string;
+  /** Outbound departure from the origin; separate from arrival at the first stop. */
+  departureDate?: string;
   startDate: string;
   endDate: string;
   datesFlexible: boolean;
@@ -130,6 +133,15 @@ export interface StudioWorkspace {
   title: string;
   stage: StudioStage;
   brief: StudioBrief;
+  /** A single explicit proposal awaiting confirmation, retained across reloads. */
+  clarification?: {
+    kind: 'stay_dates';
+    stopId: string;
+    arrivalDate: string;
+    departureDate: string;
+    statedNights: number;
+    proposedNights: number;
+  } | null;
   qualification: StudioQualification;
   stops: StudioStop[];
   structureAccepted: boolean;

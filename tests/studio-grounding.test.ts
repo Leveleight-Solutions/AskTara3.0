@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groundedStudioBrief, assertStudioRouteGrounding } from '../server/studio-grounding.ts';
+import {
+  groundedStudioBrief,
+  assertStudioRouteGrounding,
+  groundedStudioDates,
+  readStudioDateReferences,
+  requestedStudioNights,
+} from '../server/studio-grounding.ts';
 import { newStudioWorkspace, StudioError } from '../server/studio-store.ts';
 import type { StudioBrief, StudioStop } from '../shared/studio.ts';
 
@@ -359,8 +365,9 @@ test('arrival and return dates are read from explicit natural dates instead of m
     [fact('startDate', '18 November')],
     'Arrive 18 November.',
     [],
+    { today: '2026-10-01' },
   );
-  assert.equal(missingYear.startDate, '');
+  assert.equal(missingYear.startDate, '2026-11-18');
   const invalidDate = groundedStudioBrief(
     current,
     { ...current, startDate: '2026-03-02' },
@@ -1048,5 +1055,436 @@ test('unrelated answers preserve the route, while requested replacement, orderin
       [],
       'Suggest a route',
     ),
+  );
+});
+
+test('the London business-trip date keeps its role open and never converts days into hotel nights', () => {
+  const message = 'i wanna go to london for a bussiness trip for 4 days on 3rd of october';
+  const context = { today: '2026-10-01', brief: brief() };
+  assert.deepEqual(
+    readStudioDateReferences(message, context).map(({ date }) => date),
+    ['2026-10-03'],
+  );
+  assert.deepEqual(groundedStudioDates(message, context), {});
+  assert.equal(requestedStudioNights(message, 'London', null, true), undefined);
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding([], [stop('London', null)], message, [], message, context),
+  );
+  assert.throws(
+    () => assertStudioRouteGrounding([], [stop('London', 3)], message, [], message, context),
+    StudioError,
+  );
+  assert.throws(
+    () => assertStudioRouteGrounding([], [stop('London', 4)], message, [], message, context),
+    StudioError,
+  );
+});
+
+test('departure-date clarification and same-date arrival resolve the earlier user date across turns', () => {
+  const message = 'i wanna go to london for a bussiness trip for 4 days on 3rd of october';
+  const current = { ...brief(), origin: 'Sydney', preferredDestination: 'London' };
+  const context = {
+    today: '2026-10-01',
+    brief: current,
+    messages: [
+      { role: 'user' as const, content: message },
+      {
+        role: 'assistant' as const,
+        content:
+          'Is 3 October 2026 your arrival date in London or your departure date from Sydney?',
+      },
+    ],
+  };
+  assert.deepEqual(groundedStudioDates('its my departure date', context), {
+    departureDate: '2026-10-03',
+  });
+  const departure = groundedStudioBrief(
+    current,
+    { ...current, departureDate: '2027-01-01', startDate: '2026-10-03' },
+    [fact('departureDate', 'its my departure date'), fact('startDate', 'its my departure date')],
+    'its my departure date',
+    [],
+    context,
+  );
+  assert.equal(departure.departureDate, '2026-10-03');
+  assert.equal(departure.startDate, '');
+  const arrivalContext = {
+    ...context,
+    brief: departure,
+    messages: [
+      ...context.messages,
+      { role: 'user' as const, content: 'its my departure date' },
+      { role: 'assistant' as const, content: 'What date will you arrive in London?' },
+    ],
+  };
+  assert.deepEqual(groundedStudioDates('i will arrive on the same date', arrivalContext), {
+    startDate: '2026-10-03',
+  });
+  const arrival = groundedStudioBrief(
+    departure,
+    { ...departure, startDate: '2027-01-01' },
+    [fact('startDate', 'i will arrive on the same date')],
+    'i will arrive on the same date',
+    [],
+    arrivalContext,
+  );
+  assert.equal(arrival.startDate, '2026-10-03');
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding(
+      [stop('London', null)],
+      [{ ...stop('London', null), arrivalDate: '2026-10-03', arrivalFixed: true }],
+      'i will arrive on the same date',
+      [],
+      'i will arrive on the same date',
+      { ...arrivalContext, brief: arrival },
+    ),
+  );
+});
+
+test('saved departure dates support same-date arrival even when the old turn is outside recent history', () => {
+  const context = {
+    today: '2026-10-01',
+    brief: { ...brief(), departureDate: '2026-10-03' },
+    messages: [{ role: 'assistant' as const, content: 'What date will you arrive in London?' }],
+  };
+  assert.deepEqual(groundedStudioDates('i will arrive on the same date', context), {
+    startDate: '2026-10-03',
+  });
+  assert.deepEqual(groundedStudioDates('same date', context), { startDate: '2026-10-03' });
+  assert.deepEqual(
+    groundedStudioDates('its my departure date', {
+      today: '2026-10-01',
+      messages: [{ role: 'assistant', content: 'How about a departure on 3 October 2026?' }],
+    }),
+    {},
+  );
+  assert.deepEqual(
+    groundedStudioDates('i will arrive on the same date', {
+      today: '2026-10-01',
+      messages: [{ role: 'user', content: 'I could depart 3 October 2026 or 4 October 2026.' }],
+    }),
+    {},
+  );
+});
+
+test('partial ordinals retain both explicit dates and conflicting nights without silently resolving them', () => {
+  const message = '3 nights stay arrival on 3rd and going back on 8th';
+  const context = {
+    today: '2026-10-01',
+    brief: { ...brief(), departureDate: '2026-10-03', startDate: '2026-10-03' },
+  };
+  assert.deepEqual(groundedStudioDates(message, context), {
+    startDate: '2026-10-03',
+    endDate: '2026-10-08',
+  });
+  assert.equal(requestedStudioNights(message, 'London', null, true), 3);
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [stop('London', null)],
+        [stop('London', 5)],
+        message,
+        [],
+        message,
+        context,
+      ),
+    StudioError,
+  );
+  assert.deepEqual(
+    groundedStudioDates('yes', {
+      ...context,
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Should I use five nights, 3–8 October, or three nights, 3–6 October?',
+        },
+      ],
+    }),
+    {},
+  );
+  assert.equal(requestedStudioNights('yes', 'London', null, true, true), undefined);
+  assert.deepEqual(
+    groundedStudioDates('arrival on 3rd and going back on 8th', { today: '2026-10-01' }),
+    {},
+  );
+});
+
+test('omitted years choose the upcoming calendar date while supplied trip years stay stable', () => {
+  for (const [message, today, expected] of [
+    ['Arrive 3rd of October', '2026-10-01', '2026-10-03'],
+    ['Arrive October 3rd', '2026-10-04', '2027-10-03'],
+    ['Arrive 3rd October 2026', '2026-10-04', '2026-10-03'],
+  ])
+    assert.equal(groundedStudioDates(message, { today }).startDate, expected);
+  assert.equal(
+    groundedStudioDates('arrive on the 3rd', {
+      today: '2027-01-01',
+      brief: { ...brief(), departureDate: '2026-10-03' },
+    }).startDate,
+    '2026-10-03',
+  );
+  assert.deepEqual(
+    readStudioDateReferences('Arrive 31st of February', { today: '2026-10-01' }),
+    [],
+  );
+});
+
+test('an explicit outbound departure cannot be grounded as a fixed route arrival', () => {
+  const message = 'Depart Sydney on 3 October 2026.';
+  const context = { today: '2026-10-01', brief: brief() };
+  assert.deepEqual(groundedStudioDates(message, context), { departureDate: '2026-10-03' });
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [stop('London', null)],
+        [{ ...stop('London', null), arrivalDate: '2026-10-03', arrivalFixed: true }],
+        message,
+        [],
+        message,
+        context,
+      ),
+    StudioError,
+  );
+});
+
+test('a single stay can derive nights from a newly supplied arrival and return date', () => {
+  const message = 'Arrive London on 3 October 2026 and return on 8 October 2026.';
+  const context = {
+    today: '2026-10-01',
+    brief: { ...brief(), startDate: '2026-10-03', endDate: '2026-10-08' },
+  };
+  for (const current of [[], [stop('London', null)], [stop('London', 3)]])
+    assert.doesNotThrow(() =>
+      assertStudioRouteGrounding(current, [stop('London', 5)], message, [], message, context),
+    );
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        [stop('London', null)],
+        [stop('London', 4)],
+        message,
+        [],
+        message,
+        context,
+      ),
+    StudioError,
+  );
+  assert.equal(
+    requestedStudioNights(message, 'London', null, true),
+    undefined,
+    'The literal duration helper remains literal.',
+  );
+  for (const [message, question] of [
+    ['Return on 8 October 2026.', 'What is the return date?'],
+    ['8th', 'What is the return date?'],
+    ['Arrival on 3rd.', 'What is the arrival date?'],
+  ])
+    assert.doesNotThrow(() =>
+      assertStudioRouteGrounding(
+        [stop('London', null)],
+        [stop('London', 5)],
+        message,
+        [],
+        message,
+        {
+          ...context,
+          messages: [{ role: 'assistant', content: question }],
+        },
+      ),
+    );
+});
+
+test('derived night counts cannot use stale dates, a departure date, multiple stops or a conflicting duration', () => {
+  const context = {
+    today: '2026-10-01',
+    brief: { ...brief(), startDate: '2026-10-03', endDate: '2026-10-08' },
+  };
+  for (const message of [
+    'London train please.',
+    'Depart Sydney on 3 October 2026.',
+    'Arrive on 3 October 2026 and return 8 October 2026 for 3 nights.',
+    'Arrive on 3 October 2026 and return 8 October 2026; nights are undecided.',
+  ])
+    assert.throws(
+      () =>
+        assertStudioRouteGrounding(
+          [stop('London', null)],
+          [stop('London', 5)],
+          message,
+          [],
+          message,
+          context,
+        ),
+      StudioError,
+      message,
+    );
+  const multiple = [stop('London', null), stop('Paris', null)];
+  const message = 'Arrive London on 3 October 2026 and return from Paris on 8 October 2026.';
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        multiple,
+        [stop('London', 5), stop('Paris', null)],
+        message,
+        [],
+        message,
+        context,
+      ),
+    StudioError,
+  );
+  for (const endDate of ['2026-10-01', '2027-10-08']) {
+    const message = `Return on ${endDate}.`;
+    assert.throws(
+      () =>
+        assertStudioRouteGrounding(
+          [stop('London', null)],
+          [stop('London', 5)],
+          message,
+          [],
+          message,
+          {
+            ...context,
+            brief: { ...context.brief, endDate },
+          },
+        ),
+      StudioError,
+    );
+  }
+});
+
+test('an ambiguous business-trip date cannot silently become a fixed arrival', () => {
+  const context = { today: '2026-10-01', brief: brief() };
+  const message = 'i wanna go to london for a bussiness trip for 4 days on 3rd of october';
+  const fixed = { ...stop('London', null), arrivalDate: '2026-10-03', arrivalFixed: true };
+  for (const current of [[], [stop('London', null)]])
+    assert.throws(
+      () => assertStudioRouteGrounding(current, [fixed], message, [], message, context),
+      StudioError,
+    );
+  const clarified = {
+    ...context,
+    messages: [{ role: 'assistant' as const, content: 'What date will you arrive in London?' }],
+  };
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding(
+      [stop('London', null)],
+      [fixed],
+      '3rd of October',
+      [],
+      '3rd of October',
+      clarified,
+    ),
+  );
+  const anchored = 'London on 2026-10-03 for 3 nights.';
+  assert.doesNotThrow(() =>
+    assertStudioRouteGrounding([], [{ ...fixed, nights: 3 }], anchored, [], anchored, context),
+  );
+  const departure = 'Depart London on 2026-10-03 for 3 nights.';
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding([], [{ ...fixed, nights: 3 }], departure, [], departure, context),
+    StudioError,
+  );
+});
+
+test('an origin departure elsewhere in a multi-stop brief does not reject explicitly dated arrivals', () => {
+  const current = [stop('London', 3), stop('Paris', 3)];
+  const proposed = [
+    { ...current[0], arrivalDate: '2026-10-03', arrivalFixed: true },
+    { ...current[1], arrivalDate: '2026-10-06', arrivalFixed: true },
+  ];
+  const message =
+    'Depart Sydney on 2026-10-02. Arrive London on 2026-10-03. Arrive Paris on 2026-10-06.';
+  assert.doesNotThrow(() => assertStudioRouteGrounding(current, proposed, message, [], message));
+  assert.throws(
+    () =>
+      assertStudioRouteGrounding(
+        current,
+        [{ ...proposed[0], arrivalDate: '2026-10-02' }, proposed[1]],
+        message,
+        [],
+        message,
+      ),
+    StudioError,
+  );
+});
+
+test('changing a named stay length does not treat the change command as a destination', () => {
+  const current = [stop('London', 3)];
+  for (const message of [
+    'Change London to 4 nights.',
+    'Update London to four nights.',
+    'Set London to 4 nights.',
+  ]) {
+    assert.equal(requestedStudioNights(message, 'London', 3, true), 4);
+    assert.doesNotThrow(() =>
+      assertStudioRouteGrounding(current, [stop('London', 4)], message, [], message),
+    );
+    assert.throws(
+      () => assertStudioRouteGrounding(current, [stop('London', 5)], message, [], message),
+      StudioError,
+    );
+  }
+});
+
+test('departing the named destination updates the return date without overwriting origin departure', () => {
+  const current = {
+    ...brief(),
+    origin: 'Sydney',
+    preferredDestination: 'London',
+    departureDate: '2026-10-03',
+    startDate: '2026-10-03',
+  };
+  const context = { brief: current, today: '2026-10-01' };
+  for (const message of [
+    'Depart London on 8 October 2026.',
+    'Departure from London on 8 October 2026.',
+    'London departure on 8 October 2026.',
+  ]) {
+    assert.deepEqual(groundedStudioDates(message, context), { endDate: '2026-10-08' });
+    const result = groundedStudioBrief(
+      current,
+      { ...current, departureDate: '2026-10-08', endDate: '2026-10-08' },
+      [fact('departureDate', message), fact('endDate', message)],
+      message,
+      [],
+      context,
+    );
+    assert.equal(result.departureDate, '2026-10-03');
+    assert.equal(result.endDate, '2026-10-08');
+  }
+  for (const message of ['Depart Sydney on 3 October 2026.', 'Leave Sydney on 3 October 2026.'])
+    assert.deepEqual(groundedStudioDates(message, context), { departureDate: '2026-10-03' });
+  assert.deepEqual(
+    groundedStudioDates('8 October 2026', {
+      ...context,
+      ...afterQuestion('When will you depart London?'),
+    }),
+    { endDate: '2026-10-08' },
+  );
+  assert.equal(
+    groundedStudioBrief(
+      current,
+      { ...current, endDate: '2026-10-08' },
+      [fact('endDate', '8 October 2026')],
+      '8 October 2026',
+      [],
+      afterQuestion('When will you depart London?'),
+    ).endDate,
+    '2026-10-08',
+  );
+  assert.deepEqual(
+    groundedStudioDates('Departure on 8 October 2026.', {
+      ...context,
+      ...afterQuestion('What is your return date?'),
+    }),
+    { endDate: '2026-10-08' },
+  );
+  assert.deepEqual(
+    groundedStudioDates('its my departure date', {
+      ...context,
+      ...afterQuestion('Is 3 October your arrival date in London or departure date from Sydney?'),
+    }),
+    { departureDate: '2026-10-03' },
   );
 });

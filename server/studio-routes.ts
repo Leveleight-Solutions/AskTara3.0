@@ -360,7 +360,18 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       .extend({ instructions: z.string().trim().max(4000).default('') })
       .parse(req.body);
     await action(req, res, 'itinerary', body, async (workspace, signal) => {
-      workspace.itinerary = await generateStudioItinerary(workspace, body.instructions, signal);
+      workspace.itinerary = await generateStudioItinerary(
+        workspace,
+        body.instructions,
+        signal,
+        studioClientTravelHistory(
+          db,
+          store,
+          session(res).owner_id,
+          workspace.brief.clientId || '',
+          workspace.id,
+        ),
+      );
       workspace.itineraryManual = false;
       workspace.stage = 'itinerary';
       return { nextAction: 'itinerary', days: workspace.itinerary.days.length };
@@ -381,6 +392,13 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         body.category,
         body.interests,
         signal,
+        studioClientTravelHistory(
+          db,
+          store,
+          session(res).owner_id,
+          workspace.brief.clientId || '',
+          workspace.id,
+        ),
       );
       replaceStudioRecommendations(workspace, body.stopIds, body.category, recommendations);
       workspace.stage = 'recommendations';

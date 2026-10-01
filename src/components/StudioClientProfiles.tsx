@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Button, Callout, Flex, Text, TextArea, TextField } from '@radix-ui/themes';
 import type { StudioClientProfile } from '../../shared/studio-clients';
 import type { StudioWorkspace } from '../../shared/studio';
-import { studioCountries } from '../../shared/studio-travel-research';
+import { normalizeStudioCountry, studioCountries } from '../../shared/studio-travel-research';
 import { api } from '../api';
 
 const empty = () => ({
   name: '',
   context: '',
+  country: '',
+  nationality: '',
+  dateOfBirth: '',
   passportNationality: '',
   photoDataUrl: '',
   interests: [] as string[],
@@ -33,6 +36,10 @@ export function StudioClientProfiles({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [combinedHistory, setCombinedHistory] = useState<StudioClientProfile['history'] | null>(
+    null,
+  );
+  const [historyError, setHistoryError] = useState('');
   useEffect(() => {
     let active = true;
     void api<{ clients: StudioClientProfile[] }>('/studio/client-profiles')
@@ -50,10 +57,38 @@ export function StudioClientProfiles({
     };
   }, [workspace.id]);
   const selected = profiles.find((profile) => profile.id === workspace.brief.clientId);
+  useEffect(() => {
+    let active = true;
+    setCombinedHistory(null);
+    setHistoryError('');
+    if (!selected) return;
+    void api<{ history: StudioClientProfile['history'] }>(
+      `/studio/client-profiles/${selected.id}/history?workspaceId=${workspace.id}`,
+    )
+      .then(({ history }) => {
+        if (active) setCombinedHistory(history);
+      })
+      .catch(() => {
+        if (active)
+          setHistoryError(
+            'Previous itinerary history could not be loaded. Saved profile trips are shown below.',
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [workspace.id, selected?.id, selected?.updatedAt]);
+  const history = combinedHistory || selected?.history || [];
   const update = (clients: StudioClientProfile[]) => {
     setProfiles(clients);
     onProfiles(clients);
   };
+  const updateTrip = (index: number, patch: Partial<StudioClientProfile['history'][number]>) =>
+    setDraft((value) => ({
+      ...value,
+      history: value.history.map((trip, at) => (at === index ? { ...trip, ...patch } : trip)),
+    }));
+  const today = new Date().toISOString().slice(0, 10);
   return (
     <details>
       <summary style={{ cursor: 'pointer' }}>
@@ -128,7 +163,7 @@ export function StudioClientProfiles({
                 onClick={() => {
                   const { id, updatedAt, previousTripCount, ...value } = selected;
                   setEditing(id);
-                  setDraft(value);
+                  setDraft({ ...empty(), ...value });
                   setOpen(true);
                 }}
               >
@@ -157,14 +192,64 @@ export function StudioClientProfiles({
           )}
         </Flex>
         {selected && !open && (
-          <Text size="2">
-            {selected.history.length
-              ? `Past travel: ${selected.history.map((h) => h.destination).join(', ')}`
-              : 'Add previous destinations to personalise suggestions.'}
-          </Text>
+          <>
+            <Text size="2">
+              {history.length
+                ? `Travel history: ${history.map((h) => `${h.destination}${h.experience === 'planned' ? ' (planned)' : ''}`).join(', ')}`
+                : 'Add previous destinations to personalise suggestions.'}
+            </Text>
+            {historyError && (
+              <Text size="1" color="amber">
+                {historyError}
+              </Text>
+            )}
+            {history.length > 0 && (
+              <details>
+                <summary style={{ cursor: 'pointer' }}>
+                  View travel history ({history.length})
+                </summary>
+                <Flex
+                  direction="column"
+                  gap="3"
+                  mt="2"
+                  role="region"
+                  aria-label="Saved travel history"
+                >
+                  {history.map((trip, index) => (
+                    <article key={`${trip.destination}-${trip.visitedAt || ''}-${index}`}>
+                      <Text as="p" size="2" weight="medium">
+                        {trip.destination}
+                        {trip.country
+                          ? `, ${normalizeStudioCountry(trip.country)?.name || trip.country}`
+                          : ''}
+                      </Text>
+                      <Text as="p" size="1" color="gray">
+                        {trip.experience === 'planned' ? 'Planned itinerary' : 'Visited'}
+                        {trip.visitedAt ? ` · ${trip.visitedAt}` : ''}
+                        {trip.feedback
+                          ? ` · ${trip.feedback === 'liked' ? 'Liked' : trip.feedback === 'disliked' ? 'Disliked' : 'Neutral'}`
+                          : ''}
+                      </Text>
+                      {!!trip.interests?.length && (
+                        <Text as="p" size="1">
+                          Interests: {trip.interests.join(', ')}
+                        </Text>
+                      )}
+                      {trip.notes && (
+                        <Text as="p" size="1">
+                          {trip.notes}
+                        </Text>
+                      )}
+                    </article>
+                  ))}
+                </Flex>
+              </details>
+            )}
+          </>
         )}
         {open && (
           <form
+            aria-label="Client profile"
             onSubmit={(event) => {
               event.preventDefault();
               setBusy(true);
@@ -191,6 +276,48 @@ export function StudioClientProfiles({
                     maxLength={200}
                     value={draft.name}
                     onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  />
+                </label>
+                <label>
+                  <Text size="2">Country of residence</Text>
+                  <select
+                    aria-label="Profile country of residence"
+                    value={draft.country}
+                    onChange={(e) => setDraft({ ...draft, country: e.target.value })}
+                    style={{ display: 'block', width: '100%', padding: 8 }}
+                  >
+                    <option value="">Not supplied</option>
+                    {studioCountries.map((country) => (
+                      <option value={country.code} key={country.code}>
+                        {country.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <Text size="2">Nationality</Text>
+                  <select
+                    aria-label="Profile nationality"
+                    value={draft.nationality}
+                    onChange={(e) => setDraft({ ...draft, nationality: e.target.value })}
+                    style={{ display: 'block', width: '100%', padding: 8 }}
+                  >
+                    <option value="">Not supplied</option>
+                    {studioCountries.map((country) => (
+                      <option value={country.code} key={country.code}>
+                        {country.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <Text size="2">Date of birth</Text>
+                  <TextField.Root
+                    aria-label="Profile date of birth"
+                    type="date"
+                    max={today}
+                    value={draft.dateOfBirth}
+                    onChange={(e) => setDraft({ ...draft, dateOfBirth: e.target.value })}
                   />
                 </label>
                 <label>
@@ -241,20 +368,156 @@ export function StudioClientProfiles({
                     }
                   />
                 </label>
-                <label>
-                  <Text size="2">Past trips · one destination per line</Text>
-                  <TextArea
-                    value={draft.history.map((h) => h.destination).join('\n')}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        history: e.target.value
-                          .split('\n')
-                          .map((destination, index) => ({ ...draft.history[index], destination })),
-                      })
+                <Flex direction="column" gap="3" aria-label="Travel history">
+                  <Text size="2" weight="medium">
+                    Recorded past trips
+                  </Text>
+                  <Text size="1" color="gray">
+                    Record visits, previous plans and what the client liked. Tara can use these
+                    details when suggesting the next destination.
+                  </Text>
+                  {draft.history.map((trip, index) => (
+                    <fieldset
+                      key={index}
+                      style={{ border: '1px solid var(--gray-6)', borderRadius: 8, padding: 12 }}
+                    >
+                      <legend>Past trip {index + 1}</legend>
+                      <Flex direction="column" gap="2">
+                        <label>
+                          <Text size="2">Destination</Text>
+                          <TextField.Root
+                            aria-label={`Past trip ${index + 1} destination`}
+                            required
+                            maxLength={200}
+                            value={trip.destination}
+                            onChange={(e) => updateTrip(index, { destination: e.target.value })}
+                          />
+                        </label>
+                        <label>
+                          <Text size="2">Country</Text>
+                          <select
+                            aria-label={`Past trip ${index + 1} country`}
+                            value={
+                              normalizeStudioCountry(trip.country || '')?.code || trip.country || ''
+                            }
+                            onChange={(e) => updateTrip(index, { country: e.target.value })}
+                            style={{ display: 'block', width: '100%', padding: 8 }}
+                          >
+                            <option value="">Not supplied</option>
+                            {trip.country && !normalizeStudioCountry(trip.country) && (
+                              <option value={trip.country}>{trip.country}</option>
+                            )}
+                            {studioCountries.map((country) => (
+                              <option value={country.code} key={country.code}>
+                                {country.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <Text size="2">Trip status</Text>
+                          <select
+                            aria-label={`Past trip ${index + 1} status`}
+                            value={trip.experience || 'visited'}
+                            onChange={(e) =>
+                              updateTrip(index, {
+                                experience: e.target.value as 'visited' | 'planned',
+                              })
+                            }
+                            style={{ display: 'block', width: '100%', padding: 8 }}
+                          >
+                            <option value="visited">Visited</option>
+                            <option value="planned">Planned only</option>
+                          </select>
+                        </label>
+                        <label>
+                          <Text size="2">Trip date</Text>
+                          <TextField.Root
+                            aria-label={`Past trip ${index + 1} date`}
+                            type={
+                              !trip.visitedAt || /^\d{4}-\d{2}-\d{2}$/.test(trip.visitedAt)
+                                ? 'date'
+                                : 'text'
+                            }
+                            max={today}
+                            maxLength={40}
+                            value={trip.visitedAt || ''}
+                            onChange={(e) => updateTrip(index, { visitedAt: e.target.value })}
+                          />
+                        </label>
+                        <label>
+                          <Text size="2">Trip interests · comma separated</Text>
+                          <TextField.Root
+                            aria-label={`Past trip ${index + 1} interests`}
+                            value={(trip.interests || []).join(', ')}
+                            onChange={(e) =>
+                              updateTrip(index, {
+                                interests: e.target.value.split(',').map((value) => value.trim()),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <Text size="2">Client feedback</Text>
+                          <select
+                            aria-label={`Past trip ${index + 1} feedback`}
+                            value={trip.feedback || ''}
+                            onChange={(e) =>
+                              updateTrip(index, {
+                                feedback:
+                                  (e.target.value as 'liked' | 'neutral' | 'disliked') || undefined,
+                              })
+                            }
+                            style={{ display: 'block', width: '100%', padding: 8 }}
+                          >
+                            <option value="">Not recorded</option>
+                            <option value="liked">Liked</option>
+                            <option value="neutral">Neutral</option>
+                            <option value="disliked">Disliked</option>
+                          </select>
+                        </label>
+                        <label>
+                          <Text size="2">Trip notes</Text>
+                          <TextArea
+                            aria-label={`Past trip ${index + 1} notes`}
+                            maxLength={1000}
+                            value={trip.notes || ''}
+                            onChange={(e) => updateTrip(index, { notes: e.target.value })}
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          variant="soft"
+                          color="red"
+                          size="1"
+                          aria-label={`Remove past trip ${index + 1}`}
+                          onClick={() =>
+                            setDraft((value) => ({
+                              ...value,
+                              history: value.history.filter((_trip, at) => at !== index),
+                            }))
+                          }
+                        >
+                          Remove trip
+                        </Button>
+                      </Flex>
+                    </fieldset>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="soft"
+                    size="1"
+                    disabled={draft.history.length >= 100}
+                    onClick={() =>
+                      setDraft((value) => ({
+                        ...value,
+                        history: [...value.history, { destination: '', experience: 'visited' }],
+                      }))
                     }
-                  />
-                </label>
+                  >
+                    Add past trip
+                  </Button>
+                </Flex>
                 <label>
                   <Text as="div" size="2">
                     Optional client photo · max 140 KB

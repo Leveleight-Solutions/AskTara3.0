@@ -2,7 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { destinations } from '../shared/catalog.ts';
 import type { StudioAgency, StudioBrief, StudioStop, StudioWorkspace } from '../shared/studio.ts';
 import { applyStudioPatch, qualifyStudio, studioDate } from './studio-domain.ts';
-import { groundedStudioBrief, assertStudioRouteGrounding } from './studio-grounding.ts';
+import {
+  groundedStudioBrief,
+  assertStudioRouteGrounding,
+  groundedStudioDates,
+} from './studio-grounding.ts';
+import {
+  prepareStudioStayClarification,
+  resolveStudioClarification,
+  recoverStudioStayClarification,
+  studioStayConfirmation,
+} from './studio-intake-continuity.ts';
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 
 const normal = (value: string) => value.normalize('NFKC').trim().toLowerCase();
@@ -252,6 +262,10 @@ function readBrief(
   };
   include('adults', /\badults?\b|\b(?:travell?ing solo|solo traveller|just me)\b/i);
   include('children', /\b(?:children|kids?|infants?|adults only|all adults|only adults)\b/i);
+  include(
+    'tripPurpose',
+    /\b(?:business|bussiness|tourism|holiday|vacation|leisure|study|studying|employment|paid work|conference)\b/i,
+  );
   include('childAges', /\b(?:ages?|aged)\b/i);
   if (
     answering === 'passportNationality' ||
@@ -352,6 +366,10 @@ export function localStudioReview(
   message: string,
   agency: StudioAgency,
 ) {
+  const confirmation =
+    recoverStudioStayClarification(workspace, message, agency) ||
+    resolveStudioClarification(workspace, message, agency);
+  if (confirmation) return confirmation;
   const before = structuredClone(workspace);
   const pending = nextQuestion(workspace, agency);
   const lastReply = workspace.messages.findLast((entry) => entry.role === 'assistant')?.content;
@@ -433,8 +451,15 @@ export function localStudioReview(
       }
     }
     readDates(text, brief, stops);
+    if (stops.length <= 1)
+      Object.assign(
+        brief,
+        groundedStudioDates(text, { messages: workspace.messages, brief: workspace.brief }),
+      );
   }
+  const conflict = prepareStudioStayClarification(workspace, brief, stops, message);
   applyStudioPatch(workspace, { revision: workspace.revision, brief, stops }, agency);
+  if (conflict) workspace.clarification = conflict.clarification;
   if (workspace.stops.length && workspace.title === 'New client proposal')
     workspace.title = workspace.stops
       .map((stop) => stop.name)
@@ -446,6 +471,7 @@ export function localStudioReview(
       .filter(Boolean)
       .join('\n')
       .slice(-16000);
+  if (workspace.clarification) return studioStayConfirmation(workspace)!;
   const next =
     nextQuestion(workspace, agency)?.label ||
     'You can review and accept the route to continue to services.';

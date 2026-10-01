@@ -91,6 +91,7 @@ export async function runStudioAssistant(
       { ...workspace, itinerary: previousItinerary },
       message,
       signal,
+      history,
     );
     workspace.itineraryManual = false;
     workspace.stage = 'itinerary';
@@ -114,6 +115,7 @@ export async function runStudioAssistant(
       category,
       message,
       signal,
+      history,
     );
     replaceStudioRecommendations(
       workspace,

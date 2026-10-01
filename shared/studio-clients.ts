@@ -4,6 +4,11 @@ import type { StudioTravelHistoryEntry } from './studio-travel-research';
 export interface StudioClientProfile {
   id: string;
   name: string;
+  /** Residence and citizenship are independent of the passport used for a trip. */
+  country?: string;
+  nationality?: string;
+  /** Private record only; not sent to recommendation models. */
+  dateOfBirth?: string;
   context: string;
   passportNationality: string;
   photoDataUrl: string;

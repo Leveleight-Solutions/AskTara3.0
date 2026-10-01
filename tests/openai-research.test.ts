@@ -94,7 +94,7 @@ test('global research forces GPT-6 web search, retains verified links and reuses
     calls++;
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, 'gpt-6-astra');
-    assert.deepEqual(body.reasoning, { effort: 'low' });
+    assert.deepEqual(body.reasoning, { effort: 'medium' });
     assert.deepEqual(body.tools, [{ type: 'web_search', external_web_access: true }]);
     assert.equal(body.tool_choice, 'required');
     assert.deepEqual(body.include, ['web_search_call.action.sources']);
@@ -727,6 +727,31 @@ const intakeRetryRequest = {
   payload: { message: 'Change this fictional trip to Osaka for six days.' },
   maxTokens: 10000,
 };
+
+test('structured calls use medium by default and preserve explicit reasoning settings', async () => {
+  for (const effort of [undefined, 'low', 'high', 'xhigh', 'max']) {
+    if (effort === undefined) delete process.env.OPENAI_REASONING_EFFORT;
+    else process.env.OPENAI_REASONING_EFFORT = effort;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(body.reasoning, { effort: effort || 'medium' });
+      assert.equal(body.model, 'gpt-6-astra');
+      return response({ ok: true }, [], false);
+    };
+    assert.deepEqual((await structuredResponse(intakeRetryRequest)).data, { ok: true });
+  }
+});
+
+test('unsupported reasoning configuration is rejected before contacting the provider', async () => {
+  process.env.OPENAI_REASONING_EFFORT = 'unsupported';
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return response({ ok: true }, [], false);
+  };
+  await assert.rejects(structuredResponse(intakeRetryRequest), /Invalid OpenAI reasoning effort/);
+  assert.equal(calls, 0);
+});
 
 test('intake retries a token-limited response once with more reasoning space and the same request', async () => {
   const bodies: Record<string, unknown>[] = [];

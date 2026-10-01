@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 export const DEFAULT_OPENAI_MODEL = 'gpt-6-astra';
 export const planningModel = () => process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+export function planningReasoningEffort() {
+  const effort = process.env.OPENAI_REASONING_EFFORT?.trim() || 'medium';
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))
+    throw new Error('Invalid OpenAI reasoning effort configuration.');
+  return effort;
+}
 type OpenAIPlanningCode =
   | 'OPENAI_NOT_CONFIGURED'
   | 'OPENAI_ACCESS_DENIED'
@@ -58,9 +64,7 @@ export async function structuredResponse<T>(options: {
       'AI planning is not configured. Add an OpenAI API key to the server to enable it. Your saved trip is unchanged.',
       'OPENAI_NOT_CONFIGURED',
     );
-  const effort = process.env.OPENAI_REASONING_EFFORT || 'low';
-  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort))
-    throw new Error('Invalid OpenAI reasoning effort configuration.');
+  const effort = planningReasoningEffort();
   const schema = z.toJSONSchema(options.schema);
   delete (schema as Record<string, unknown>).$schema;
   const model = planningModel();

@@ -144,6 +144,7 @@ test('assistant entry action asks for nationality without sending a speculative 
 test('assistant entry action checks the first selected stop and directs the agent to other destination controls', async () => {
   const value = newStudioWorkspace();
   value.brief.passportNationality = 'PK';
+  value.brief.tripPurpose = 'tourism';
   value.brief.startDate = '2027-04-01';
   value.stops = ['Tokyo', 'Paris'].map((name, index) => ({
     id: name,

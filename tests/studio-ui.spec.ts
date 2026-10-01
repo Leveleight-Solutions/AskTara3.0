@@ -150,6 +150,10 @@ async function mockStudio(
     }
     if (path === '/api/studio/clients') return json({ clients: options.clients || [] });
     if (path === '/api/studio/client-profiles') return json({ clients: options.profiles || [] });
+    const historyProfile = options.profiles?.find(
+      (profile) => path === `/api/studio/client-profiles/${profile.id}/history`,
+    );
+    if (method === 'GET' && historyProfile) return json({ history: historyProfile.history });
     if (path === '/api/studio/workspaces')
       return method === 'POST' ? json({ workspace }, 201) : json({ workspaces: [workspace] });
     if (path === `/api/studio/workspaces/${workspaceId}`) {

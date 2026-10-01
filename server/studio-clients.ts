@@ -3,14 +3,36 @@ import type { Express, Response } from 'express';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import type { StudioClientProfile } from '../shared/studio-clients.ts';
+import type { StudioTravelHistoryEntry } from '../shared/studio-travel-research.ts';
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 import { StudioError, type StudioStore } from './studio-store.ts';
 import { redactIdentityAndPayment } from './studio-imports.ts';
 
 const text = (max: number) => z.string().trim().max(max).transform(redactIdentityAndPayment);
+const country = z
+  .string()
+  .trim()
+  .refine((v) => !v || Boolean(normalizeStudioCountry(v)), 'Choose a valid country.')
+  .transform((v) => normalizeStudioCountry(v)?.code || '')
+  .default('');
+const dateOfBirth = z
+  .string()
+  .refine(
+    (value) =>
+      !value ||
+      (/^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        Number.isFinite(Date.parse(value)) &&
+        new Date(value).toISOString().slice(0, 10) === value &&
+        value <= new Date().toISOString().slice(0, 10)),
+    'Use a real date of birth that is not in the future.',
+  )
+  .default('');
 export const studioClientProfileSchema = z
   .object({
     name: text(200).refine((v) => Boolean(v), 'Enter a client name.'),
+    country,
+    nationality: country,
+    dateOfBirth,
     context: text(4000).default(''),
     passportNationality: z
       .string()
@@ -42,11 +64,15 @@ export const studioClientProfileSchema = z
             country: text(100).optional(),
             visitedAt: text(40).optional(),
             interests: z.array(text(200)).max(30).optional(),
+            feedback: z.enum(['liked', 'neutral', 'disliked']).optional(),
+            notes: text(1000).optional(),
+            experience: z.enum(['visited', 'planned']).optional(),
           })
           .strict(),
       )
       .max(100)
-      .default([]),
+      .default([])
+      .transform((entries) => entries.filter((entry) => entry.destination)),
   })
   .strict();
 
@@ -86,17 +112,31 @@ export function studioClientTravelHistory(
         w.brief.endDate &&
         w.brief.endDate < today,
     );
-  return [
-    ...profile.history,
+  const merged = new Map<string, StudioTravelHistoryEntry>();
+  for (const entry of [
     ...trips.flatMap((w) =>
       w.stops.map((s) => ({
         destination: s.name,
         country: s.country,
         visitedAt: w.brief.endDate,
         interests: w.brief.interests,
+        experience: 'planned' as const,
       })),
     ),
-  ].slice(-100);
+    ...profile.history.map((entry) => ({
+      ...entry,
+      experience: entry.experience || ('visited' as const),
+    })),
+  ]) {
+    const key = [
+      entry.destination.trim().toLowerCase(),
+      normalizeStudioCountry(entry.country || '')?.code || '',
+      entry.visitedAt || '',
+    ].join('|');
+    // Explicit recorded feedback takes precedence over an old proposal for the same stay.
+    merged.set(key, entry);
+  }
+  return [...merged.values()].slice(-100);
 }
 export function installStudioClientRoutes(
   app: Express,
@@ -108,6 +148,14 @@ export function installStudioClientRoutes(
   },
 ) {
   const { db, store, session, requireActiveSession } = deps;
+  app.get('/api/studio/client-profiles/:clientId/history', (req, res) => {
+    const owner = session(res).owner_id;
+    const id = String(req.params.clientId);
+    if (!getStudioClientProfile(db, owner, id))
+      throw new StudioError(404, 'Client profile not found.');
+    const currentId = typeof req.query.workspaceId === 'string' ? req.query.workspaceId : '';
+    res.json({ history: studioClientTravelHistory(db, store, owner, id, currentId) });
+  });
   app.get('/api/studio/client-profiles', (_req, res) => {
     const owner = session(res).owner_id;
     const trips = store.list(owner),

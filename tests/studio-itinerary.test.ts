@@ -221,6 +221,145 @@ test('partial, reordered, misdated and destination-changing model outputs are re
   }
 });
 
+test('one corrected draft can replace an unsupported claim while preserving all validation', async () => {
+  const value = workspace();
+  const original = structuredClone(value);
+  let calls = 0;
+  globalThis.fetch = async (_address, init) => {
+    calls++;
+    const payload = JSON.parse(JSON.parse(String(init?.body)).input[0].content);
+    const data = answer(value);
+    if (calls === 1) {
+      assert.equal(payload.validationFeedback, '');
+      data.days[0].summary = 'The visit costs AUD 100.';
+    } else {
+      assert.match(payload.validationFeedback, /unsupported monetary amount.*days\[0\]/);
+      assert.doesNotMatch(payload.validationFeedback, /AUD 100/);
+    }
+    return response(data);
+  };
+  const generated = await generateStudioItinerary(value, 'Keep the daily plan relaxed.');
+  assert.equal(calls, 2);
+  assert.equal(generated.days.length, 3);
+  assert.doesNotMatch(JSON.stringify(generated), /AUD 100/);
+  assert.deepEqual(value, original);
+});
+
+test('itinerary history keeps feedback and planned-versus-visited context without profile identity', async () => {
+  const value = workspace();
+  value.brief.adults = 1;
+  value.brief.children = 0;
+  const history = [
+    {
+      destination: 'Paris',
+      country: 'FR',
+      visitedAt: '2025-03',
+      interests: ['Quiet galleries'],
+      feedback: 'liked' as const,
+      experience: 'visited' as const,
+      notes: 'Enjoyed independent museum visits.',
+      clientName: 'PRIVATE_CLIENT_NAME',
+      photoDataUrl: 'PRIVATE_PHOTO_DATA',
+      dateOfBirth: 'PRIVATE_BIRTH_DATE',
+      adults: 4,
+    },
+    {
+      destination: 'Amsterdam',
+      country: 'NL',
+      visitedAt: '2027-01',
+      interests: ['Crowded nightlife'],
+      feedback: 'disliked' as const,
+      experience: 'planned' as const,
+      notes: 'Avoid busy clubs. Contact traveller@example.com.',
+    },
+  ];
+  globalThis.fetch = async (_address, init) => {
+    const body = JSON.parse(String(init?.body));
+    const payload = JSON.parse(body.input[0].content);
+    assert.equal(payload.preferences.adults, 1);
+    assert.equal(payload.preferences.children, 0);
+    assert.deepEqual(payload.returningClientHistory[0], {
+      destination: 'Paris',
+      country: 'France',
+      visitedAt: '2025-03',
+      interests: ['Quiet galleries'],
+      feedback: 'liked',
+      experience: 'visited',
+      notes: 'Enjoyed independent museum visits.',
+    });
+    assert.equal(payload.returningClientHistory[1].feedback, 'disliked');
+    assert.equal(payload.returningClientHistory[1].experience, 'planned');
+    assert.match(payload.returningClientHistory[1].notes, /Avoid busy clubs/);
+    assert.doesNotMatch(
+      JSON.stringify(payload),
+      /PRIVATE_CLIENT_NAME|PRIVATE_PHOTO_DATA|PRIVATE_BIRTH_DATE|traveller@example\.com/,
+    );
+    assert.match(body.instructions, /current trip request takes precedence/i);
+    assert.match(body.instructions, /planned trips from places actually visited/i);
+    return response(answer(value));
+  };
+  const generated = await generateStudioItinerary(
+    value,
+    'Keep this visit relaxed.',
+    undefined,
+    history,
+  );
+  assert.equal(generated.days.length, 3);
+});
+
+test('a second unsupported draft fails after two calls and leaves the workspace unchanged', async () => {
+  const value = workspace();
+  const original = structuredClone(value);
+  const data = answer(value);
+  data.notes = ['Your hotel is booked.'];
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return response(data);
+  };
+  await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unsupported/));
+  assert.equal(calls, 2);
+  assert.deepEqual(value, original);
+});
+
+test('cancelling the corrected draft stops the operation without saving either draft', async () => {
+  const value = workspace();
+  const original = structuredClone(value);
+  const controller = new AbortController();
+  const cancelled = new Error('Fictional itinerary test cancelled');
+  let calls = 0;
+  globalThis.fetch = async (_address, init) => {
+    calls++;
+    const data = answer(value);
+    if (calls === 1) data.notes = ['Your hotel is booked.'];
+    else {
+      assert.equal(init?.signal?.aborted, false);
+      controller.abort(cancelled);
+      assert.equal(init?.signal?.aborted, true);
+    }
+    return response(data);
+  };
+  await assert.rejects(generateStudioItinerary(value, '', controller.signal), cancelled);
+  assert.equal(calls, 2);
+  assert.deepEqual(value, original);
+});
+
+test('a corrected draft cannot extend the original generation time budget', async (context) => {
+  const value = workspace();
+  let now = Date.now();
+  context.mock.method(Date, 'now', () => now);
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    now += 149500;
+    const data = answer(value);
+    data.notes = ['Your hotel is booked.'];
+    return response(data);
+  };
+  await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unsupported/));
+  assert.equal(calls, 1);
+});
+
 test('named research needs actual search evidence, including URLs hidden in prose', async () => {
   const value = workspace();
   for (const modify of [
@@ -270,6 +409,63 @@ test('generated public text rejects private context, identifiers and unsupported
   await generateStudioItinerary(value, '');
 });
 
+test('ordinary unconfirmed logistics and meeting disclaimers do not block a business itinerary', async () => {
+  const value = workspace();
+  const descriptions = [
+    'Arrange arrival logistics once the flight, arrival airport and accommodation are confirmed. Keep the day clear of appointments until arrival timing is known.',
+    'Allow room for discussions to run over and complete essential follow-up before finishing work. No meeting venue or workspace is reserved.',
+    'Keep the morning available for outstanding meetings or project work. Finalise the order only after meeting locations and participants are confirmed.',
+    'Business hours are reserved for meetings. Keep sightseeing optional in the evening.',
+    'Your weekday working hours are reserved for business meetings.',
+    '9 am–5 pm is reserved for business meetings; no venue has been chosen.',
+    '09:00–17:00 is reserved for business meetings.',
+    'Nothing has been reserved, purchased or ticketed.',
+    'Nothing is booked.',
+    'Check the November menu and availability for one; no table has been reserved.',
+    'None of the flights or restaurant tables are booked.',
+  ];
+  for (const description of descriptions) {
+    const data = answer(value);
+    data.days[0].activities[0].description = description;
+    globalThis.fetch = async () => response(data);
+    const generated = await generateStudioItinerary(value, 'Keep business time flexible.');
+    assert.equal(generated.days[0].activities[0].description, description);
+  }
+});
+
+test('a negative or conditional clause cannot hide a separate unsupported reservation claim', async () => {
+  const value = workspace();
+  for (const description of [
+    'No meeting room is reserved, but your hotel is confirmed.',
+    'Once meetings are confirmed, we have booked your flight.',
+    'No flight is booked and your hotel is reserved.',
+    'Once the flight is confirmed, your hotel is reserved.',
+    'After checking flights, your hotel is booked.',
+    'Your flights are confirmed after the meeting.',
+    'No meeting room is reserved. Your hotel is confirmed.',
+    'No hotel is booked; this activity costs AUD 100.',
+    'No flights are booked. The venue is fully accessible and allergy-safe.',
+    'Business hours are reserved for meetings, but your hotel is booked.',
+    'Your hotel room and business hours are reserved.',
+    'Your meeting room is reserved for business hours.',
+    'Business hours are reserved for meetings. Your tickets are confirmed.',
+    'Nothing is booked, your tickets are confirmed.',
+    'Nothing has been reserved but your hotel is confirmed.',
+    'No table has been reserved. Your flights are booked.',
+    'Nothing says your hotel is booked.',
+    'None of the flights are booked and your hotel is confirmed.',
+  ]) {
+    const data = answer(value);
+    data.days[0].activities[0].description = description;
+    globalThis.fetch = async () => response(data);
+    await assert.rejects(
+      generateStudioItinerary(value, ''),
+      rejectsWith(502, /unsupported price, booking or suitability claim/),
+      description,
+    );
+  }
+});
+
 test('free-time descriptions come from the server and gaps cannot become fabricated researched stays', async () => {
   const value = workspace([stop('Paris', 1), stop('Lyon', 1, '2027-11-04')]);
   const data = answer(value);
@@ -288,6 +484,51 @@ test('free-time descriptions come from the server and gaps cannot become fabrica
   assert.ok(generated.notes.some((note) => /between stays/.test(note)));
   gap.activities[0] = activity();
   await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unresolved gap/));
+});
+
+test('discarded logistics prose cannot leak or block safe server-owned activity text', async () => {
+  const value = workspace();
+  value.brief.clientName = 'Demo Person';
+  for (const kind of ['arrival', 'departure', 'transfer', 'free_time']) {
+    const data = answer(value);
+    data.days[0].activities = [
+      {
+        ...activity(),
+        kind,
+        title: 'Demo Person has a confirmed booking',
+        description:
+          'Your tickets are confirmed for AUD 100 at private@example.com. The venue is allergy-safe. https://invented.example',
+        sourceUrls: [],
+      },
+    ];
+    globalThis.fetch = async () => response(data);
+    const generated = await generateStudioItinerary(value, '');
+    assert.doesNotMatch(
+      JSON.stringify(generated),
+      /Demo Person|tickets are confirmed|AUD 100|private@example|allergy-safe|invented\.example/,
+    );
+    assert.deepEqual(generated.days[0].activities[0].sources, []);
+  }
+});
+
+test('displayed day titles, summaries and notes still reject unsupported claims', async () => {
+  const value = workspace();
+  for (const modify of [
+    (data: ReturnType<typeof answer>) => {
+      data.days[0].title = 'Your hotel is booked';
+    },
+    (data: ReturnType<typeof answer>) => {
+      data.days[0].summary = 'The ticket costs AUD 100.';
+    },
+    (data: ReturnType<typeof answer>) => {
+      data.notes = ['The venue is fully accessible and allergy-safe.'];
+    },
+  ]) {
+    const data = answer(value);
+    modify(data);
+    globalThis.fetch = async () => response(data);
+    await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unsupported/));
+  }
 });
 
 test('only included reviewed services can appear, with their real details on the correct days', async () => {
@@ -322,6 +563,7 @@ test('only included reviewed services can appear, with their real details on the
       serviceId: service.id,
       sourceUrls: [],
       title: 'Model rewritten service title',
+      description: 'Your tickets are confirmed for AUD 100. Contact private@example.com.',
     },
   ];
   globalThis.fetch = async (_address, init) => {

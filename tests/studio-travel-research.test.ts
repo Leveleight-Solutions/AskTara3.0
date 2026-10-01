@@ -35,6 +35,7 @@ function workspace() {
   const value = newStudioWorkspace();
   Object.assign(value.brief, {
     passportNationality: 'PK',
+    tripPurpose: 'tourism',
     preferredDestination: 'Tokyo',
     destinationCountry: 'JP',
   });
@@ -175,6 +176,10 @@ test('destination research checks official advice independently, uses returning 
       visitedAt: '2024-03-01',
       interests: ['gardens'],
       photoDataUrl: 'data:image/png;base64,PRIVATE_PHOTO',
+      dateOfBirth: '1990-02-04',
+      feedback: 'disliked' as const,
+      experience: 'planned' as const,
+      notes: 'Too many crowded stops',
       name: 'PRIVATE_NAME',
     },
   ];
@@ -184,10 +189,13 @@ test('destination research checks official advice independently, uses returning 
     assert.equal(body.store, false);
     const payload = JSON.parse(body.input[0].content);
     assert.equal(payload.travelHistory[0].destination, 'Kyoto');
+    assert.equal(payload.travelHistory[0].feedback, 'disliked');
+    assert.equal(payload.travelHistory[0].experience, 'planned');
+    assert.equal(payload.travelHistory[0].notes, 'Too many crowded stops');
     assert.equal(payload.trip.preferredDestination, 'Tokyo');
     assert.doesNotMatch(
       body.input[0].content,
-      /PRIVATE_|Private Client|photoDataUrl|clientName|passportNumber/,
+      /PRIVATE_|Private Client|photoDataUrl|dateOfBirth|1990-02-04|clientName|passportNumber/,
     );
   });
   const result = await researchStudioDestinations(value, history);

@@ -43,6 +43,10 @@ async function mockBuilder(page: Page) {
     if (path === '/api/studio/clients') return json({ clients: [] });
     if (path === '/api/studio/client-profiles' && method === 'GET')
       return json({ clients: profiles });
+    if (/\/api\/studio\/client-profiles\/[^/]+\/history$/.test(path) && method === 'GET')
+      return json({
+        history: profiles.find((client) => path.includes(`/${client.id}/`))?.history || [],
+      });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
     const body = route.request().postDataJSON() || {};
@@ -174,7 +178,7 @@ test('returning profile identity and history guide research, with visa check onl
     .getByRole('combobox', { name: 'Saved client', exact: true })
     .selectOption('client-kyoto');
   await expect(page.getByRole('img', { name: 'John Example profile' })).toBeVisible();
-  await expect(page.getByText('Past travel: Kyoto', { exact: true })).toBeVisible();
+  await expect(page.getByText('Travel history: Kyoto', { exact: true })).toBeVisible();
   expect(workspace.brief.clientId).toBe('client-kyoto');
   expect(workspace.brief.passportNationality).toBe('PK');
   await expect(
@@ -216,9 +220,10 @@ test('new client profile keeps the optional photo in the profile and links the t
   await page
     .getByRole('combobox', { name: 'Profile passport nationality', exact: true })
     .selectOption('PK');
-  await page
-    .getByRole('textbox', { name: 'Past trips · one destination per line', exact: true })
-    .fill('Paris\nKyoto');
+  await page.getByRole('button', { name: 'Add past trip', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Past trip 1 destination', exact: true }).fill('Paris');
+  await page.getByRole('button', { name: 'Add past trip', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Past trip 2 destination', exact: true }).fill('Kyoto');
   await page.getByLabel('Client photo', { exact: true }).setInputFiles({
     name: 'synthetic-profile.png',
     mimeType: 'image/png',

@@ -238,8 +238,14 @@ test('unreliable model route changes get one repair and then a clarification wit
   };
   const result = await reviewStudioBrief(workspace, '3 nights', defaultStudioAgency());
   assert.equal(calls, 2);
-  assert.match(result.reply, /clarify/);
-  assert.deepEqual(workspace, before);
+  assert.match(result.reply, /London.*3 nights/);
+  assert.deepEqual(workspace.stops, before.stops);
+  assert.deepEqual(workspace.brief, {
+    ...before.brief,
+    preferredDestination: 'London',
+    destinationCountry: 'GB',
+    request: '3 nights',
+  });
 });
 
 test('conversation-only changes preserve a daily plan but route changes invalidate it', () => {

@@ -9,6 +9,7 @@ import { StudioError, type StudioStore } from './studio-store.ts';
 import { structureFingerprint } from './studio-domain.ts';
 import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
 import { publicHotelQuote, recommendStudioHotels } from './studio-hotels.ts';
+import { studioClientTravelHistory } from './studio-clients.ts';
 
 const revisionSchema = z.number().int().positive();
 const hotelRequest = z
@@ -252,7 +253,12 @@ export function installStudioSupplierRoutes(
             message:
               'Additional supplier inventory; the original AI shortlist covers the first batch.',
           }
-        : await providers.hotelRecommendations(current, hotels, requestScope.signal);
+        : await providers.hotelRecommendations(
+            current,
+            hotels,
+            requestScope.signal,
+            studioClientTravelHistory(db, store, ownerId, current.brief.clientId || '', current.id),
+          );
       requestScope.signal.throwIfAborted();
       requireActiveSession(res);
       store.require(ownerId, workspace.id, input.revision);

@@ -242,6 +242,21 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
         enum: ['brief', 'structure', 'itinerary', 'services', 'recommendations', 'proposal'],
       },
       brief: ref('StudioBrief'),
+      clarification: {
+        anyOf: [
+          object({
+            kind: { type: 'string', const: 'stay_dates' },
+            stopId: text,
+            arrivalDate: { type: 'string', format: 'date' },
+            departureDate: { type: 'string', format: 'date' },
+            statedNights: { type: 'integer', minimum: 0, maximum: 120 },
+            proposedNights: { type: 'integer', minimum: 0, maximum: 120 },
+          }),
+          { type: 'null' },
+        ],
+        description:
+          'A single date-range proposal awaiting a yes/no answer or an explicit alternative in the review endpoint.',
+      },
       qualification: object({
         score: { type: 'number', minimum: 0, maximum: 100 },
         known: array(object({ id: text, label: text, value: text })),
@@ -502,7 +517,7 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
     }),
     post: operation('Studio', 'Create a private client profile', {
       description:
-        'Stores a name, optional context, declared passport nationality, travel history and preferences. Optional photoDataUrl must be a PNG/JPEG/WebP data URL no longer than 200,000 characters with a matching file signature. Do not submit passport numbers, identity documents or payment information. Nationality is normalised to an ISO-2 country code; it never establishes visa eligibility by itself.',
+        'Stores a name, optional residence country, nationality, date of birth, context, declared passport nationality, travel history, trip feedback and preferences. Residence, nationality and the passport used for a trip are separate fields. Date of birth must be a real date not in the future and is kept out of AI requests and proposals. Optional photoDataUrl must be a PNG/JPEG/WebP data URL no longer than 200,000 characters with a matching file signature. Do not submit passport numbers, identity documents or payment information. Nationality is normalised to an ISO-2 country code; it never establishes visa eligibility by itself.',
       requestBody: jsonBody(clientProfileInput),
       responses: {
         '201': jsonResponse(
@@ -536,6 +551,48 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         'Deletes the owned profile and clears its clientId references in the owner’s workspaces. Existing itinerary text is retained.',
       responses: {
         '204': { description: 'Profile deleted; no response body.' },
+        '404': error('Client profile not found for this session.'),
+      },
+    }),
+  },
+  '/api/studio/client-profiles/{clientId}/history': {
+    get: operation('Studio', 'Read a client’s recommendation history', {
+      description:
+        'Combines explicitly recorded visits and feedback with prior dated plans linked to this owned client. Planned trips are not assumed to have been taken. Excludes the supplied current workspace; same-place/date manual feedback takes precedence. Profile identity, photos and birth date are excluded.',
+      parameters: [
+        {
+          name: 'clientId',
+          in: 'path',
+          required: true,
+          schema: { type: 'string', format: 'uuid' },
+        },
+        {
+          name: 'workspaceId',
+          in: 'query',
+          required: false,
+          schema: { type: 'string', format: 'uuid' },
+        },
+      ],
+      responses: {
+        '200': jsonResponse(
+          'Owned client travel history.',
+          object({
+            history: array(
+              object(
+                {
+                  destination: text,
+                  country: text,
+                  visitedAt: text,
+                  interests: array(text),
+                  feedback: { type: 'string', enum: ['liked', 'neutral', 'disliked'] },
+                  experience: { type: 'string', enum: ['visited', 'planned'] },
+                  notes: text,
+                },
+                ['destination'],
+              ),
+            ),
+          }),
+        ),
         '404': error('Client profile not found for this session.'),
       },
     }),

@@ -52,12 +52,25 @@ const patch = async (
 const now = '2026-10-01T12:00:00.000Z';
 const profileInput = () => ({
   name: 'John Example',
+  country: 'Australia',
+  nationality: 'New Zealand',
+  dateOfBirth: '1990-02-04',
   context: 'Likes culture. Passport number: ABC123456',
   passportNationality: 'Pakistan',
   photoDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
   interests: ['Culture'],
   foodPreferences: ['Vegetarian'],
-  history: [{ destination: 'London', country: 'United Kingdom', visitedAt: '2025-06' }],
+  history: [
+    {
+      destination: 'London',
+      country: 'United Kingdom',
+      visitedAt: '2025-06',
+      feedback: 'liked',
+      experience: 'visited',
+      notes: 'Enjoyed quiet museums',
+      interests: ['Culture'],
+    },
+  ],
 });
 const manual = (): StudioItinerary => ({
   generatedAt: now,
@@ -121,6 +134,9 @@ test('client profiles support same-name identities, safe photos, private ownersh
   ).body.client;
   assert.notEqual(first.id, second.id);
   assert.equal(first.passportNationality, 'PK');
+  assert.equal(first.country, 'AU');
+  assert.equal(first.nationality, 'NZ');
+  assert.equal(first.dateOfBirth, '1990-02-04');
   assert.doesNotMatch(first.context, /ABC123456/);
   assert.equal(first.photoDataUrl, profileInput().photoDataUrl);
   assert.equal(
@@ -430,6 +446,7 @@ test('research routes use private returning-client history without photo or iden
       clientId: profile.id,
       clientName: 'PRIVATE CLIENT NAME',
       passportNationality: 'PK',
+      tripPurpose: 'tourism',
       startDate: '2027-04-01',
       endDate: '2027-04-10',
       interests: ['Culture'],
@@ -463,12 +480,15 @@ test('research routes use private returning-client history without photo or iden
     calls.push(name);
     assert.doesNotMatch(
       body.input[0].content,
-      /PRIVATE CLIENT NAME|John Example|photoDataUrl|iVBOR|ABC123456/,
+      /PRIVATE CLIENT NAME|John Example|photoDataUrl|dateOfBirth|1990-02-04|iVBOR|ABC123456/,
     );
     assert.equal(body.tools[0].type, 'web_search');
     const payload = JSON.parse(body.input[0].content);
     if (name === 'studio_destination_research') {
       assert.equal(payload.travelHistory[0].destination, 'London');
+      assert.equal(payload.travelHistory[0].feedback, 'liked');
+      assert.equal(payload.travelHistory[0].notes, 'Enjoyed quiet museums');
+      assert.equal(payload.travelHistory[0].experience, 'visited');
       return mockOpenAI(
         {
           candidates: [
@@ -541,4 +561,88 @@ test('research routes use private returning-client history without photo or iden
   workspace = checked.body.workspace;
   assert.equal(workspace.entryRequirements?.[0].category, 'visa_required');
   assert.deepEqual(calls, ['studio_destination_research', 'studio_entry_requirements']);
+});
+
+test('client birth date and country fields validate without changing passport nationality', async () => {
+  const { client } = setup();
+  for (const dateOfBirth of ['2025-02-30', '2099-01-01', 'yesterday', '1990-2-4'])
+    await client
+      .post('/api/studio/client-profiles')
+      .send({ ...profileInput(), dateOfBirth })
+      .expect(400);
+  for (const field of ['country', 'nationality'])
+    await client
+      .post('/api/studio/client-profiles')
+      .send({ ...profileInput(), [field]: 'not a country' })
+      .expect(400);
+  const profile = (
+    await client
+      .post('/api/studio/client-profiles')
+      .send({ ...profileInput(), dateOfBirth: '2000-02-29', nationality: '', country: '' })
+      .expect(201)
+  ).body.client;
+  assert.equal(profile.dateOfBirth, '2000-02-29');
+  assert.equal(profile.passportNationality, 'PK');
+  const listed = (await client.get('/api/studio/client-profiles').expect(200)).body.clients[0];
+  assert.deepEqual(listed.dateOfBirth, profile.dateOfBirth);
+});
+
+test('recommendation history combines owned past plans with explicit feedback without assuming visits', async () => {
+  const { client, stranger } = setup();
+  const profile = (
+    await client
+      .post('/api/studio/client-profiles')
+      .send({
+        ...profileInput(),
+        history: [
+          {
+            destination: 'London',
+            country: 'GB',
+            visitedAt: '2025-06-04',
+            interests: ['Art'],
+            feedback: 'liked',
+            notes: 'Loved small galleries',
+            experience: 'visited',
+          },
+        ],
+      })
+      .expect(201)
+  ).body.client;
+  const addTrip = async (name: string, country: string, startDate: string, endDate: string) => {
+    let w = await create(client);
+    w = await patch(client, w, {
+      brief: { clientId: profile.id, startDate, endDate, interests: ['Architecture'] },
+      stops: [
+        {
+          id: randomUUID(),
+          name,
+          country,
+          nights: 3,
+          arrivalDate: startDate,
+          departureDate: endDate,
+          arrivalFixed: true,
+          onwardTransport: 'undecided',
+          neighbourhood: '',
+          notes: '',
+        },
+      ],
+    });
+    return w;
+  };
+  await addTrip('London', 'GB', '2025-06-01', '2025-06-04');
+  await addTrip('Paris', 'FR', '2025-07-01', '2025-07-04');
+  const current = await addTrip('Tokyo', 'JP', '2025-08-01', '2025-08-04');
+  await addTrip('Rome', 'IT', '2099-09-01', '2099-09-04');
+  const endpoint = `/api/studio/client-profiles/${profile.id}/history?workspaceId=${current.id}`;
+  await stranger.get(endpoint).expect(404);
+  const history = (await client.get(endpoint).expect(200)).body.history;
+  assert.equal(history.length, 2);
+  assert.deepEqual(
+    history.find((h: any) => h.destination === 'London'),
+    profile.history[0],
+  );
+  assert.equal(history.find((h: any) => h.destination === 'Paris').experience, 'planned');
+  assert.doesNotMatch(JSON.stringify(history), /John Example|1990-02-04|iVBOR|Tokyo|Rome/);
+  await client.delete(`/api/studio/client-profiles/${profile.id}`).expect(204);
+  await client.get(endpoint).expect(404);
 });

@@ -128,83 +128,265 @@ const months: Record<string, number> = {
 const monthWords = Object.keys(months)
   .sort((a, b) => b.length - a.length)
   .join('|');
-type ReadDate = { date: string; index: number };
-function readDates(source: string): ReadDate[] {
-  const dates: ReadDate[] = [];
+export type StudioDateReference = { date: string; index: number };
+const validDate = (date: string) =>
+  Number.isFinite(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
+
+function literalDates(
+  source: string,
+  today: string,
+  referenceDate?: string,
+): StudioDateReference[] {
+  const dates: StudioDateReference[] = [];
+  const occupied: [number, number][] = [];
   const add = (year: number, month: number, day: number, index: number) => {
     const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    if (
-      Number.isFinite(Date.parse(date)) &&
-      new Date(date).toISOString().slice(0, 10) === date &&
-      !dates.some((entry) => entry.date === date && entry.index === index)
-    )
+    if (validDate(date) && !dates.some((entry) => entry.date === date && entry.index === index))
       dates.push({ date, index });
   };
-  for (const match of source.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g))
+  const yearFor = (month: number, day: number, explicit?: string) => {
+    if (explicit) return Number(explicit);
+    if (referenceDate) return Number(referenceDate.slice(0, 4));
+    const year = Number(today.slice(0, 4));
+    const candidate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return candidate < today ? year + 1 : year;
+  };
+  const claim = (match: RegExpMatchArray) => {
+    const index = match.index!;
+    if (occupied.some(([start, end]) => index < end && index + match[0].length > start))
+      return false;
+    occupied.push([index, index + match[0].length]);
+    return true;
+  };
+  for (const match of source.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)) {
+    claim(match);
     add(+match[1], +match[2], +match[3], match.index);
-  for (const match of source.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g))
+  }
+  for (const match of source.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g)) {
+    claim(match);
     add(+match[3], +match[2], +match[1], match.index);
-  for (const match of source.matchAll(
-    new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthWords})\\.?[,]?\\s+(20\\d{2})\\b`, 'gi'),
-  ))
-    add(+match[3], months[match[2].toLowerCase()], +match[1], match.index);
-  for (const match of source.matchAll(
-    new RegExp(`\\b(${monthWords})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?[,]?\\s+(20\\d{2})\\b`, 'gi'),
-  ))
-    add(+match[3], months[match[1].toLowerCase()], +match[2], match.index);
+  }
   for (const match of source.matchAll(
     new RegExp(
-      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|[-–])\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthWords})\\.?[,]?\\s+(20\\d{2})\\b`,
+      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|[-–])\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${monthWords})\\.?(?:[,]?\\s+(20\\d{2}))?\\b`,
       'gi',
     ),
   )) {
-    add(+match[4], months[match[3].toLowerCase()], +match[1], match.index);
-    add(
-      +match[4],
-      months[match[3].toLowerCase()],
-      +match[2],
-      match.index + match[0].indexOf(match[2], match[1].length),
-    );
+    if (!claim(match)) continue;
+    const month = months[match[3].toLowerCase()];
+    const year = yearFor(month, +match[1], match[4]);
+    add(year, month, +match[1], match.index);
+    add(year, month, +match[2], match.index + match[0].indexOf(match[2], match[1].length));
   }
-  return dates
-    .sort((a, b) => a.index - b.index)
-    .filter((entry, index, all) => !all.slice(0, index).some((old) => old.date === entry.date));
+  for (const match of source.matchAll(
+    new RegExp(
+      `\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${monthWords})\\.?(?:[,]?\\s+(20\\d{2}))?\\b`,
+      'gi',
+    ),
+  )) {
+    if (!claim(match)) continue;
+    const month = months[match[2].toLowerCase()];
+    add(yearFor(month, +match[1], match[3]), month, +match[1], match.index);
+  }
+  for (const match of source.matchAll(
+    new RegExp(
+      `\\b(${monthWords})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:[,]?\\s+(20\\d{2}))?\\b`,
+      'gi',
+    ),
+  )) {
+    if (!claim(match)) continue;
+    const month = months[match[1].toLowerCase()];
+    add(yearFor(month, +match[2], match[3]), month, +match[2], match.index);
+  }
+  // An ordinal alone borrows a month/year only from supplied trip context, never
+  // from today's month or an assistant's suggestion.
+  const datedMonths = new Set(dates.map(({ date }) => date.slice(0, 7)));
+  const monthContext = datedMonths.size === 1 ? dates[0].date : referenceDate;
+  if (monthContext)
+    for (const match of source.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi)) {
+      if (!claim(match)) continue;
+      const prefix = source.slice(Math.max(0, match.index - 50), match.index);
+      if (
+        !/\b(?:on|arriv\w*|return\w*|back|leave|leaving|depart\w*|until|through|from|to)\b/i.test(
+          prefix,
+        ) &&
+        !/^\s*(?:the\s+)?\d{1,2}(?:st|nd|rd|th)(?:\s+please)?[.!]?\s*$/i.test(source)
+      )
+        continue;
+      add(+monthContext.slice(0, 4), +monthContext.slice(5, 7), +match[1], match.index);
+    }
+  const ordered = dates.sort((a, b) => a.index - b.index);
+  return ordered.filter((entry, index) => {
+    const prefix = source.slice(Math.max(0, entry.index - 150), entry.index);
+    let clause = prefix.split(/[.;,\n]|\bbut\b/i).at(-1) || '';
+    const previous = ordered[index - 1];
+    if (previous && previous.index >= entry.index - clause.length) {
+      const afterPrevious = source.slice(previous.index + 1, entry.index);
+      // A new explicit role starts a new declaration, e.g. "not arrive on
+      // 3 October and arrive on 4 October". Otherwise preserve coordinated
+      // exclusions such as "not 3 October or 4 October".
+      if (/\b(?:arriv\w*|depart\w*|return\w*|leav\w*|start\w*|end\w*)\b/i.test(afterPrevious))
+        clause = afterPrevious;
+    }
+    if (/\b(?:not|never|instead of|rather than|except)\b/i.test(clause)) return false;
+    const next = ordered[index + 1];
+    if (
+      next &&
+      /\b(?:chang\w*|move|shift|reschedule|correct|update|postpone|advance)\b/i.test(prefix) &&
+      /\b(?:arriv\w*|depart\w*|return\w*|start\w*|end\w*)\b/i.test(prefix) &&
+      /\bfrom\s*$/i.test(prefix) &&
+      /\bto\b/i.test(source.slice(entry.index, next.index))
+    )
+      return false;
+    return true;
+  });
+}
+
+function suppliedDateContext(context: StudioGroundingContext) {
+  const today = context.today || new Date().toISOString().slice(0, 10);
+  const saved = [
+    context.brief?.departureDate,
+    context.brief?.startDate,
+    context.brief?.endDate,
+  ].filter((date): date is string => Boolean(date && validDate(date)));
+  let reference: string | undefined = saved[0];
+  let latest: StudioDateReference[] = [];
+  for (const entry of context.messages || []) {
+    if (entry.role !== 'user') continue;
+    const dates = literalDates(entry.content, today, reference);
+    if (!dates.length) continue;
+    latest = dates;
+    reference =
+      new Set(dates.map(({ date }) => date.slice(0, 7))).size === 1 ? dates[0].date : undefined;
+  }
+  const dates = latest.length ? latest.map(({ date }) => date) : saved;
+  return { today, reference, unique: new Set(dates).size === 1 ? dates[0] : undefined };
+}
+
+/** Resolve omitted years/months from user-supplied trip dates, not model prose. */
+export function readStudioDateReferences(
+  source: string,
+  context: StudioGroundingContext = {},
+): StudioDateReference[] {
+  const supplied = suppliedDateContext(context);
+  const dates = literalDates(source, supplied.today, supplied.reference);
+  const reference = source.match(
+    /\b(?:same date|same day|that date|that day|(?:it(?:['’]s| is|s)|that(?:['’]s| is)|this is)\s+(?:my |the )?(?:arrival|departure|return|start|end) date)\b/i,
+  );
+  if (!dates.length && supplied.unique && reference)
+    dates.push({ date: supplied.unique, index: reference.index! + reference[0].length });
+  return dates;
+}
+
+const readDates = readStudioDateReferences;
+type TravelDateField = 'startDate' | 'endDate' | 'departureDate';
+
+const travelDateLabels: Record<TravelDateField, RegExp> = {
+  startDate: /\b(?:arriv(?:e|es|ing|al)|start(?:s|ing)?|begin(?:s|ning)?)\b/i,
+  endDate: /\b(?:end(?:s|ing)?|return(?:s|ing)?|until|through|back|leav(?:e|ing))\b/i,
+  departureDate: /\b(?:depart(?:s|ing|ure)?|outbound|outward)\b/i,
+};
+
+function movementDateRole(
+  source: string,
+  context: StudioGroundingContext,
+): 'departureDate' | 'endDate' | undefined {
+  const origin = context.brief?.origin?.trim();
+  const destination = context.brief?.preferredDestination?.trim();
+  if (origin && destination && normal(origin) === normal(destination)) return;
+  const matches: { field: 'departureDate' | 'endDate'; index: number }[] = [];
+  for (const [place, field] of [
+    [origin, 'departureDate'],
+    [destination, 'endDate'],
+  ] as const) {
+    if (!place) continue;
+    const escaped = place.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const pattern of [
+      `\\b(?:depart(?:s|ing|ure)?|leav(?:e|ing))\\s+(?:(?:date|day)\\s+)?(?:from\\s+)?${escaped}(?=$|[^\\p{L}\\p{N}])`,
+      `(?:^|[^\\p{L}\\p{N}])${escaped}(?:['’]s)?\\s+(?:departure|departing)\\b`,
+    ])
+      for (const match of source.matchAll(new RegExp(pattern, 'giu')))
+        matches.push({ field, index: match.index });
+  }
+  return matches.sort((a, b) => b.index - a.index)[0]?.field;
+}
+
+function dateRole(
+  source: string,
+  entry: StudioDateReference,
+  context: StudioGroundingContext = {},
+): TravelDateField | undefined {
+  const prefix =
+    source
+      .slice(Math.max(0, entry.index - 70), entry.index)
+      .split(/[.;\n]/)
+      .at(-1) || '';
+  const latest = (Object.entries(travelDateLabels) as [TravelDateField, RegExp][])
+    .flatMap(([field, pattern]) =>
+      [...prefix.matchAll(new RegExp(pattern.source, 'gi'))].map((match) => ({
+        field,
+        index: match.index,
+        word: match[0],
+      })),
+    )
+    .sort((a, b) => b.index - a.index)[0];
+  if (!latest) return;
+  if (/^(?:depart|leav)/i.test(latest.word)) {
+    const scoped = movementDateRole(prefix, context);
+    if (scoped) return scoped;
+    // A short "departure" answer to an explicit return question refers to the
+    // destination departure. The origin-versus-arrival question remains distinct.
+    if (latest.field === 'departureDate' && answersField(questionFields(context), 'endDate'))
+      return 'endDate';
+  }
+  return latest.field;
 }
 
 function dateFor(
   source: string,
-  field: 'startDate' | 'endDate',
+  field: TravelDateField,
   allowBare: boolean,
+  context: StudioGroundingContext = {},
 ): string | undefined {
-  const dates = readDates(source);
+  const dates = readDates(source, context);
   if (!dates.length) return;
-  const start = /\b(?:arriv(?:e|es|ing|al)|start(?:s|ing)?|begin(?:s|ning)?|from)\b/i;
-  const end = /\b(?:end(?:s|ing)?|return(?:s|ing)?|until|through|back|leav(?:e|ing))\b/i;
-  const anchored = dates.filter((entry) => {
-    const prefix =
-      source
-        .slice(Math.max(0, entry.index - 55), entry.index)
-        .split(/[.;\n]/)
-        .at(-1) || '';
-    const labels = [
-      ...prefix.matchAll(new RegExp((field === 'startDate' ? start : end).source, 'gi')),
-    ];
-    const opposite = [
-      ...prefix.matchAll(new RegExp((field === 'startDate' ? end : start).source, 'gi')),
-    ];
-    return labels.length && (!opposite.length || labels.at(-1)!.index > opposite.at(-1)!.index);
-  });
-  if (anchored.length) return (field === 'startDate' ? anchored[0] : anchored.at(-1))!.date;
-  if (dates.length >= 2 && /\b(?:to|between)\b|[–]/i.test(source))
+  const anchored = dates.filter((entry) => dateRole(source, entry, context) === field);
+  if (anchored.length) return (field === 'endDate' ? anchored.at(-1) : anchored[0])!.date;
+  if (
+    field !== 'departureDate' &&
+    dates.length >= 2 &&
+    /\b(?:to|between|until|through)\b|[–]/i.test(source) &&
+    !travelDateLabels.departureDate.test(source)
+  )
     return (field === 'startDate' ? dates[0] : dates.at(-1))!.date;
   if (
     allowBare &&
     dates.length === 1 &&
-    !start.test(source) &&
-    !end.test(source) &&
-    !/\b(?:depart|fly|flight)\b/i.test(source)
+    !Object.values(travelDateLabels).some((pattern) => pattern.test(source)) &&
+    !/\b(?:fly|flight)\b/i.test(source)
   )
     return dates[0].date;
+}
+
+const dateOnlyAnswer = (source: string) =>
+  !source
+    .replace(new RegExp(`\\b(?:${monthWords})\\b`, 'gi'), '')
+    .replace(/\b\d{1,4}(?:st|nd|rd|th)?\b/g, '')
+    .replace(/\b(?:on|the|of|please)\b/gi, '')
+    .replace(/[\s,./!–-]/g, '');
+
+/** Literal date roles for turn orchestration; a departure never implies an arrival. */
+export function groundedStudioDates(
+  source: string,
+  context: StudioGroundingContext = {},
+): Partial<Pick<StudioBrief, TravelDateField>> {
+  const asked = questionFields(context, context.brief);
+  const result: Partial<Pick<StudioBrief, TravelDateField>> = {};
+  for (const field of ['startDate', 'endDate', 'departureDate'] as const) {
+    const value = dateFor(source, field, answersField(asked, field), context);
+    if (value) result[field] = value;
+  }
+  return result;
 }
 
 function money(source: string): {
@@ -264,7 +446,9 @@ function money(source: string): {
   };
 }
 
-type StudioGroundingContext = {
+export type StudioGroundingContext = {
+  /** Override the current ISO date for stable tests or a request's date context. */
+  today?: string;
   messages?: Pick<StudioWorkspace['messages'][number], 'role' | 'content'>[];
   /** The brief after applying literal, validated user facts. */
   brief?: StudioBrief;
@@ -288,7 +472,11 @@ function questionFields(
   if (/\b(?:nights?|length of stay|how long)\b/i.test(question)) fields.add('nights');
   if (/\b(?:arrival|arrive|start(?:ing)? date|when.*(?:travel|go|begin|start))\b/i.test(question))
     fields.add('startDate');
-  if (/\b(?:return|end date|leave|depart)\b/i.test(question)) fields.add('endDate');
+  if (/\b(?:return|end date)\b/i.test(question)) fields.add('endDate');
+  if (/\b(?:leave|leaving)\b/i.test(question))
+    fields.add(movementDateRole(question, context) || 'endDate');
+  if (/\b(?:depart(?:ure)?|outbound|outward)\b/i.test(question))
+    fields.add(movementDateRole(question, context) || 'departureDate');
   if (/\bdates?\b/i.test(question) && !/\b(?:birth|born)\b/i.test(question))
     fields.add('datesFlexible');
   return fields;
@@ -296,10 +484,14 @@ function questionFields(
 
 function answersField(fields: Set<string>, field: string) {
   if (!fields.has(field)) return false;
-  if (field === 'startDate' || field === 'endDate')
-    return !fields.has(field === 'startDate' ? 'endDate' : 'startDate');
+  if (['startDate', 'endDate', 'departureDate'].includes(field))
+    return ['startDate', 'endDate', 'departureDate'].every(
+      (other) => other === field || !fields.has(other),
+    );
   if (field === 'datesFlexible')
-    return [...fields].every((entry) => ['startDate', 'endDate', 'datesFlexible'].includes(entry));
+    return [...fields].every((entry) =>
+      ['startDate', 'endDate', 'departureDate', 'datesFlexible'].includes(entry),
+    );
   return fields.size === 1;
 }
 
@@ -313,7 +505,7 @@ export function groundedStudioBrief(
   context: StudioGroundingContext = {},
 ): StudioBrief {
   const next = structuredClone(current);
-  const asked = questionFields(context, current);
+  const asked = questionFields({ ...context, brief: current }, current);
   const contextual = (source: string, field: string) =>
     normal(source) === normal(message) && answersField(asked, field);
   const valid = facts
@@ -549,6 +741,41 @@ export function groundedStudioBrief(
     }
     if (applicable.size === 1) next[field] = [...applicable][0];
   }
+  for (const fact of valid.filter((entry) => entry.field === 'tripPurpose')) {
+    const source = fact.sources[0];
+    const candidates = new Set<NonNullable<StudioBrief['tripPurpose']>>();
+    for (const clause of source.split(/[.,;\n]|\b(?:and|but)\b/i)) {
+      if (/\b(?:not|no|maybe|possibly|unsure)\b/i.test(clause)) continue;
+      if (
+        /\b(?:business|bussiness)\s+(?:trip|travel|visit|meetings?)\b|\b(?:for|on)\s+business\b|\battend(?:ing)?\s+(?:a\s+)?conference\b/i.test(
+          clause,
+        )
+      )
+        candidates.add('business');
+      if (
+        /\b(?:tourism|holiday|vacation)\b|\b(?:leisure|tourist)\s+(?:trip|travel|visit)\b/i.test(
+          clause,
+        )
+      )
+        candidates.add('tourism');
+      if (
+        /\b(?:study|studying|student)\s+(?:abroad|visa|course|trip)\b|\b(?:for|to)\s+(?:study|university)\b/i.test(
+          clause,
+        )
+      )
+        candidates.add('study');
+      if (/\b(?:employment|paid work|taking a job|work visa)\b/i.test(clause))
+        candidates.add('employment');
+    }
+    const direct = normal(message).replace(/[.!]$/, '');
+    if (
+      /\b(?:purpose|business or leisure|reason for.*trip)\b/i.test(lastQuestion) &&
+      ['tourism', 'business', 'study', 'employment', 'other', 'undecided'].includes(direct)
+    )
+      candidates.add(direct as NonNullable<StudioBrief['tripPurpose']>);
+    if (candidates.size === 1) next.tripPurpose = [...candidates][0];
+    else if (candidates.size > 1) next.tripPurpose = 'other';
+  }
   const critical = new Set<keyof StudioBrief>([
     'adults',
     'children',
@@ -557,9 +784,11 @@ export function groundedStudioBrief(
     'currency',
     'startDate',
     'endDate',
+    'departureDate',
     'datesFlexible',
     'passportNationality',
     'tripType',
+    'tripPurpose',
     'outboundTransport',
     'returnTransport',
     'clientId',
@@ -602,9 +831,16 @@ export function groundedStudioBrief(
         (next.children === null || ages.length === next.children)
       )
         next.childAges = ages;
-    } else if (fact.field === 'startDate' || fact.field === 'endDate') {
+    } else if (
+      fact.field === 'startDate' ||
+      fact.field === 'endDate' ||
+      fact.field === 'departureDate'
+    ) {
       // Source context distinguishes an arrival from an outbound flight departure.
-      const value = dateFor(source, fact.field, contextual(source, fact.field));
+      const value = dateFor(source, fact.field, contextual(source, fact.field), {
+        ...context,
+        brief: current,
+      });
       if (value) next[fact.field] = value;
     } else if (fact.field === 'datesFlexible') {
       if (
@@ -707,6 +943,8 @@ function routeEntries(source: string): { name: string; country: string; nights: 
   for (const match of text.matchAll(pattern)) {
     const name = match[1]
       .replace(/^(?:change|switch|replace)\b.*\b(?:to|with)\s+/i, '')
+      .replace(/^(?:change|update|set|make)\s+/i, '')
+      .replace(/\s+(?:to|at)$/i, '')
       .replace(
         /^(?:(?:and|then|visit|plan|stay in|go to|travel to|a trip to|trip to|to|we want|we would like)\s+)+/i,
         '',
@@ -747,7 +985,7 @@ function namedSequence(source: string, proposed: GroundingStop[]): string[] {
   );
 }
 
-function requestedNights(
+export function requestedStudioNights(
   source: string,
   name: string,
   current: number | null,
@@ -851,21 +1089,50 @@ export function assertStudioRouteGrounding(
     !change &&
     !ideas &&
     !sourceChange &&
-    !readDates(message).length &&
+    !readDates(message, context).length &&
     !(answeringNights && bareNumber(message))
   )
     fail();
   const source = [message, ...(!current.length || sourceChange ? documentTexts : [])].join('\n');
   const initialSource = [source, ...history].join('\n');
+  const turnDates = groundedStudioDates(message, context);
+  const sourceDates = readDates(source, context);
+  const sourceArrival = groundedStudioDates(source, context).startDate;
+  const arrivalDate = turnDates.startDate || context.brief?.startDate;
+  const endDate = turnDates.endDate || context.brief?.endDate;
+  const dateNights =
+    proposed.length === 1 &&
+    current.length <= 1 &&
+    (turnDates.startDate || turnDates.endDate) &&
+    arrivalDate &&
+    endDate
+      ? (Date.parse(endDate) - Date.parse(arrivalDate)) / 86400000
+      : undefined;
   for (const [index, entry] of proposed.entries()) {
     const old = current.find((previous) => placeNormal(previous.name) === placeNormal(entry.name));
     if (!ideas && (old ? old.nights !== entry.nights : entry.nights !== null)) {
       const singleStop = proposed.length === 1 && current.length <= 1;
       const expected =
-        requestedNights(source, entry.name, old?.nights ?? null, singleStop, answeringNights) ??
+        requestedStudioNights(
+          source,
+          entry.name,
+          old?.nights ?? null,
+          singleStop,
+          answeringNights,
+        ) ??
+        // A single stay's explicitly supplied arrival/return dates establish its
+        // length. Never use stale dates during an unrelated turn, or override an
+        // explicit (possibly conflicting) night count with this calculation.
+        (dateNights !== undefined &&
+        Number.isInteger(dateNights) &&
+        dateNights >= 0 &&
+        dateNights <= 120 &&
+        !/\bnights?\b/i.test(source)
+          ? dateNights
+          : undefined) ??
         (!current.length
           ? history
-              .map((text) => requestedNights(text, entry.name, null, singleStop))
+              .map((text) => requestedStudioNights(text, entry.name, null, singleStop))
               .find((nights) => nights !== undefined)
           : undefined);
       if (expected === undefined || expected !== entry.nights) fail();
@@ -873,7 +1140,28 @@ export function assertStudioRouteGrounding(
     if (
       entry.arrivalFixed &&
       entry.arrivalDate &&
-      !readDates(source).some((date) => date.date === entry.arrivalDate) &&
+      !sourceDates.some((date) => {
+        if (date.date !== entry.arrivalDate) return false;
+        const role = dateRole(source, date, context);
+        if (role) return role === 'startDate';
+        if (index === 0 && sourceArrival === entry.arrivalDate) return true;
+        if (sourceDates.length === 1 && dateOnlyAnswer(source)) return true;
+        // "London on 3 October for 3 nights" anchors a hotel stay. A trip
+        // described only as "four days on 3 October" still needs its date role.
+        const cityOnDate = new RegExp(
+          `${escape(entry.name)}(?:\\s*,\\s*[\\p{L} .'-]+)?(?:\\s+for\\s+[\\w -]+\\s+nights?)?\\s+(?:on|from)\\s*$`,
+          'iu',
+        ).test(source.slice(Math.max(0, date.index - 100), date.index));
+        return (
+          cityOnDate &&
+          requestedStudioNights(
+            source,
+            entry.name,
+            old?.nights ?? null,
+            proposed.length === 1 && current.length <= 1,
+          ) !== undefined
+        );
+      }) &&
       !(index === 0 && context.brief?.startDate === entry.arrivalDate) &&
       !current.some(
         (old) =>

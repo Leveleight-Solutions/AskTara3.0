@@ -13,11 +13,14 @@ import {
 const originalFetch = globalThis.fetch;
 let oldKey: string | undefined;
 let oldModel: string | undefined;
+let oldEffort: string | undefined;
 beforeEach(() => {
   oldKey = process.env.OPENAI_API_KEY;
   oldModel = process.env.OPENAI_MODEL;
+  oldEffort = process.env.OPENAI_REASONING_EFFORT;
   process.env.OPENAI_API_KEY = 'mock-only-key';
   process.env.OPENAI_MODEL = 'gpt-6-astra';
+  delete process.env.OPENAI_REASONING_EFFORT;
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -25,6 +28,8 @@ afterEach(() => {
   else process.env.OPENAI_API_KEY = oldKey;
   if (oldModel === undefined) delete process.env.OPENAI_MODEL;
   else process.env.OPENAI_MODEL = oldModel;
+  if (oldEffort === undefined) delete process.env.OPENAI_REASONING_EFFORT;
+  else process.env.OPENAI_REASONING_EFFORT = oldEffort;
 });
 
 const data = (mime: string, body: Buffer | string) =>
@@ -145,6 +150,7 @@ test('OCR uses configured model and untrusted image input with no tools or persi
     assert.equal(url, 'https://api.openai.com/v1/responses');
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, 'gpt-6-astra');
+    assert.deepEqual(body.reasoning, { effort: 'medium' });
     assert.equal(body.store, false);
     assert.equal(body.tools, undefined);
     assert.equal(body.input[0].content[0].type, 'input_image');
@@ -180,6 +186,24 @@ test('PDF uses inline file_data and a neutral filename instead of uploading a pe
     agency,
   );
   assert.match(result.text, /Paris, Lyon, Nice/);
+});
+
+test('document extraction respects the configured reasoning effort', async () => {
+  for (const effort of ['low', 'high']) {
+    process.env.OPENAI_REASONING_EFFORT = effort;
+    for (const kind of ['image', 'pdf'] as const) {
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        assert.deepEqual(body.reasoning, { effort });
+        return extractionResponse('London, 3 nights.');
+      };
+      const result = await parseStudioImport(
+        { kind, name: 'Fictional trip source', data: kind === 'image' ? png : pdf },
+        agency,
+      );
+      assert.equal(result.text, 'London, 3 nights.');
+    }
+  }
 });
 
 test('audio uses multipart transcription with review-only output', async () => {

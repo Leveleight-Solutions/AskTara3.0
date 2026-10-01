@@ -15,7 +15,7 @@ Planning runs expose progress, cancellation and retry with request-ID deduplicat
 | Setting                                    | Purpose                                                                                                                                |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `OPENAI_API_KEY`                           | Server-side intake, web research, operating-status verification and composition. Both web-search stages use this same key.             |
-| `OPENAI_MODEL` / `OPENAI_REASONING_EFFORT` | Current defaults: `gpt-6-astra` / `low`. The account must support the selected model and tools.                                        |
+| `OPENAI_MODEL` / `OPENAI_REASONING_EFFORT` | Current defaults: `gpt-6-astra` / `medium`. The account must support the selected model and tools.                                     |
 | `LITEAPI_API_KEY` / `LITEAPI_MODE`         | Hotel and flight rate searches. The current development credential is sandbox and uses `test`; simulated rates remain visibly labeled. |
 | `DUFFEL_ACCESS_TOKEN`                      | Optional alternative flight provider; takes precedence over LiteAPI for flights.                                                       |
 | `GOOGLE_PLACES_API_KEY`                    | Optional fresh Google place details. Separate from web research evidence.                                                              |

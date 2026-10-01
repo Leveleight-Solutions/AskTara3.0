@@ -55,20 +55,20 @@ railway logs --service asktara --environment production --deployment --latest --
 
 This release requires these non-secret settings on the production target:
 
-| Variable                              | Value                                            | Reason                                                                                             |
-| ------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                            | `production`                                     | Enables production security behavior and HTTPS-only cookies.                                       |
-| `PORT`                                | `3001`                                           | Express port and public-domain target port.                                                        |
-| `APP_ORIGIN`                          | `https://asktara-production-58de.up.railway.app` | Exact public HTTPS origin for browser requests, without a trailing slash.                          |
-| `COOKIE_SECURE`                       | `true`                                           | Keeps session cookies restricted to HTTPS.                                                         |
-| `TRUST_PROXY`                         | `1`                                              | Uses Railway's forwarding headers for HTTPS detection and client IPs.                              |
-| `DATABASE_PATH`                       | `/app/data/asktara.sqlite`                       | Keeps SQLite and its WAL/SHM files on the persistent volume.                                       |
-| `RAILWAY_RUN_UID`                     | `0`                                              | Allows the app to write the root-owned Railway volume.                                             |
-| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `210`                                            | Allows the application's 200-second supplier-request drain before Railway sends SIGKILL.           |
-| `SHUTDOWN_GRACE_MS`                   | `200000` (default)                               | Maximum application shutdown grace; bounded integer values from `130000` to `300000` are accepted. |
-| `LITEAPI_MODE`                        | `test`                                           | Matches the currently supplied sandbox credential.                                                 |
-| `OPENAI_MODEL`                        | `gpt-6-astra`                                    | Uses the verified model for all four concierge stages.                                             |
-| `OPENAI_REASONING_EFFORT`             | `low`                                            | Bounds latency while retaining model reasoning and web tools.                                      |
+| Variable                              | Value                                            | Reason                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                            | `production`                                     | Enables production security behavior and HTTPS-only cookies.                                                             |
+| `PORT`                                | `3001`                                           | Express port and public-domain target port.                                                                              |
+| `APP_ORIGIN`                          | `https://asktara-production-58de.up.railway.app` | Exact public HTTPS origin for browser requests, without a trailing slash.                                                |
+| `COOKIE_SECURE`                       | `true`                                           | Keeps session cookies restricted to HTTPS.                                                                               |
+| `TRUST_PROXY`                         | `1`                                              | Uses Railway's forwarding headers for HTTPS detection and client IPs.                                                    |
+| `DATABASE_PATH`                       | `/app/data/asktara.sqlite`                       | Keeps SQLite and its WAL/SHM files on the persistent volume.                                                             |
+| `RAILWAY_RUN_UID`                     | `0`                                              | Allows the app to write the root-owned Railway volume.                                                                   |
+| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `210`                                            | Allows the application's 200-second supplier-request drain before Railway sends SIGKILL.                                 |
+| `SHUTDOWN_GRACE_MS`                   | `200000` (default)                               | Maximum application shutdown grace; bounded integer values from `130000` to `300000` are accepted.                       |
+| `LITEAPI_MODE`                        | `test`                                           | Matches the currently supplied sandbox credential.                                                                       |
+| `OPENAI_MODEL`                        | `gpt-6-astra`                                    | Uses the verified model for all four concierge stages.                                                                   |
+| `OPENAI_REASONING_EFFORT`             | `medium`                                         | Current application default for planning and PDF/image extraction; set explicitly when upgrading an existing deployment. |
 
 Railway terminates public HTTPS before forwarding traffic to the service. Keep `APP_ORIGIN` aligned with the public domain when changing it, and keep secure cookies enabled. The proxy setting assumes this Railway deployment; reassess it if the app is moved behind a different proxy chain.
 

@@ -14,6 +14,7 @@ import {
   sanitizeManualStudioItinerary,
 } from '../shared/studio-itinerary.ts';
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
+import { studioEntryPurposeDeclarations } from './studio-entry-context.ts';
 
 export const studioDate = z
   .string()
@@ -41,12 +42,18 @@ export const studioBriefSchema = z
       .refine((v) => !v || Boolean(normalizeStudioCountry(v)), 'Choose a destination country.')
       .optional(),
     tripType: z.enum(['undecided', 'single', 'multiple']).optional(),
+    tripPurpose: z
+      .enum(['undecided', 'tourism', 'business', 'study', 'employment', 'other'])
+      .optional(),
     outboundTransport: z.enum(['undecided', 'flight', 'cruise']).optional(),
     returnTransport: z.enum(['undecided', 'flight', 'cruise']).optional(),
     foodPreferences: z.array(short).max(30).optional(),
     clientName: short,
     context: z.string().max(8000),
     request: z.string().max(16000),
+    departureDate: studioDate
+      .describe('Departure from the origin. Arrival at the first destination uses startDate.')
+      .optional(),
     startDate: studioDate,
     endDate: studioDate,
     datesFlexible: z.boolean(),
@@ -303,6 +310,9 @@ export function qualifyStudio(
       'Will the return be by flight or cruise?',
       'The return can use a different transport mode.',
     );
+  if (b.departureDate) fact('departureDate', 'Departure from origin', b.departureDate);
+  if (b.tripPurpose && b.tripPurpose !== 'undecided')
+    fact('tripPurpose', 'Travel purpose', b.tripPurpose);
   if (b.startDate) fact('startDate', 'Arrival date', b.startDate);
   else if (b.datesFlexible) fact('dates', 'Travel dates', 'Flexible');
   else
@@ -391,6 +401,8 @@ export function applyStudioPatch(
   const entryBasis = (value: StudioWorkspace) =>
     JSON.stringify({
       passport: value.brief.passportNationality || '',
+      purpose: value.brief.tripPurpose || 'undecided',
+      activityDeclarations: studioEntryPurposeDeclarations(value.brief),
       destination: value.brief.preferredDestination || '',
       country: value.brief.destinationCountry || '',
       start: value.brief.startDate,
@@ -531,6 +543,7 @@ export function applyStudioPatch(
   }
   if (patch.pricing) workspace.pricing = { ...workspace.pricing, ...patch.pricing };
   const changed = previous !== structureFingerprint(workspace);
+  if (changed && workspace.clarification) workspace.clarification = null;
   if (changed) {
     workspace.structureAccepted = false;
     if (workspace.stage !== 'brief') workspace.stage = 'structure';
