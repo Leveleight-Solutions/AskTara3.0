@@ -1,6 +1,21 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import type { StudioWorkspace } from '../shared/studio';
+import { openStudioCruiseImport } from './ui-helpers';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/integrations', (route) =>
+    route.fulfill({
+      json: {
+        ai: false,
+        hotels: false,
+        flights: false,
+        activities: false,
+        mode: 'live',
+      },
+    }),
+  );
+});
 
 // Real local API and persistence. Manual planning performs no upstream or booking calls.
 test('reviewed cruise flows through route, services, manual activities and a real proposal PDF', async ({
@@ -12,6 +27,7 @@ test('reviewed cruise flows through route, services, manual activities and a rea
     expect(created.status()).toBe(201);
     id = ((await created.json()).workspace as StudioWorkspace).id;
     await page.goto(`/studio/${id}`);
+    await openStudioCruiseImport(page);
     const importer = page.getByRole('region', { name: 'Cruise itinerary import' });
     await importer.getByRole('button', { name: 'Enter cruise manually', exact: true }).click();
     await importer.getByLabel('Cruise name', { exact: true }).fill('Fictional Pacific cruise');
@@ -114,6 +130,7 @@ test('a newly saved cruise day retains its identity when edited without reopenin
     });
     expect(initial.status()).toBe(200);
     await page.goto(`/studio/${id}`);
+    await openStudioCruiseImport(page);
     await page.getByLabel('Saved cruise to edit', { exact: true }).selectOption(cruise.id);
     const importer = page.getByRole('region', { name: 'Cruise itinerary import' });
     await importer.getByRole('button', { name: 'Add cruise day', exact: true }).click();

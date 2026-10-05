@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { defaultStudioAgency, type StudioAgency, type StudioWorkspace } from '../shared/studio.ts';
 import { scrubStudioPrivateData } from './studio-privacy.ts';
+import { studioTripBriefingInputKey } from '../shared/studio-trip-briefing.ts';
 
 export class StudioError extends Error {
   constructor(
@@ -41,14 +42,18 @@ export function initializeStudioStorage(db: DatabaseSync) {
 }
 /** Rows carry `pinned_at` beside the JSON document; it is merged in on read, never stored in it. */
 function readWorkspace(row: Record<string, unknown>): StudioWorkspace {
-  return {
+  const workspace: StudioWorkspace = {
     cruises: [],
     destinationResearch: null,
     entryRequirements: [],
+    tripBriefing: null,
     itinerary: null,
     ...scrubStudioPrivateData(JSON.parse(String(row.data)) as StudioWorkspace),
     pinnedAt: row.pinned_at ? String(row.pinned_at) : null,
   };
+  if (workspace.tripBriefing?.inputKey !== studioTripBriefingInputKey(workspace))
+    workspace.tripBriefing = null;
+  return workspace;
 }
 function documentOf(workspace: StudioWorkspace): string {
   const { pinnedAt: _pinnedAt, ...document } = workspace;
@@ -97,6 +102,7 @@ export function newStudioWorkspace(): StudioWorkspace {
     cruises: [],
     destinationResearch: null,
     entryRequirements: [],
+    tripBriefing: null,
     itinerary: null,
     imports: [],
     messages: [],
@@ -153,6 +159,8 @@ export class StudioStore {
   }
   /** A single CAS statement; may be called inside a publication transaction. */
   save(ownerId: string, workspace: StudioWorkspace, expectedRevision: number): StudioWorkspace {
+    if (workspace.tripBriefing?.inputKey !== studioTripBriefingInputKey(workspace))
+      workspace.tripBriefing = null;
     const next = scrubStudioPrivateData({
       ...workspace,
       revision: expectedRevision + 1,

@@ -3,6 +3,7 @@ import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
 import { defaultStudioAgency, type StudioWorkspace } from '../shared/studio';
 import { newStudioWorkspace } from '../server/studio-store';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 
 function pendingDates() {
   const workspace = newStudioWorkspace();
@@ -63,6 +64,7 @@ async function bootstrap(
       return json({ clients: [] });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'PATCH') {
       const body = route.request().postDataJSON();
       workspace.brief = { ...workspace.brief, ...body.brief };
@@ -152,6 +154,7 @@ test('origin departure can be edited without changing arrival at the first desti
     throw new Error('Editing the brief must not send a chat message.');
   });
   await page.goto(`/studio/${workspace.id}`);
+  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
   await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Client brief' });
   await expect(dialog.getByLabel('Departure from origin', { exact: true })).toHaveValue(
@@ -164,6 +167,7 @@ test('origin departure can be edited without changing arrival at the first desti
   await dialog.getByRole('button', { name: 'Save brief', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
+  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
   await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
   await expect(dialog.getByLabel('Departure from origin', { exact: true })).toHaveValue(
     '2026-10-02',

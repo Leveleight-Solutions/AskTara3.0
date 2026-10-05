@@ -606,7 +606,10 @@ export function applyStudioPatch(
     workspace.brief.destinationCountry =
       normalizeStudioCountry(workspace.stops[0]?.country || '')?.code || '';
   }
-  if (previousEntryBasis !== entryBasis(workspace)) workspace.entryRequirements = [];
+  if (previousEntryBasis !== entryBasis(workspace)) {
+    workspace.entryRequirements = [];
+    workspace.tripBriefing = null;
+  }
   if (previousResearchBasis !== researchBasis(workspace)) workspace.destinationResearch = null;
   workspace.qualification = qualifyStudio(workspace, agency);
   return workspace;

@@ -11,7 +11,7 @@ import {
 import { structuredResponse, evidenceUrl, type WebSource } from './agents/openai.ts';
 import { StudioError } from './studio-store.ts';
 import { redactStudioPrivateText } from './studio-imports.ts';
-import { studioEntryPurposeDeclarations } from './studio-entry-context.ts';
+import { studioEntryRequirementsTrip } from '../shared/studio-trip-briefing.ts';
 import { studioRecommendationHistory } from './studio-client-context.ts';
 
 const text = z.string().max(600);
@@ -489,25 +489,7 @@ export async function checkStudioEntryRequirements(
       400,
       'Choose a destination and its country before checking entry requirements.',
     );
-  const trip = {
-    passportCountryCode: passport.code,
-    destinationCountryCode: country.code,
-    destination,
-    startDate: stop?.arrivalDate || brief.startDate,
-    endDate: stop?.departureDate || brief.endDate,
-    purpose: brief.tripPurpose || 'undecided',
-    declaredActivities: studioEntryPurposeDeclarations(brief),
-    passportType: 'ordinary',
-    stopId: stopId || '',
-    arrivalTransport:
-      stop && workspace.stops.indexOf(stop) > 0
-        ? workspace.stops[workspace.stops.indexOf(stop) - 1].onwardTransport
-        : brief.outboundTransport || 'undecided',
-    departureTransport:
-      stop && workspace.stops.indexOf(stop) < workspace.stops.length - 1
-        ? stop.onwardTransport
-        : brief.returnTransport || 'undecided',
-  };
+  const trip = studioEntryRequirementsTrip(workspace, stopId);
   const result = await structuredResponse({
     name: 'studio_entry_requirements',
     schema: entrySchema,

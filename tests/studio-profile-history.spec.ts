@@ -1,3 +1,8 @@
+import {
+  openStudioClientDesk,
+  openStudioClientProfiles,
+  openStudioDestinationResearch,
+} from './ui-helpers';
 import { test, expect } from '@playwright/test';
 import type { StudioWorkspace } from '../shared/studio';
 import type { StudioClientProfile } from '../shared/studio-clients';
@@ -84,7 +89,8 @@ test('a returning profile preserves private details and structured trip feedback
   try {
     const first = await createWorkspace();
     await page.goto(`/studio/${first.id}`);
-    await page.getByText('Client profiles · new or returning', { exact: true }).click();
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · new or returning');
     await page.getByRole('button', { name: 'New client profile', exact: true }).click();
     const form = page.getByRole('form', { name: 'Client profile', exact: true });
     await form
@@ -160,6 +166,12 @@ test('a returning profile preserves private details and structured trip feedback
         },
       ],
     });
+    await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(page.getByLabel('Saved client', { exact: true })).toHaveValue(profileId);
     await expect(form).not.toBeVisible();
     await expect.poll(() => researchRequests.length).toBe(1);
@@ -180,7 +192,8 @@ test('a returning profile preserves private details and structured trip feedback
       ).status(),
     ).toBe(200);
     await page.reload();
-    await page.getByText('Client profiles · Fictional Profile Traveller', { exact: true }).click();
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(
       page.getByRole('img', { name: 'Fictional Profile Traveller profile', exact: true }),
     ).toHaveAttribute('src', photo);
@@ -238,9 +251,16 @@ test('a returning profile preserves private details and structured trip feedback
     expect(previousPlan.status()).toBe(200);
     const next = await createWorkspace();
     await page.goto(`/studio/${next.id}`);
-    await page.getByText('Client profiles · new or returning', { exact: true }).click();
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · new or returning');
     await page.getByLabel('Saved client', { exact: true }).selectOption(profileId);
     await expect.poll(() => researchRequests.length).toBe(3);
+    await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(page.getByText('View travel history (3)', { exact: true })).toBeVisible();
     await page.getByText('View travel history (3)', { exact: true }).click();
     const history = page.getByRole('region', { name: 'Saved travel history', exact: true });
@@ -250,6 +270,7 @@ test('a returning profile preserves private details and structured trip feedback
     await expect(history).toContainText('Lisbon');
     await expect(history).toContainText('Planned itinerary');
     await expect(history).toContainText('Visited');
+    await openStudioDestinationResearch(page);
     await expect(page.getByText('Based on previous travel', { exact: false })).toBeVisible();
     const linked = (await (await page.request.get(`/api/studio/workspaces/${next.id}`)).json())
       .workspace as StudioWorkspace;
@@ -273,7 +294,8 @@ test('a returning profile preserves private details and structured trip feedback
       /photoDataUrl|dateOfBirth|Fictional Profile Traveller|1988-07/,
     );
     await page.reload();
-    await page.getByText('Client profiles · Fictional Profile Traveller', { exact: true }).click();
+    await openStudioClientDesk(page);
+    await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(page.getByText('View travel history (3)', { exact: true })).toBeVisible();
   } finally {
     for (const id of workspaceIds)

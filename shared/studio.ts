@@ -1,6 +1,7 @@
 import type { StudioItinerary } from './studio-itinerary';
 import type { StudioCruiseDraft } from './studio-cruise';
 import type { StudioDestinationResearch, StudioEntryRequirements } from './studio-travel-research';
+import type { StudioTripBriefing } from './studio-trip-briefing';
 
 /** Travel-agent workspace: route, daily planning, services and client proposal. */
 export type StudioStage =
@@ -152,6 +153,7 @@ export interface StudioWorkspace {
   cruises?: StudioCruiseDraft[];
   destinationResearch?: StudioDestinationResearch | null;
   entryRequirements?: StudioEntryRequirements[];
+  tripBriefing?: StudioTripBriefing | null;
   imports: StudioImport[];
   messages: { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[];
   pricing: StudioPricing;

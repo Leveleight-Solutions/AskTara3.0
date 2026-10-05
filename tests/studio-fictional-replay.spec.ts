@@ -1,3 +1,4 @@
+import { openStudioClientDesk, openStudioClientProfiles } from './ui-helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import type { StudioWorkspace } from '../shared/studio';
@@ -253,7 +254,8 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
         expect(workspace.entryRequirements![0].sources.length).toBeGreaterThan(0);
       }
       if (index === 7) {
-        await page.getByText('Client profiles · new or returning', { exact: true }).click();
+        await openStudioClientDesk(page);
+        await openStudioClientProfiles(page, 'Client profiles · new or returning');
         await page.getByRole('button', { name: 'New client profile', exact: true }).click();
         const form = page.getByRole('form', { name: 'Client profile', exact: true });
         await expect(form.getByRole('textbox', { name: 'Profile name', exact: true })).toHaveValue(
@@ -320,7 +322,8 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
         await record();
         await expect(form).not.toBeVisible();
         await page.reload();
-        await page.getByText('Client profiles · Demo Traveller', { exact: true }).click();
+        await openStudioClientDesk(page);
+        await openStudioClientProfiles(page, 'Client profiles · Demo Traveller');
         await page.getByText('View travel history (1)', { exact: true }).click();
         const history = page.getByRole('region', { name: 'Saved travel history', exact: true });
         await expect(history).toContainText('Kyoto');

@@ -4,6 +4,10 @@ import { buildStudioItinerarySlots, generateStudioItinerary } from '../server/st
 import { newStudioWorkspace, StudioError } from '../server/studio-store.ts';
 import { studioItinerarySchema } from '../shared/studio-itinerary.ts';
 import type { StudioItem, StudioStop, StudioWorkspace } from '../shared/studio.ts';
+import {
+  studioTripBriefingDestinations,
+  studioTripBriefingInputKey,
+} from '../shared/studio-trip-briefing.ts';
 
 const originalFetch = globalThis.fetch;
 const envNames = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_REASONING_EFFORT'];
@@ -82,6 +86,40 @@ function response(data: unknown, sources = [source]) {
 }
 const rejectsWith = (status: number, message: RegExp) => (error: unknown) =>
   error instanceof StudioError && error.status === status && message.test(error.message);
+
+function attachFreshWeather(value: StudioWorkspace) {
+  value.stops[0].arrivalDate = '2027-11-01';
+  value.stops[0].departureDate = '2027-11-03';
+  value.brief.endDate = '2027-11-03';
+  const checkedAt = new Date().toISOString();
+  value.tripBriefing = {
+    inputKey: studioTripBriefingInputKey(value),
+    checkedAt,
+    status: 'partial',
+    notes: [],
+    stops: studioTripBriefingDestinations(value).map((destination) => ({
+      ...destination,
+      entryRequirements: null,
+      entryError: 'PRIVATE ENTRY DECLARATION',
+      weather: {
+        kind: 'seasonal_outlook',
+        checkedAt,
+        summary: 'November usually calls for warm layers, rain protection and indoor alternatives.',
+        days: [],
+        sources: [
+          {
+            label: 'Météo-France climate guidance',
+            url: 'https://meteofrance.com/climat',
+            checkedAt,
+            publishedAt: '',
+            kind: 'conditions',
+          },
+        ],
+      },
+    })),
+  };
+  return value.tripBriefing;
+}
 
 test('daily slots share transfer days, preserve zero-night visits and cover a 28-day route', () => {
   const value = workspace([stop('Paris', 9), stop('Berlin', 9), stop('London', 9)]);
@@ -305,6 +343,128 @@ test('itinerary history keeps feedback and planned-versus-visited context withou
     history,
   );
   assert.equal(generated.days.length, 3);
+});
+
+test('fresh seasonal guidance informs outings and packing through a strict weather-only allowlist', async () => {
+  const value = workspace();
+  value.brief.clientName = 'PRIVATE_CLIENT_NAME';
+  value.brief.passportNationality = 'PK';
+  value.brief.request = 'I will do paid work.';
+  const briefing = attachFreshWeather(value);
+  Object.assign(briefing, {
+    passportCountry: 'PRIVATE_PASSPORT_COUNTRY',
+    photoDataUrl: 'PRIVATE_PHOTO_DATA',
+    dateOfBirth: 'PRIVATE_BIRTH_DATE',
+  });
+  Object.assign(briefing.stops[0].weather, { declaredActivities: 'PRIVATE_ACTIVITY_DECLARATION' });
+  Object.assign(briefing.stops[0].weather.sources[0], {
+    passportNationality: 'PRIVATE_SOURCE_PASSPORT',
+  });
+  const before = structuredClone(value);
+  globalThis.fetch = async (_address, init) => {
+    const body = JSON.parse(String(init?.body));
+    const payload = JSON.parse(body.input[0].content);
+    assert.deepEqual(payload.weatherContext, [
+      {
+        destination: 'Paris',
+        startDate: '2027-11-01',
+        endDate: '2027-11-03',
+        kind: 'seasonal_outlook',
+        checkedAt: briefing.checkedAt,
+        summary: briefing.stops[0].weather.summary,
+        sources: [
+          {
+            label: 'Météo-France climate guidance',
+            url: 'https://meteofrance.com/climat',
+            checkedAt: briefing.checkedAt,
+            publishedAt: '',
+          },
+        ],
+      },
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(payload),
+      /PRIVATE_|passportCountry|passportNationality|declaredActivities|photoDataUrl|dateOfBirth/,
+    );
+    assert.match(body.instructions, /seasonally sensible outdoor outings, indoor alternatives/);
+    assert.match(
+      body.instructions,
+      /seasonal_outlook means usual seasonal climate patterns, never a forecast/,
+    );
+    assert.match(
+      body.instructions,
+      /do not introduce unsupported numeric climate or weather claims/,
+    );
+    assert.match(
+      body.instructions,
+      /every named activity still needs supporting sources found in this request/,
+    );
+    const data = answer(value);
+    data.notes = ['Pack warm layers and rain protection; keep outdoor plans flexible.'];
+    return response(data);
+  };
+  const result = await generateStudioItinerary(value, '');
+  assert.match(result.notes[0], /warm layers and rain protection/);
+  assert.equal(result.days[0].activities[0].sources[0].url, url);
+  assert.deepEqual(value, before);
+});
+
+test('stale, mismatched, unavailable or unverified weather is excluded from itinerary context', async () => {
+  const expired = new Date(Date.now() - 7 * 3600000).toISOString();
+  const scenarios: ((value: StudioWorkspace) => void)[] = [
+    (value) => {
+      value.tripBriefing!.checkedAt = expired;
+    },
+    (value) => {
+      value.brief.passportNationality = 'JP';
+    },
+    (value) => {
+      value.tripBriefing!.stops[0].startDate = '2027-11-02';
+    },
+    (value) => {
+      value.tripBriefing!.stops[0].weather.checkedAt = expired;
+    },
+    (value) => {
+      value.tripBriefing!.stops[0].weather.sources[0].checkedAt = expired;
+    },
+    (value) => {
+      value.tripBriefing!.stops[0].weather.sources[0].url = 'https://weather-blog.example/guide';
+    },
+    (value) => {
+      value.tripBriefing!.stops[0].weather.kind = 'unavailable';
+    },
+  ];
+  for (const change of scenarios) {
+    const value = workspace();
+    attachFreshWeather(value);
+    change(value);
+    globalThis.fetch = async (_address, init) => {
+      const payload = JSON.parse(JSON.parse(String(init?.body)).input[0].content);
+      assert.deepEqual(payload.weatherContext, []);
+      return response(answer(value));
+    };
+    await generateStudioItinerary(value, '');
+  }
+});
+
+test('earlier verified weather evidence cannot replace freshly searched itinerary activity sources', async () => {
+  const value = workspace();
+  const briefing = attachFreshWeather(value);
+  let calls = 0;
+  globalThis.fetch = async (_address, init) => {
+    calls++;
+    const payload = JSON.parse(JSON.parse(String(init?.body)).input[0].content);
+    assert.equal(
+      payload.weatherContext[0].sources[0].url,
+      briefing.stops[0].weather.sources[0].url,
+    );
+    if (calls === 2) assert.match(payload.validationFeedback, /unverified source/);
+    const data = answer(value);
+    data.days[0].activities[0].sourceUrls = [briefing.stops[0].weather.sources[0].url];
+    return response(data);
+  };
+  await assert.rejects(generateStudioItinerary(value, ''), rejectsWith(502, /unverified source/));
+  assert.equal(calls, 2);
 });
 
 test('unverified activity sources get one freshly researched repair without relaxing evidence checks', async () => {

@@ -4,6 +4,7 @@ import { defaultTravelProfile } from '../shared/account';
 import { defaultStudioAgency, type StudioItem } from '../shared/studio';
 import type { StudioHotelSearchResult } from '../shared/studio-hotels';
 import { newStudioWorkspace } from '../server/studio-store';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 import { choose } from './ui-helpers';
 
 async function fixture(page: Page, recommend = true) {
@@ -143,6 +144,7 @@ async function fixture(page: Page, recommend = true) {
       return json({ clients: [] });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     if (method === 'POST') writes.push({ path, body: route.request().postDataJSON() });
     if (path.endsWith('/hotels/search')) {
       if (route.request().postDataJSON().offset === 150) {
@@ -183,7 +185,7 @@ async function fixture(page: Page, recommend = true) {
     return route.fulfill({ status: 500, json: { error: `Unexpected ${method} ${path}` } });
   });
   await page.goto(`/studio/${workspace.id}`);
-  const canvas = page.getByRole('tab', { name: 'Working canvas', exact: true });
+  const canvas = page.getByRole('tab', { name: 'Trip workspace', exact: true });
   if ((page.viewportSize()?.width || 1440) < 768) await canvas.click();
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   await page.getByLabel('Guest nationality · two-letter code').fill('AU');

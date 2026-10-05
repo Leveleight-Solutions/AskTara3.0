@@ -1,3 +1,8 @@
+import {
+  openStudioClientDesk,
+  openStudioClientProfiles,
+  openStudioDestinationResearch,
+} from './ui-helpers';
 import { test, expect, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultStudioAgency, type StudioWorkspace } from '../shared/studio';
@@ -7,6 +12,7 @@ import type {
   StudioEntryRequirements,
 } from '../shared/studio-travel-research';
 import { newStudioWorkspace } from '../server/studio-store';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 
 const photo =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6N3VEAAAAASUVORK5CYII=';
@@ -49,6 +55,7 @@ async function mockBuilder(page: Page) {
       });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     const body = route.request().postDataJSON() || {};
     writes.push({ path, body });
     if (path.includes('/workspaces/') && body.revision !== workspace.revision)
@@ -173,14 +180,22 @@ test('returning profile identity and history guide research, with visa check onl
   page,
 }) => {
   const { workspace, writes } = await mockBuilder(page);
-  await page.getByText('Client profiles · new or returning', { exact: true }).click();
+  await openStudioClientDesk(page);
+  await openStudioClientProfiles(page, 'Client profiles · new or returning');
   await page
     .getByRole('combobox', { name: 'Saved client', exact: true })
     .selectOption('client-kyoto');
+  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await openStudioClientDesk(page);
+  await openStudioClientProfiles(page, 'Client profiles · John Example');
   await expect(page.getByRole('img', { name: 'John Example profile' })).toBeVisible();
   await expect(page.getByText('Travel history: Kyoto', { exact: true })).toBeVisible();
   expect(workspace.brief.clientId).toBe('client-kyoto');
   expect(workspace.brief.passportNationality).toBe('PK');
+  const detailedResearch = await openStudioDestinationResearch(page);
   await expect(
     page.getByRole('button', { name: 'Check entry requirements', exact: true }),
   ).toBeDisabled();
@@ -194,12 +209,13 @@ test('returning profile identity and history guide research, with visa check onl
   ).toBeVisible();
   expect(workspace.stops).toHaveLength(0);
   await page.getByRole('button', { name: 'Let’s go', exact: true }).click();
+  await openStudioDestinationResearch(page);
   await expect(
     page.getByRole('button', { name: 'Check entry requirements', exact: true }),
   ).toBeEnabled();
   expect(workspace.stops[0].name).toBe('Tokyo');
   await page.getByRole('button', { name: 'Check entry requirements', exact: true }).click();
-  await expect(page.getByText('Visa required', { exact: true })).toBeVisible();
+  await expect(detailedResearch.getByText('Visa required', { exact: true })).toBeVisible();
   await page.getByText('Compare evidence and sources', { exact: true }).click();
   await expect(
     page.getByRole('link', { name: 'Official immigration source', exact: true }),
@@ -214,7 +230,8 @@ test('new client profile keeps the optional photo in the profile and links the t
   page,
 }) => {
   const { workspace, writes } = await mockBuilder(page);
-  await page.getByText('Client profiles · new or returning', { exact: true }).click();
+  await openStudioClientDesk(page);
+  await openStudioClientProfiles(page, 'Client profiles · new or returning');
   await page.getByRole('button', { name: 'New client profile', exact: true }).click();
   await page.getByRole('textbox', { name: 'Profile name', exact: true }).fill('Alex Example');
   await page
@@ -231,6 +248,12 @@ test('new client profile keeps the optional photo in the profile and links the t
   });
   await expect(page.getByRole('img', { name: 'Client photo preview', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Save client profile', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await openStudioClientDesk(page);
+  await openStudioClientProfiles(page, 'Client profiles · Alex Example');
   await expect(page.getByRole('combobox', { name: 'Saved client', exact: true })).toHaveValue(
     'new-profile',
   );

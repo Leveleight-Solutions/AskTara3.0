@@ -8,8 +8,9 @@ import {
   type StudioStop,
   type StudioWorkspace,
 } from '../shared/studio';
-import { choose } from './ui-helpers';
+import { choose, openStudioClientDesk, openStudioClientProfiles } from './ui-helpers';
 import type { StudioClientProfile } from '../shared/studio-clients';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 
 const workspaceId = '60000000-0000-4000-8000-000000000001';
 const now = '2026-09-14T12:00:00Z';
@@ -143,6 +144,7 @@ async function mockStudio(
       unexpected.push(`${method} ${path}`);
       return json({ error: 'Unexpected legacy or supplier mutation' }, 500);
     }
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     requests.push({ method, path, body });
     if (path === '/api/studio/agency') {
       if (method === 'PATCH') agency = { ...agency, ...body.agency };
@@ -261,12 +263,15 @@ test('Studio starts with brief review and explicit structure acceptance before s
     .fill('Plan a simple Paris and Amsterdam route for the Hendersons.');
   await page.getByRole('button', { name: 'Start planning your trip' }).click();
   await expect(page).toHaveURL(`/studio/${workspaceId}`);
-  await expect(page.getByRole('region', { name: 'Brief review' })).toContainText(
-    'When do they need to return?',
-  );
+  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
+  const guide = page.getByRole('region', { name: 'Guided brief', exact: true });
+  await guide.getByText(/^Choose another detail/).click();
+  await guide.getByRole('button', { name: 'Return', exact: true }).click();
+  await expect(guide).toContainText('When do they need to return?');
   await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
   expect(mocked.requests.filter((r) => r.path.endsWith('/review'))).toHaveLength(1);
   expect(mocked.requests.some((r) => /structure|search|recommendations/.test(r.path))).toBe(false);
+  await page.getByRole('tab', { name: 'Route', exact: true }).click();
   await page.getByRole('button', { name: 'Skip questions and build structure' }).click();
   await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Paris');
   await page.getByRole('button', { name: 'Increase nights in Paris' }).click();
@@ -287,7 +292,7 @@ test('Studio starts with brief review and explicit structure acceptance before s
   ).toBe(true);
   expect(mocked.requests.some((r) => /search|recommendations/.test(r.path))).toBe(false);
   await page.reload();
-  await page.getByRole('tab', { name: 'Brief & route', exact: true }).click();
+  await page.getByRole('tab', { name: 'Route', exact: true }).click();
   await expect(page.getByRole('spinbutton', { name: 'Nights in Paris', exact: true })).toHaveValue(
     '4',
   );
@@ -304,10 +309,9 @@ test('route reorder adjusts dates while explicitly fixed arrivals remain pinned 
   workspace.stage = 'structure';
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
-  // Below the md breakpoint the workspace shows one pane at a time and opens on the
-  // conversation, so the canvas has to be asked for before its controls exist.
+  // Below the md breakpoint the workspace keeps conversation and task controls in separate panes.
   await expect(page.getByRole('tab', { name: 'Chat with Tara' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Working canvas' }).click();
+  await page.getByRole('tab', { name: 'Trip workspace' }).click();
   await page.getByRole('button', { name: 'Move Amsterdam up' }).click();
   await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Amsterdam');
   await expect(page.getByLabel('Arrival in Amsterdam', { exact: true })).toHaveValue('2027-06-01');
@@ -369,6 +373,7 @@ test('hotel quote search asks nationality and adds an explicit quote without res
   const nationality = page.getByLabel('Guest nationality · two-letter code');
   await expect(nationality).toHaveValue('');
   await nationality.fill('AU');
+  const searchRevision = workspace.revision;
   await page.getByRole('button', { name: 'Search hotels quotes' }).click();
   await expect(
     page.getByText('Sandbox quotes are simulated examples.', { exact: true }),
@@ -380,7 +385,11 @@ test('hotel quote search asks nationality and adds an explicit quote without res
     'Example station hotel',
   );
   const search = mocked.requests.find((r) => r.path.endsWith('/hotels/search'))!;
-  expect(search.body).toEqual({ revision: 1, stopId: stops()[0].id, guestNationality: 'AU' });
+  expect(search.body).toEqual({
+    revision: searchRevision,
+    stopId: stops()[0].id,
+    guestNationality: 'AU',
+  });
   expect(workspace.items).toHaveLength(1);
   expect(mocked.unexpected).toEqual([]);
 });
@@ -421,6 +430,9 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
     requested();
     await responseGate;
     await route.fulfill({ json: { workspace: next } });
+  });
+  await page.route(`**/api/studio/workspaces/${next.id}/trip-briefing`, async (route) => {
+    await fulfilSyntheticTripBriefing(route, next);
   });
 
   await page.goto(`/studio/${workspaceId}`);
@@ -547,12 +559,13 @@ test('client context reuse stays explicit and never restores a past travelling p
     ],
   });
   await page.goto(`/studio/${workspaceId}`);
-  await page.getByText('Client profiles · new or returning', { exact: true }).click();
+  await openStudioClientDesk(page);
+  await openStudioClientProfiles(page, 'Client profiles · new or returning');
   await page
     .getByLabel('Saved client', { exact: true })
     .selectOption('60000000-0000-4000-8000-000000000020');
   await expect.poll(() => workspace.brief.clientId).toBe('60000000-0000-4000-8000-000000000020');
-  await page.getByRole('button', { name: 'Edit brief details' }).click();
+  await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Client brief' });
   await expect(dialog.getByLabel('Adults', { exact: true })).toHaveValue('');
   await expect(dialog.getByLabel('Children', { exact: true })).toHaveValue('');

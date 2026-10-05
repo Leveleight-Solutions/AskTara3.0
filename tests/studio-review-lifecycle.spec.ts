@@ -34,6 +34,7 @@ async function bootstrap(
       return json({ ai: true, hotels: true, flights: true, activities: false, mode: 'live' });
     if (await studio(route, path, method)) return;
     if (path === '/api/studio/agency') return json({ agency: defaultStudioAgency() });
+    if (path === '/api/studio/client-profiles') return json({ clients: [] });
     if (path === '/api/studio/clients')
       return json({
         clients: [

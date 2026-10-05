@@ -1,0 +1,117 @@
+.studio-workspace .studio-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
+.studio-workspace .studio-canvas-header {
+  background: var(--color-panel-solid);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.studio-workspace .studio-client-stage[hidden] {
+  display: none;
+}
+
+.studio-workspace .studio-preview-mobile-label {
+  display: none;
+}
+
+.studio-workspace .studio-workflow-tabs {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.studio-workspace .studio-workflow-tabs .rt-TabsTrigger {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.studio-workspace .studio-tara-intro {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.studio-workspace .studio-guided-brief {
+  background: var(--accent-a2);
+  border: 1px solid var(--accent-a4);
+  border-radius: var(--radius-4);
+  padding: var(--space-5);
+}
+
+.studio-workspace .studio-guided-brief select {
+  width: 100%;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--gray-a7);
+  border-radius: var(--radius-2);
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+  font: inherit;
+  font-size: var(--font-size-2);
+}
+
+.studio-workspace .studio-details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-medium);
+  color: var(--gray-11);
+}
+
+.studio-workspace .studio-details > summary::after {
+  content: '+';
+  margin-left: auto;
+  font-size: var(--font-size-3);
+}
+
+.studio-workspace .studio-details[open] > summary::after {
+  content: '−';
+}
+
+.studio-workspace .studio-tool-disclosure {
+  border: 1px solid var(--gray-a5);
+  border-radius: var(--radius-3);
+  padding: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.studio-workspace .studio-details > summary:focus-visible,
+.studio-workspace select:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 3px;
+  border-radius: var(--radius-2);
+}
+
+@media (max-width: 767px) {
+  .studio-workspace .studio-preview-desktop-label {
+    display: none;
+  }
+
+  .studio-workspace .studio-preview-mobile-label {
+    display: inline;
+  }
+
+  .studio-workspace .studio-intake-intro p {
+    display: none;
+  }
+
+  .studio-workspace .studio-topbar {
+    padding: var(--space-3);
+    align-items: flex-start;
+  }
+
+  .studio-workspace .studio-topbar > .rt-Flex:last-child .rt-Badge {
+    display: none;
+  }
+
+  .studio-workspace .studio-guided-brief {
+    padding: var(--space-4);
+  }
+}

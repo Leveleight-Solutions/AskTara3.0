@@ -56,13 +56,17 @@ import StudioHotelResults from '../components/StudioHotelResults';
 import type { StudioHotelSearchResult } from '../../shared/studio-hotels';
 import { StudioTravelResearch } from '../components/StudioTravelResearch';
 import { StudioClientProfiles } from '../components/StudioClientProfiles';
+import { StudioClientDesk } from '../components/StudioClientDesk';
+import { StudioGuidedBrief } from '../components/StudioGuidedBrief';
+import { StudioTripBriefingPanel } from '../components/StudioTripBriefingPanel';
+import { useStudioTripBriefing } from '../components/useStudioTripBriefing';
+import './Studio.css';
 import { StudioCruiseImport } from '../components/StudioCruiseImport';
 import type { StudioCruiseDraft } from '../../shared/studio-cruise';
 import type { StudioClientProfile } from '../../shared/studio-clients';
 import { studioCountries } from '../../shared/studio-travel-research';
 import { StudioItineraryPanel } from '../components/StudioItineraryPanel';
 import { SplitWorkspace, type PaneTab } from '../components/SplitWorkspace';
-import { useRowHover } from '../components/SidebarNavItem';
 import { AuroraBackground } from '../components/AuroraBackground';
 import { onStudioWorkspaceEvent } from '../studioEvents';
 import { ChatTurn } from '../components/ChatTurn';
@@ -89,9 +93,9 @@ type WorkspacePatch = {
   pricing?: StudioWorkspace['pricing'];
   itinerary?: StudioWorkspace['itinerary'];
 };
-const stageLabels = ['Brief', 'Accommodation', 'Activities'];
 const tabLabels: Record<string, string> = {
-  structure: 'Brief & route',
+  client: 'Client & trip',
+  structure: 'Route',
   services: 'Accommodation',
   itinerary: 'Daily activities',
   recommendations: 'Optional ideas',
@@ -212,42 +216,56 @@ function StructureGateBadge({ accepted, size = '2' }: { accepted: boolean; size?
    `aria-current="step"`, so they still read as steps to assistive tech. */
 function StudioTopBar({
   workspace,
-  stageIndex,
+  activeTab,
+  onPreview,
+  disabled,
 }: {
   workspace: StudioWorkspace;
-  stageIndex: number;
+  activeTab: string;
+  onPreview: () => void;
+  disabled: boolean;
 }) {
-  const gateOpen = workspace.structureAccepted;
   return (
-    <Flex
-      asChild
-      align="center"
-      gap="4"
-      px={{ initial: '3', md: '4' }}
-      py="2"
-      style={{ borderBottom: '1px solid var(--gray-a5)' }}
-    >
-      {/* A <header> inside <main> is not a banner landmark, so this adds no second banner. */}
-      <header>
+    <header className="studio-topbar">
+      <Flex align="center" gap="3" minWidth="0" style={{ flex: 1 }}>
         <IconButton asChild size="2" variant="ghost" color="gray">
           <Link to="/studio" aria-label="Back to Agent Studio">
-            <ArrowLeft size={16} />
+            <ArrowLeft size={17} />
           </Link>
         </IconButton>
-        <Flex direction="column" minWidth="0" flexGrow="1">
-          <Heading as="h1" size="3" truncate>
+        <Box minWidth="0" style={{ flex: 1 }}>
+          <Text as="div" size="1" color="gray" weight="medium">
+            AGENT STUDIO <span aria-hidden="true"> / </span> {tabLabels[activeTab]}
+          </Text>
+          <Heading as="h1" size="4" mt="1" truncate>
             {workspace.title}
           </Heading>
-          <Text size="1" color="gray" truncate>
-            Step {stageIndex + 1} of {stageLabels.length}: {stageLabels[stageIndex]}
-            {!gateOpen &&
-              (workspace.stops.length
-                ? ' · Accept the structure to unlock services'
-                : ' · Start with a destination')}
-          </Text>
-        </Flex>
-      </header>
-    </Flex>
+        </Box>
+      </Flex>
+      <Flex gap="3" align="center" wrap="wrap" style={{ flexShrink: 0 }}>
+        <Badge color={workspace.structureAccepted ? 'green' : 'gray'} variant="soft">
+          {workspace.proposal
+            ? 'Shared proposal'
+            : workspace.structureAccepted
+              ? 'Route approved'
+              : 'Draft proposal'}
+        </Badge>
+        <Button
+          size="2"
+          variant="outline"
+          aria-label="Preview proposal"
+          disabled={disabled || !workspace.structureAccepted}
+          style={!workspace.structureAccepted ? { display: 'none' } : undefined}
+          onClick={onPreview}
+        >
+          <span className="studio-preview-desktop-label">Preview proposal</span>
+          <span className="studio-preview-mobile-label" aria-hidden="true">
+            Preview
+          </span>
+          <ChevronRight size={14} />
+        </Button>
+      </Flex>
+    </header>
   );
 }
 
@@ -273,8 +291,8 @@ export default function Studio() {
   const composer = useComposerLayout(message);
   const [deleting, setDeleting] = useState<StudioWorkspace | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('structure');
-  const [pane, setPane] = useState<PaneTab>('primary');
+  const [activeTab, setActiveTab] = useState('client');
+  const [pane, setPane] = useState<PaneTab>('secondary');
   /* The turn the agent has just sent, held locally until the server echoes it back. Nothing in
      this app streams, and a brief review can run for a minute or more, so without this the pane
      simply sits there and the agent cannot tell whether the send landed. */
@@ -339,7 +357,9 @@ export default function Studio() {
               ? result.workspace.itinerary || result.workspace.stage === 'itinerary'
                 ? 'itinerary'
                 : 'services'
-              : 'structure',
+              : result.workspace.stops.length
+                ? 'structure'
+                : 'client',
           );
         } else {
           setWorkspace(null);
@@ -523,8 +543,20 @@ export default function Studio() {
     if (!sent) setMessage(text);
   }
   useEffect(() => {
-    if (workspace && !workspace.structureAccepted) setActiveTab('structure');
+    if (workspace && !workspace.structureAccepted)
+      setActiveTab((current) =>
+        ['client', 'structure'].includes(current)
+          ? current
+          : workspace.stops.length
+            ? 'structure'
+            : 'client',
+      );
   }, [workspace?.structureAccepted]);
+  useEffect(() => {
+    document
+      .getElementById(`studio-stage-${activeTab}`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTab, pane]);
   /* The log fills the pane now rather than a 430px box, so the newest turn has to be brought to
      the agent the way the concierge planner does it. */
   useEffect(() => {
@@ -547,6 +579,19 @@ export default function Studio() {
     setWorkspace(next);
     setError('');
   };
+  const tripBriefing = useStudioTripBriefing({
+    workspace: !loading && !switching && workspace?.id === id ? workspace : null,
+    enabled: integrations.ai,
+    paused: !!busy || routeDirty || switching,
+    interrupt: !!busy,
+    onUpdate: (next) => {
+      const current = latestWorkspace.current;
+      if (current?.id === next.id && next.revision >= current.revision) {
+        latestWorkspace.current = next;
+        setWorkspace(next);
+      }
+    },
+  });
   /* Renames, pins and deletes made from the sidebar's Recent menu (src/studioEvents.ts). Taking
      the renamed workspace keeps this view on the latest revision, so its next save does not
      conflict; a deleted one drops out of the index. */
@@ -587,7 +632,6 @@ export default function Studio() {
   /* Exactly one solid Button is live at a time: the chat composer owns it until a route
      exists, then the canvas action for the open tab owns it. */
   const routeStarted = !!workspace?.stops.length;
-  const stageIndex = activeTab === 'structure' ? 0 : activeTab === 'services' ? 1 : 2;
   const dialogs = (
     <>
       {deleting && (
@@ -625,6 +669,7 @@ export default function Studio() {
     return (
       <div
         key={workspace.id}
+        className="studio-workspace"
         inert={switching || workspace.id !== id}
         aria-busy={switching || workspace.id !== id || undefined}
         style={{
@@ -637,7 +682,15 @@ export default function Studio() {
           background={<AuroraBackground variant="spread" />}
           topBar={
             <>
-              <StudioTopBar workspace={workspace} stageIndex={stageIndex} />
+              <StudioTopBar
+                workspace={workspace}
+                activeTab={activeTab}
+                disabled={!!busy || routeDirty}
+                onPreview={() => {
+                  setActiveTab('proposal');
+                  setPane('secondary');
+                }}
+              />
               {/* Errors come from both panes, so they belong to neither. Outside both scroll
                   containers this can never be scrolled out of sight. */}
               {error && (
@@ -662,58 +715,55 @@ export default function Studio() {
           tabsLabel="Workspace panes"
           tabs={{
             primary: { label: 'Chat with Tara', icon: <MessageCircle size={15} /> },
-            secondary: { label: 'Working canvas', icon: <PanelsTopLeft size={15} /> },
+            secondary: { label: 'Trip workspace', icon: <PanelsTopLeft size={15} /> },
           }}
-          columns={{ initial: '1', md: 'minmax(340px, 38%) minmax(0, 62%)' }}
+          columns={{ initial: '1', md: 'minmax(300px, 30%) minmax(0, 70%)' }}
           primaryAs="aside"
           primaryLabel="Planning conversation"
-          primaryPadding="3"
+          primaryPadding="4"
           primary={
             <Flex direction="column" gap="3">
               <PlanningModeNotice />
-              <StudioClientProfiles
-                workspace={workspace}
-                disabled={!!busy || routeDirty}
-                onProfiles={setProfiles}
-                onDeleted={async () => {
-                  await act('Refreshing client profile', async () => {
-                    const current = latestWorkspace.current!;
-                    const currentEpoch = epoch.current;
-                    const result = await api<{ workspace: StudioWorkspace }>(
-                      `/studio/workspaces/${current.id}`,
-                    );
-                    if (currentEpoch === epoch.current) setWorkspace(result.workspace);
-                  });
-                }}
-                onSelect={async (profile) => {
-                  if (!profile) {
-                    await patch({ brief: { clientId: '' } });
-                    return;
-                  }
-                  // Profile defaults initialise a newly selected client. Updating an
-                  // already-linked profile must retain this trip's explicit preferences.
-                  if (latestWorkspace.current?.brief.clientId !== profile.id)
-                    await patch({
-                      brief: {
-                        clientId: profile.id,
-                        clientName: profile.name,
-                        context: profile.context,
-                        passportNationality: profile.passportNationality,
-                        interests: profile.interests,
-                        foodPreferences: profile.foodPreferences,
-                      },
-                    });
-                  if (
-                    integrations.ai &&
-                    (profile.history.some((trip) => trip.destination.trim()) ||
-                      (profile.previousTripCount || 0) > 0) &&
-                    !latestWorkspace.current?.stops.length
-                  )
-                    await act('Researching destinations for this returning client', async () => {
-                      await mutate('/destinations/research', { requestId: crypto.randomUUID() });
-                    });
-                }}
-              />
+              <Flex direction="column" gap="3" className="studio-tara-intro">
+                <Flex align="center" gap="2">
+                  <TaraMark size={24} />
+                  <Box>
+                    <Text as="div" size="3" weight="bold">
+                      Plan with Tara
+                    </Text>
+                    <Text size="1" color="gray">
+                      Your travel planning partner
+                    </Text>
+                  </Box>
+                </Flex>
+                <Text as="p" size="2" color="gray">
+                  Tell me what matters to your client. I’ll help shape the route, find ideas, and
+                  build the daily itinerary.
+                </Text>
+                <Flex gap="2" wrap="wrap">
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={!!busy || routeDirty}
+                    onClick={() => {
+                      setActiveTab('client');
+                      setPane('secondary');
+                    }}
+                  >
+                    Client & trip
+                  </Button>
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={!!busy || routeDirty}
+                    onClick={revealImportComposer}
+                  >
+                    <Plus size={13} /> Add client notes
+                  </Button>
+                </Flex>
+              </Flex>
               {/* Standing background about the client reads as the head of the conversation, and
                   has to sit outside the log: inside it, opening it would be announced as a new
                   message. */}
@@ -781,14 +831,9 @@ export default function Studio() {
                   </Reset>
                 </>
               )}
+
               <Box role="log" aria-live="polite" style={{ overflowWrap: 'anywhere' }}>
                 <Flex direction="column" gap="3">
-                  {!workspace.messages.length && !pendingTurn && (
-                    <Text as="p" size="2" color="gray">
-                      Share the client’s request and what you already know. I’ll review it with you
-                      before we build the route.
-                    </Text>
-                  )}
                   {workspace.messages.map((item) => (
                     <ChatTurn key={item.id} role={item.role === 'assistant' ? 'assistant' : 'user'}>
                       {item.role === 'assistant' ? (
@@ -953,147 +998,317 @@ export default function Studio() {
             </Flex>
           )}
           secondaryHeader={
-            <Box px="4" pt="3">
-              <Tabs.List aria-label="Plan details">
-                {['structure', 'services', 'itinerary', 'recommendations', 'proposal'].map(
-                  (tab) => {
-                    const gated = tab !== 'structure' && !workspace.structureAccepted;
-                    return (
-                      <Tabs.Trigger key={tab} value={tab} disabled={routeDirty || gated}>
-                        <Flex align="center" gap="1">
-                          {gated && <Lock size={12} aria-hidden="true" />}
-                          {tabLabels[tab]}
-                        </Flex>
-                      </Tabs.Trigger>
-                    );
-                  },
-                )}
+            <Box className="studio-canvas-header" px="4" pt="3">
+              <Tabs.List className="studio-workflow-tabs" aria-label="Plan details">
+                {[
+                  'client',
+                  'structure',
+                  'services',
+                  'itinerary',
+                  'recommendations',
+                  'proposal',
+                ].map((tab) => {
+                  const gated =
+                    !['client', 'structure'].includes(tab) && !workspace.structureAccepted;
+                  return (
+                    <Tabs.Trigger
+                      id={`studio-stage-${tab}`}
+                      key={tab}
+                      value={tab}
+                      disabled={routeDirty || gated}
+                    >
+                      <Flex align="center" gap="1">
+                        {gated && <Lock size={12} aria-hidden="true" />}
+                        {tabLabels[tab]}
+                      </Flex>
+                    </Tabs.Trigger>
+                  );
+                })}
               </Tabs.List>
+              <Flex
+                className="studio-trip-summary"
+                data-testid="studio-trip-summary"
+                gap="2"
+                align="center"
+                py="3"
+                justify="between"
+              >
+                <Text size="1" color="gray" truncate>
+                  {briefSummary(workspace.qualification.known) ||
+                    'Your client, your route, one complete itinerary.'}
+                </Text>
+                <Button
+                  size="1"
+                  variant="ghost"
+                  color="gray"
+                  disabled={!!busy || routeDirty}
+                  onClick={() => {
+                    setActiveTab('client');
+                    setPane('secondary');
+                  }}
+                >
+                  Edit details <Settings2 size={12} />
+                </Button>
+              </Flex>
             </Box>
           }
           secondary={
             <>
-              <BriefReview
-                workspace={workspace}
-                onAnswer={askTara}
-                onEdit={() => {
-                  if (!routeDirty) setBriefOpen(true);
-                  else setError('Save or discard your route edits before editing the brief.');
-                }}
-              />
-              <Tabs.Content value="structure">
-                <StudioTravelResearch
-                  workspace={workspace}
-                  history={
-                    profiles.find((profile) => profile.id === workspace.brief.clientId)?.history ||
-                    []
-                  }
-                  busy={!!busy || routeDirty}
-                  research={workspace.destinationResearch}
-                  entryResults={workspace.entryRequirements}
-                  onResearch={() =>
-                    act('Researching destinations', async () => {
-                      await mutate('/destinations/research', { requestId: crypto.randomUUID() });
-                    })
-                  }
-                  onCheckEntry={(stopId) =>
-                    act('Checking entry requirements', async () => {
-                      await mutate('/entry-requirements', {
-                        requestId: crypto.randomUUID(),
-                        ...(stopId ? { stopId } : {}),
-                      });
-                    })
-                  }
-                  onChooseDestination={async (candidate) => {
-                    const existing = workspace.stops.find(
-                      (stop) =>
-                        stop.name.toLowerCase() === candidate.destination.toLowerCase() &&
-                        stop.country.toLowerCase() === candidate.country.toLowerCase(),
-                    );
-                    const stop = {
-                      ...blankStop(),
-                      name: candidate.destination,
-                      country: candidate.country,
-                    };
-                    await patch({
-                      brief: {
-                        preferredDestination: candidate.destination,
-                        destinationCountry: candidate.countryCode,
-                      },
-                      stops:
-                        workspace.brief.tripType === 'single'
-                          ? [existing || stop]
-                          : existing
-                            ? workspace.stops
-                            : [...workspace.stops, stop],
-                    });
-                  }}
-                />
-                <Box my="4">
-                  {!!workspace.cruises?.length && (
-                    <label>
-                      <Text size="2">Saved cruise to edit</Text>
-                      <select
-                        aria-label="Saved cruise to edit"
-                        value={selectedCruise}
-                        disabled={!!busy || routeDirty}
-                        onChange={(e) => setSelectedCruise(e.target.value)}
-                      >
-                        <option value="">Import another cruise</option>
-                        {workspace.cruises.map((cruise) => (
-                          <option key={cruise.id} value={cruise.id}>
-                            {cruise.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <StudioCruiseImport
+              <Tabs.Content
+                value="client"
+                className="studio-client-stage"
+                forceMount
+                hidden={activeTab !== 'client'}
+                inert={activeTab !== 'client'}
+              >
+                <Flex direction="column" gap="4">
+                  <Box className="studio-intake-intro">
+                    <Text size="1" color="gray" weight="medium">
+                      START WITH THE PEOPLE
+                    </Text>
+                    <Heading as="h2" size="6" mt="1">
+                      A trip that feels like them.
+                    </Heading>
+                    <Text as="p" size="2" color="gray" mt="2">
+                      Add your client’s details, then shape the journey together. Everything saves
+                      to this proposal.
+                    </Text>
+                  </Box>
+                  <StudioClientDesk
+                    workspace={workspace}
                     disabled={!!busy || routeDirty}
-                    initialDraft={workspace.cruises?.find((cruise) => cruise.id === selectedCruise)}
-                    onExtract={async (input) => {
-                      let cruise: StudioCruiseDraft | undefined;
-                      await act('Reading cruise itinerary', async () => {
-                        const current = latestWorkspace.current!;
-                        const currentEpoch = epoch.current;
-                        const result = await api<{
-                          workspace: StudioWorkspace;
-                          cruise: StudioCruiseDraft;
-                        }>(`/studio/workspaces/${current.id}/cruises/preview`, {
-                          method: 'POST',
-                          body: JSON.stringify({
-                            revision: current.revision,
-                            requestId: crypto.randomUUID(),
-                            input,
-                          }),
-                        });
-                        if (
-                          currentEpoch === epoch.current &&
-                          latestWorkspace.current?.id === current.id
-                        ) {
-                          latestWorkspace.current = result.workspace;
-                          setWorkspace(result.workspace);
-                          cruise = result.cruise;
-                        }
-                      });
-                      return cruise;
-                    }}
-                    onApply={async (cruise) => {
-                      let saved: StudioCruiseDraft | undefined;
-                      await act('Saving cruise itinerary', async () => {
-                        const updated = await mutate('/cruises/apply', { cruise });
-                        saved = updated?.cruises?.find((value) => value.id === cruise.id);
-                        if (saved) setSelectedCruise(cruise.id);
-                      });
-                      return saved;
-                    }}
+                    initiallyOpen={
+                      !workspace.brief.clientName &&
+                      !workspace.brief.clientId &&
+                      window.matchMedia('(min-width: 768px)').matches
+                    }
+                    selectedProfile={profiles.find(
+                      (profile) => profile.id === workspace.brief.clientId,
+                    )}
+                    onSave={(brief) => patch({ brief })}
+                    profileContent={
+                      <StudioClientProfiles
+                        workspace={workspace}
+                        disabled={!!busy || routeDirty}
+                        onProfiles={setProfiles}
+                        onDeleted={async () => {
+                          await act('Refreshing client profile', async () => {
+                            const current = latestWorkspace.current!;
+                            const currentEpoch = epoch.current;
+                            const result = await api<{ workspace: StudioWorkspace }>(
+                              `/studio/workspaces/${current.id}`,
+                            );
+                            if (currentEpoch === epoch.current) setWorkspace(result.workspace);
+                          });
+                        }}
+                        onSelect={async (profile) => {
+                          if (!profile) {
+                            await patch({ brief: { clientId: '' } });
+                            return;
+                          }
+                          // Profile defaults initialise a newly selected client. Updating an
+                          // already-linked profile must retain this trip's explicit preferences.
+                          if (latestWorkspace.current?.brief.clientId !== profile.id)
+                            await patch({
+                              brief: {
+                                clientId: profile.id,
+                                clientName: profile.name,
+                                context: profile.context,
+                                passportNationality: profile.passportNationality,
+                                interests: profile.interests,
+                                foodPreferences: profile.foodPreferences,
+                              },
+                            });
+                          if (
+                            integrations.ai &&
+                            (profile.history.some((trip) => trip.destination.trim()) ||
+                              (profile.previousTripCount || 0) > 0) &&
+                            !latestWorkspace.current?.stops.length
+                          )
+                            await act(
+                              'Researching destinations for this returning client',
+                              async () => {
+                                const result = await mutate('/destinations/research', {
+                                  requestId: crypto.randomUUID(),
+                                });
+                                if (result) {
+                                  setActiveTab('structure');
+                                  setPane('secondary');
+                                }
+                              },
+                            );
+                        }}
+                      />
+                    }
                   />
-                </Box>
+                  <StudioGuidedBrief
+                    workspace={workspace}
+                    disabled={!!busy || routeDirty}
+                    onSave={patch}
+                    onContinue={() => setActiveTab('structure')}
+                    onAsk={askTara}
+                  />
+                  <StudioTripBriefingPanel
+                    workspace={workspace}
+                    loading={tripBriefing.loading}
+                    error={tripBriefing.error}
+                    onRefresh={tripBriefing.refresh}
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={!!busy || routeDirty}
+                    onClick={() => setActiveTab('structure')}
+                    style={{ alignSelf: 'flex-start' }}
+                  >
+                    Review route <ChevronRight size={15} />
+                  </Button>
+                </Flex>
+              </Tabs.Content>
+              <Tabs.Content value="structure">
+                <StudioTripBriefingPanel
+                  workspace={workspace}
+                  loading={tripBriefing.loading}
+                  error={tripBriefing.error}
+                  onRefresh={tripBriefing.refresh}
+                />
+                <details
+                  className="studio-details studio-tool-disclosure"
+                  open={Boolean(workspace.destinationResearch && !workspace.stops.length)}
+                >
+                  <summary>
+                    <Sparkles size={16} /> Destination inspiration & detailed entry research
+                  </summary>
+                  <Box mt="4">
+                    {' '}
+                    <StudioTravelResearch
+                      workspace={workspace}
+                      history={
+                        profiles.find((profile) => profile.id === workspace.brief.clientId)
+                          ?.history || []
+                      }
+                      busy={!!busy || routeDirty}
+                      research={workspace.destinationResearch}
+                      entryResults={workspace.entryRequirements}
+                      onResearch={() =>
+                        act('Researching destinations', async () => {
+                          await mutate('/destinations/research', {
+                            requestId: crypto.randomUUID(),
+                          });
+                        })
+                      }
+                      onCheckEntry={(stopId) =>
+                        act('Checking entry requirements', async () => {
+                          await mutate('/entry-requirements', {
+                            requestId: crypto.randomUUID(),
+                            ...(stopId ? { stopId } : {}),
+                          });
+                        })
+                      }
+                      onChooseDestination={async (candidate) => {
+                        const existing = workspace.stops.find(
+                          (stop) =>
+                            stop.name.toLowerCase() === candidate.destination.toLowerCase() &&
+                            stop.country.toLowerCase() === candidate.country.toLowerCase(),
+                        );
+                        const stop = {
+                          ...blankStop(),
+                          name: candidate.destination,
+                          country: candidate.country,
+                        };
+                        await patch({
+                          brief: {
+                            preferredDestination: candidate.destination,
+                            destinationCountry: candidate.countryCode,
+                          },
+                          stops:
+                            workspace.brief.tripType === 'single'
+                              ? [existing || stop]
+                              : existing
+                                ? workspace.stops
+                                : [...workspace.stops, stop],
+                        });
+                      }}
+                    />
+                  </Box>
+                </details>
+                <details
+                  className="studio-details studio-tool-disclosure"
+                  open={Boolean(workspace.cruises?.length)}
+                >
+                  <summary>
+                    <PanelsTopLeft size={16} /> Add a cruise or edit a sailing
+                  </summary>
+                  <Box my="4">
+                    {!!workspace.cruises?.length && (
+                      <label>
+                        <Text size="2">Saved cruise to edit</Text>
+                        <select
+                          aria-label="Saved cruise to edit"
+                          value={selectedCruise}
+                          disabled={!!busy || routeDirty}
+                          onChange={(e) => setSelectedCruise(e.target.value)}
+                        >
+                          <option value="">Import another cruise</option>
+                          {workspace.cruises.map((cruise) => (
+                            <option key={cruise.id} value={cruise.id}>
+                              {cruise.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <StudioCruiseImport
+                      disabled={!!busy || routeDirty}
+                      initialDraft={workspace.cruises?.find(
+                        (cruise) => cruise.id === selectedCruise,
+                      )}
+                      onExtract={async (input) => {
+                        let cruise: StudioCruiseDraft | undefined;
+                        await act('Reading cruise itinerary', async () => {
+                          const current = latestWorkspace.current!;
+                          const currentEpoch = epoch.current;
+                          const result = await api<{
+                            workspace: StudioWorkspace;
+                            cruise: StudioCruiseDraft;
+                          }>(`/studio/workspaces/${current.id}/cruises/preview`, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                              revision: current.revision,
+                              requestId: crypto.randomUUID(),
+                              input,
+                            }),
+                          });
+                          if (
+                            currentEpoch === epoch.current &&
+                            latestWorkspace.current?.id === current.id
+                          ) {
+                            latestWorkspace.current = result.workspace;
+                            setWorkspace(result.workspace);
+                            cruise = result.cruise;
+                          }
+                        });
+                        return cruise;
+                      }}
+                      onApply={async (cruise) => {
+                        let saved: StudioCruiseDraft | undefined;
+                        await act('Saving cruise itinerary', async () => {
+                          const updated = await mutate('/cruises/apply', { cruise });
+                          saved = updated?.cruises?.find((value) => value.id === cruise.id);
+                          if (saved) setSelectedCruise(cruise.id);
+                        });
+                        return saved;
+                      }}
+                    />
+                  </Box>
+                </details>
                 <RouteEditor
-                  key={`${workspace.id}:${workspace.revision}`}
+                  key={workspace.id}
                   workspace={workspace}
                   disabled={!!busy}
-                  onSave={patch}
+                  onSave={async (value) => {
+                    await patch(value);
+                    return latestWorkspace.current!.stops;
+                  }}
                   onDirty={setRouteDirty}
                 />
                 <Card size="3" mt="5">
@@ -1174,6 +1389,15 @@ export default function Studio() {
                 </Card>
               </Tabs.Content>
               <Tabs.Content value="itinerary">
+                <details className="studio-details studio-tool-disclosure">
+                  <summary>Travel checks · visa & seasonal weather</summary>
+                  <StudioTripBriefingPanel
+                    workspace={workspace}
+                    loading={tripBriefing.loading}
+                    error={tripBriefing.error}
+                    onRefresh={tripBriefing.refresh}
+                  />
+                </details>
                 {workspace.structureAccepted && (
                   <StudioItineraryPanel
                     workspace={workspace}
@@ -1394,87 +1618,6 @@ function factValue(id: string, value: string): string {
 const titleCase = (value: string) =>
   value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase()).trim();
 
-/* One open question. The question and its reason are a single thing to act on, so the whole row
-   is the target: the old ghost button highlighted only the question text and left the reason
-   sitting outside the tint, which read as a stray box rather than a row.
-
-   The wash is the neutral grey `SidebarNavItem` uses, not an accent one — this app reserves the
-   accent tint for "you are here", and a hovered question is not a selected question. */
-function QuestionRow({ question, onAsk }: { question: StudioQuestion; onAsk: () => void }) {
-  const { hovered, handlers } = useRowHover();
-  return (
-    <Reset>
-      <button
-        type="button"
-        {...handlers}
-        onClick={onAsk}
-        style={{ cursor: 'pointer', textAlign: 'left', width: '100%' }}
-      >
-        <Flex
-          align="start"
-          gap="3"
-          p="2"
-          style={{
-            borderRadius: 'var(--radius-3)',
-            backgroundColor: hovered ? 'var(--gray-a3)' : 'transparent',
-            transition: 'background-color 120ms ease-out',
-          }}
-        >
-          <Box flexGrow="1" minWidth="0">
-            <Text as="div" size="2" weight="medium" style={{ color: 'var(--accent-11)' }}>
-              {question.label}
-            </Text>
-            <Text as="div" size="1" color="gray" mt="1">
-              {question.reason}
-            </Text>
-          </Box>
-          {/* Says what the click does. These read as links but they do not navigate — they put
-              the question in the composer for the agent to answer. */}
-          <Box
-            flexShrink="0"
-            mt="1"
-            style={{
-              color: hovered ? 'var(--gray-11)' : 'var(--gray-8)',
-              transition: 'color 120ms ease-out',
-            }}
-          >
-            <MessageCircle size={14} aria-hidden="true" />
-          </Box>
-        </Flex>
-      </button>
-    </Reset>
-  );
-}
-
-/* Twelve facts read as a list of twelve unrelated things. Three groups read as what an agent
-   actually holds in their head: when the trip is, who is going, and what they like. The icons are
-   the ones the home page already uses for dates and party, so the vocabulary is one app's, not
-   this card's. Anything the map does not name falls into trip details rather than disappearing. */
-const FACT_GROUPS = [
-  {
-    id: 'trip',
-    label: 'Trip details',
-    icon: CalendarDays,
-    ids: ['route', 'departureDate', 'startDate', 'dates', 'endDate', 'nights', 'budget'],
-  },
-  { id: 'party', label: 'Travellers', icon: Users, ids: ['adults', 'children', 'childAges'] },
-  {
-    id: 'preferences',
-    label: 'Preferences',
-    icon: SlidersHorizontal,
-    ids: ['hotelStandard', 'hotelLocation', 'cabin', 'preferences'],
-  },
-];
-const groupedFacts = (known: StudioQualification['known']) => {
-  const placed = new Set(FACT_GROUPS.flatMap((group) => group.ids));
-  return FACT_GROUPS.map((group) => ({
-    ...group,
-    facts: known.filter(
-      (fact) => group.ids.includes(fact.id) || (group.id === 'trip' && !placed.has(fact.id)),
-    ),
-  })).filter((group) => group.facts.length);
-};
-
 /* The one line the collapsed card has to earn its place with: where, when, and who. Counts are
    spelled out — "3 · 3" is not a party, and the labels are the half that carries the meaning once
    the table they came from is closed. */
@@ -1501,207 +1644,6 @@ function briefSummary(known: StudioQualification['known']): string {
   return parts.join(' · ');
 }
 
-function BriefReview({
-  workspace,
-  onAnswer,
-  onEdit,
-}: {
-  workspace: StudioWorkspace;
-  onAnswer: (text: string) => void;
-  onEdit: () => void;
-}) {
-  const { qualification } = workspace;
-  /* Nothing left to ask and nothing left to fill in: the card has become a receipt, so it steps
-     out of the way of the route below it and keeps a line you can open when you want to check
-     something. The same move the questions list already makes once the structure is accepted. */
-  const settled = !qualification.questions.length && qualification.score >= 100;
-  const summary = briefSummary(qualification.known);
-  const facts = !!qualification.known.length && (
-    /* One column left most of a wide canvas empty; grouped columns turn twelve rows into three
-       short lists an agent can scan by heading. The tick is a sibling of the label and value, not
-       a child of the label — inside it, it indented the label by its own width while the value
-       stayed flush, giving every entry a ragged left edge. */
-    <Grid columns={{ initial: '1', md: '2', lg: '3' }} gapX="6" gapY="5" mt="4">
-      {groupedFacts(qualification.known).map((group) => (
-        <Box asChild key={group.id}>
-          <section aria-label={group.label}>
-            <Flex align="center" gap="2" mb="1">
-              <Box flexShrink="0" style={{ color: 'var(--gray-11)' }}>
-                <group.icon size={15} aria-hidden="true" />
-              </Box>
-              <Text size="2" weight="medium">
-                {group.label}
-              </Text>
-            </Flex>
-            <Flex asChild direction="column">
-              <dl style={{ margin: 0 }}>
-                {group.facts.map((fact, index) => (
-                  <Flex
-                    key={fact.id}
-                    asChild
-                    gap="2"
-                    align="start"
-                    py="2"
-                    style={{ borderTop: index ? '1px solid var(--gray-a3)' : undefined }}
-                  >
-                    {/* A <div> wrapping each dt/dd pair is valid inside a <dl> and is what lets
-                        the tick sit beside the pair instead of inside the term. */}
-                    <div>
-                      <Flex
-                        align="center"
-                        justify="center"
-                        flexShrink="0"
-                        mt="1"
-                        style={{
-                          width: 16,
-                          height: 16,
-                          borderRadius: '100%',
-                          background: 'var(--green-a3)',
-                          color: 'var(--green-11)',
-                        }}
-                      >
-                        <Check size={10} strokeWidth={3} aria-hidden="true" />
-                      </Flex>
-                      <Box minWidth="0">
-                        <Text size="1" color="gray" asChild>
-                          <dt>{fact.label}</dt>
-                        </Text>
-                        <Text size="2" weight="medium" asChild>
-                          <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
-                            {factValue(fact.id, fact.value)}
-                          </dd>
-                        </Text>
-                      </Box>
-                    </div>
-                  </Flex>
-                ))}
-              </dl>
-            </Flex>
-          </section>
-        </Box>
-      ))}
-    </Grid>
-  );
-  const header = (
-    <Flex align="center" justify="between" gap="3" wrap="wrap">
-      <Box>
-        <Text size="1" color="gray">
-          Brief review
-        </Text>
-        <Heading as="h2" size={settled ? '4' : '6'} mt="1">
-          {qualification.score >= 80
-            ? 'A clear starting point.'
-            : qualification.score >= 40
-              ? 'Taking shape.'
-              : 'Let’s find the starting point.'}
-        </Heading>
-      </Box>
-      <Flex align="center" gap="3">
-        <Badge
-          size="2"
-          variant="soft"
-          color={qualification.score >= 80 ? 'green' : qualification.score >= 40 ? 'blue' : 'gray'}
-        >
-          {qualification.score}% complete
-        </Badge>
-      </Flex>
-    </Flex>
-  );
-  if (settled)
-    return (
-      <Card asChild size="3" mb="4">
-        <section aria-label="Brief review">
-          <Reset>
-            <details>
-              <Reset>
-                <summary style={{ cursor: 'pointer' }}>
-                  {header}
-                  {!!summary && (
-                    <Text as="p" size="2" color="gray" mt="1">
-                      {summary}
-                    </Text>
-                  )}
-                </summary>
-              </Reset>
-              {facts}
-              <Box mt="4">
-                <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
-                  Edit brief details <Settings2 size={13} />
-                </Button>
-              </Box>
-            </details>
-          </Reset>
-        </section>
-      </Card>
-    );
-  return (
-    <Card asChild size="3" mb="4">
-      <section aria-label="Brief review">
-        {header}
-        {/* Only while there is distance left to show. At 100% a full accent bar is the loudest
-            thing on a card whose whole message is that there is nothing to do. */}
-        <Box mt="3">
-          <Progress
-            size="3"
-            value={qualification.score}
-            max={100}
-            aria-label="Brief completeness"
-          />
-        </Box>
-        {facts}
-        {!!qualification.questions.length && (
-          <Box mt="4">
-            <Reset>
-              <details open={!workspace.structureAccepted}>
-                <Reset>
-                  <summary style={{ cursor: 'pointer' }}>
-                    <Text size="2" weight="medium">
-                      {qualification.questions.length}{' '}
-                      {qualification.questions.length === 1 ? 'detail' : 'details'} to clarify{' '}
-                      {qualification.skipped && '· skipped for now'}
-                    </Text>
-                  </summary>
-                </Reset>
-                {/* The list's own `margin: 0` reset beats Radix's `mt` utility class, so the
-                    space below the summary has to be set inline. Two columns halve a run that
-                    reached seven questions in a single narrow strip. */}
-                <Grid asChild columns={{ initial: '1', md: '2' }} gapX="4" gapY="1">
-                  <ul
-                    style={{
-                      listStyle: 'none',
-                      margin: 0,
-                      marginTop: 'var(--space-3)',
-                      padding: 0,
-                    }}
-                  >
-                    {qualification.questions.map((question) => (
-                      <li key={question.id} style={{ listStyle: 'none' }}>
-                        <QuestionRow
-                          question={question}
-                          onAsk={() => onAnswer(`${question.label}\n`)}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </Grid>
-                <Text as="p" size="1" color="gray" mt="3">
-                  You can answer in chat or continue with incomplete details.
-                </Text>
-              </details>
-            </Reset>
-          </Box>
-        )}
-        {/* mt-4 rather than mt-3: the ghost's own -6px margin comes off the top, and this
-            control sits directly under the details summary, which is a target too. */}
-        <Box mt="4">
-          <Button size="3" variant="ghost" color="gray" onClick={onEdit}>
-            Edit brief details <Settings2 size={13} />
-          </Button>
-        </Box>
-      </section>
-    </Card>
-  );
-}
 function RouteEditor({
   workspace,
   disabled,
@@ -1710,10 +1652,15 @@ function RouteEditor({
 }: {
   workspace: StudioWorkspace;
   disabled: boolean;
-  onSave: (patch: WorkspacePatch) => Promise<void>;
+  onSave: (patch: WorkspacePatch) => Promise<StudioStop[]>;
   onDirty: (dirty: boolean) => void;
 }) {
   const [stops, setStops] = useState(workspace.stops);
+  const previousStops = useRef(workspace.stops);
+  useEffect(() => {
+    if (JSON.stringify(stops) === JSON.stringify(previousStops.current)) setStops(workspace.stops);
+    previousStops.current = workspace.stops;
+  }, [workspace.stops]);
   const [dragged, setDragged] = useState<string | null>(null);
   const dirty = JSON.stringify(stops) !== JSON.stringify(workspace.stops);
   useEffect(() => {
@@ -2051,7 +1998,12 @@ function RouteEditor({
               <Button
                 size="3"
                 disabled={disabled || stops.some((s) => !s.name.trim())}
-                onClick={() => void onSave({ stops }).catch((cause) => setSaveError(cause.message))}
+                onClick={() => {
+                  setSaveError('');
+                  void onSave({ stops })
+                    .then(setStops)
+                    .catch((cause) => setSaveError(cause.message));
+                }}
               >
                 Save route changes
               </Button>
@@ -3147,7 +3099,49 @@ function SupplierQuotes({
   const [warning, setWarning] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [quoteRevision, setQuoteRevision] = useState<number | null>(null);
+  const [quotedKey, setQuotedKey] = useState<string | null>(null);
+  // Research metadata does not change supplier eligibility. Match actual trip/search inputs.
+  const currentQuoteKey = JSON.stringify({
+    workspace: workspace.id,
+    accepted: workspace.structureAccepted,
+    startDate: workspace.brief.startDate,
+    endDate: workspace.brief.endDate,
+    stops: workspace.stops.map(
+      ({
+        id,
+        name,
+        country,
+        nights,
+        arrivalDate,
+        departureDate,
+        onwardTransport,
+        neighbourhood,
+      }) => ({
+        id,
+        name,
+        country,
+        nights,
+        arrivalDate,
+        departureDate,
+        onwardTransport,
+        neighbourhood,
+      }),
+    ),
+    adults: workspace.brief.adults,
+    children: workspace.brief.children,
+    childAges: workspace.brief.childAges,
+    passportNationality: workspace.brief.passportNationality,
+    currency: workspace.brief.currency,
+    pricingCurrency: workspace.pricing.currency,
+    hotelStandard: workspace.brief.hotelStandard,
+    hotelLocation: workspace.brief.hotelLocation,
+    cabin: workspace.brief.cabin,
+    origin: workspace.brief.origin,
+    departureDate: workspace.brief.departureDate || '',
+    outbound: workspace.brief.outboundTransport || 'undecided',
+    returning: workspace.brief.returnTransport || 'undecided',
+    query: { kind, stopId, nationality, origin, destination, departureDate, returnDate, cabin },
+  });
   const quoteLock = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const searchEpoch = useRef(0);
@@ -3161,18 +3155,8 @@ function SupplierQuotes({
     setError('');
     setBusy(false);
     quoteLock.current = false;
-    setQuoteRevision(null);
-  }, [
-    workspace.revision,
-    kind,
-    stopId,
-    nationality,
-    origin,
-    destination,
-    departureDate,
-    returnDate,
-    cabin,
-  ]);
+    setQuotedKey(null);
+  }, [currentQuoteKey]);
   const stop = workspace.stops.find((s) => s.id === stopId);
   const partyConfirmed =
     !!workspace.brief.adults &&
@@ -3266,7 +3250,7 @@ function SupplierQuotes({
         setQuotes(result.quotes);
         if (kind === 'hotels' && Array.isArray(result.hotels)) setHotelResult(result);
       }
-      setQuoteRevision(workspace.revision);
+      setQuotedKey(currentQuoteKey);
       setWarning(
         result.warning ||
           (result.mode === 'test'
@@ -3288,7 +3272,7 @@ function SupplierQuotes({
     }
   }
   async function select(quote: StudioItem) {
-    if (quoteLock.current || quoteRevision !== workspace.revision) return;
+    if (quoteLock.current || quotedKey !== currentQuoteKey) return;
     quoteLock.current = true;
     setBusy(true);
     setError('');
@@ -3543,7 +3527,7 @@ function SupplierQuotes({
                 result={hotelResult}
                 onLoadMore={() => search(undefined, hotelResult.inventory.nextOffset || 0)}
                 loadingMore={busy}
-                disabled={disabled || busy || quoteRevision !== workspace.revision}
+                disabled={disabled || busy || quotedKey !== currentQuoteKey}
                 onSelect={(quoteId) => {
                   const quote = quotes.find((q) => q.id === quoteId);
                   if (quote) return select(quote);
@@ -3591,7 +3575,7 @@ function SupplierQuotes({
                         size="3"
                         variant="soft"
                         style={{ flexShrink: 0 }}
-                        disabled={disabled || busy || quoteRevision !== workspace.revision}
+                        disabled={disabled || busy || quotedKey !== currentQuoteKey}
                         onClick={() => void select(quote)}
                       >
                         Add quote to proposal

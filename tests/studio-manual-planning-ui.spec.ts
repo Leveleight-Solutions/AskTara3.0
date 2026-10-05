@@ -4,6 +4,8 @@ import { defaultTravelProfile } from '../shared/account';
 import { defaultStudioAgency, type StudioWorkspace } from '../shared/studio';
 import { cruiseDraftToItinerary, type StudioCruiseDraft } from '../shared/studio-cruise';
 import { sanitizeManualStudioItinerary } from '../shared/studio-itinerary';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
+import { openStudioCruiseImport } from './ui-helpers';
 import { newStudioWorkspace } from '../server/studio-store';
 
 const now = '2026-10-01T12:00:00.000Z';
@@ -70,6 +72,7 @@ async function mockWorkspace(page: Page, workspace: StudioWorkspace) {
     if (path === '/api/studio/client-profiles') return json({ clients: [] });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     const body = route.request().postDataJSON();
     writes.push({ path, body });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'PATCH') {
@@ -189,7 +192,7 @@ test('cruise preview needs explicit review, supports early Taipei exit and keeps
   workspace.stage = 'structure';
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
-  await page.getByRole('tab', { name: 'Brief & route', exact: true }).click();
+  await openStudioCruiseImport(page);
   const importer = page.getByRole('region', { name: 'Cruise itinerary import' });
   await importer.getByLabel('Cruise line itinerary URL').fill('https://cruise.example/itinerary');
   await importer.getByRole('button', { name: 'Preview cruise days', exact: true }).click();

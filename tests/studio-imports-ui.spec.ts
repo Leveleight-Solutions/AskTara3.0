@@ -22,7 +22,8 @@ async function mockStudioImports(page: Page, accepted = false) {
     if (path === '/api/integrations')
       return json({ ai: true, flights: false, hotels: false, activities: false, mode: 'live' });
     if (path === '/api/studio/agency') return json({ agency: defaultStudioAgency() });
-    if (path === '/api/studio/clients') return json({ clients: [] });
+    if (path === '/api/studio/clients' || path === '/api/studio/client-profiles')
+      return json({ clients: [] });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
     if (path === '/api/studio/import/preview') {

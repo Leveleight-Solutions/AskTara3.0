@@ -5,6 +5,7 @@ import { defaultStudioAgency, type StudioWorkspace } from '../shared/studio';
 import type { StudioItinerary } from '../shared/studio-itinerary';
 import type { StudioClientProposal } from '../shared/studio-proposals';
 import { newStudioWorkspace } from '../server/studio-store';
+import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 
 const stopId = 'london-itinerary-stop';
 const now = '2026-09-22T12:00:00.000Z';
@@ -72,9 +73,11 @@ async function mockWorkspace(
     if (path === '/api/integrations')
       return json({ ai: true, hotels: true, flights: true, activities: false, mode: 'live' });
     if (path === '/api/studio/agency') return json({ agency: defaultStudioAgency() });
-    if (path === '/api/studio/clients') return json({ clients: [] });
+    if (path === '/api/studio/clients' || path === '/api/studio/client-profiles')
+      return json({ clients: [] });
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
+    if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     if (method === 'POST') writes.push({ path, body: route.request().postDataJSON() });
     if (path === `/api/studio/workspaces/${workspace.id}/itinerary`) {
       workspace.itinerary = itinerary();
@@ -126,6 +129,14 @@ test('accepted route generates daily activities and chat refinements return to t
     .fill('A relaxed pace with time to rest.');
   await page.getByRole('button', { name: 'Build day-by-day itinerary', exact: true }).click();
   const plan = page.getByRole('region', { name: 'Day-by-day itinerary', exact: true });
+  await expect(plan.getByRole('heading', { name: 'London day 1', exact: true })).toBeInViewport();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('tab', { name: 'Trip workspace', exact: true }).click();
+  await expect(plan.getByRole('heading', { name: 'London day 1', exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Preview proposal', exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(plan.getByRole('heading', { name: 'London day 4', exact: true })).toBeVisible();
   await expect(plan.getByRole('link', { name: 'Official visitor guide' })).toHaveCount(4);
   expect(writes[0]).toMatchObject({
@@ -133,6 +144,19 @@ test('accepted route generates daily activities and chat refinements return to t
     body: { revision: 1, instructions: 'A relaxed pace with time to rest.' },
   });
   expect(writes[0].body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  await expect(
+    page.getByRole('button', { name: 'Regenerate itinerary', exact: true }),
+  ).not.toBeVisible();
+  await plan.getByText('Optional AI activity suggestions', { exact: true }).click();
+  await page.getByRole('button', { name: 'Regenerate itinerary', exact: true }).click();
+  await expect.poll(() => writes.filter(({ path }) => path.endsWith('/itinerary')).length).toBe(2);
+  await expect(plan.getByRole('heading', { name: 'London day 1', exact: true })).toBeInViewport();
+  await expect(
+    page.getByRole('button', { name: 'Regenerate itinerary', exact: true }),
+  ).not.toBeVisible();
+  expect(writes[1].body.instructions).toBe('');
+  expect(writes[1].body.requestId).not.toBe(writes[0].body.requestId);
+  await plan.getByText('Optional AI activity suggestions', { exact: true }).click();
   await page.getByRole('button', { name: 'Refine in chat', exact: true }).click();
   const composer = page
     .getByRole('region', { name: 'Import client information' })
@@ -154,6 +178,7 @@ test('accepted route generates daily activities and chat refinements return to t
     'true',
   );
   expect(writes.map(({ path }) => path)).toEqual([
+    `/api/studio/workspaces/${workspace.id}/itinerary`,
     `/api/studio/workspaces/${workspace.id}/itinerary`,
     `/api/studio/workspaces/${workspace.id}/review`,
   ]);
@@ -210,7 +235,7 @@ test('a chat route change returns an open itinerary to structure approval', asyn
     .getByRole('textbox');
   await composer.fill('Make London four nights.');
   await page.getByRole('button', { name: 'Review brief', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Brief & route', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
   );

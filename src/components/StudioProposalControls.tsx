@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   CircleAlert,
   CircleCheck,
@@ -31,6 +31,7 @@ import type { StudioClientProposal, StudioProposalLink } from '../../shared/stud
 import { studioProposalMoney } from '../../shared/studio-proposals';
 import { api } from '../api';
 import { StudioProposalDocument } from '../pages/StudioProposal';
+import { studioProposalPreviewKey, studioProposalPricingKey } from './studioProposalDraft';
 
 /** `<fieldset disabled>` is kept for its native disable cascade; this strips the UA chrome. */
 const bareFieldset = { border: 0, margin: 0, padding: 0, minInlineSize: 'auto' as const };
@@ -368,14 +369,18 @@ export function StudioProposalControls({
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<StudioClientProposal | null>(null);
   const [link, setLink] = useState<StudioProposalLink | null>(null);
+  const pricingKey = studioProposalPricingKey(workspace.pricing);
+  const previewKey = studioProposalPreviewKey(workspace, agency);
+  const latestPreviewKey = useRef(previewKey);
+  latestPreviewKey.current = previewKey;
   useEffect(() => {
     setPricing(workspace.pricing);
-    setPreview(null);
-  }, [workspace.revision, workspace.pricing]);
+  }, [workspace.id, pricingKey]);
+  useEffect(() => setPreview(null), [previewKey]);
   useEffect(() => {
     if (link && link.token !== workspace.proposal?.token) setLink(null);
   }, [workspace.proposal?.token, link]);
-  const dirty = JSON.stringify(pricing) !== JSON.stringify(workspace.pricing);
+  const dirty = studioProposalPricingKey(pricing) !== pricingKey;
   const path = `/studio/workspaces/${workspace.id}`;
   const currentUrl = workspace.proposal
     ? `${window.location.origin}${link?.url || `/proposal/${workspace.proposal.token}`}`
@@ -437,8 +442,9 @@ export function StudioProposalControls({
   }
   async function showPreview() {
     await run(async () => {
+      const requestedKey = previewKey;
       const result = await api<{ proposal: StudioClientProposal }>(`${path}/proposal/preview`);
-      setPreview(result.proposal);
+      if (latestPreviewKey.current === requestedKey) setPreview(result.proposal);
     });
   }
   return (

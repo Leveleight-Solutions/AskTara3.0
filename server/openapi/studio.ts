@@ -158,6 +158,46 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
       object({ category: visaCategory, summary: text, sourceUrl: text, kind: evidenceKind }),
     ),
   }),
+  StudioWeatherOutlook: object({
+    kind: { type: 'string', enum: ['forecast', 'seasonal_outlook', 'unavailable'] },
+    checkedAt: timestamp,
+    summary: text,
+    sources: array(ref('StudioTravelEvidence')),
+    days: array(
+      object({
+        date: { type: 'string', format: 'date' },
+        temperatureMinC: { type: ['number', 'null'] },
+        temperatureMaxC: { type: ['number', 'null'] },
+        precipitationProbability: { type: ['number', 'null'], minimum: 0, maximum: 100 },
+      }),
+    ),
+  }),
+  StudioTripBriefing: object({
+    inputKey: {
+      type: 'string',
+      description:
+        'Allowlisted travel inputs shared with the UI; excludes client identities and profiles.',
+    },
+    checkedAt: timestamp,
+    status: { type: 'string', enum: ['complete', 'partial'] },
+    stops: {
+      ...array(
+        object({
+          stopId: text,
+          destination: text,
+          country: text,
+          countryCode: text,
+          startDate: { type: 'string', format: 'date' },
+          endDate: { type: 'string', format: 'date' },
+          entryRequirements: { anyOf: [ref('StudioEntryRequirements'), { type: 'null' }] },
+          entryError: text,
+          weather: ref('StudioWeatherOutlook'),
+        }),
+      ),
+      maxItems: 20,
+    },
+    notes: array(text),
+  }),
   StudioHotelQuote: object({
     quoteId: { type: 'string', format: 'uuid' },
     hotelKey: {
@@ -274,6 +314,7 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
       cruises: array(ref('StudioCruiseDraft')),
       destinationResearch: { anyOf: [ref('StudioDestinationResearch'), { type: 'null' }] },
       entryRequirements: array(ref('StudioEntryRequirements')),
+      tripBriefing: { anyOf: [ref('StudioTripBriefing'), { type: 'null' }] },
       imports: array(ref('StudioImport')),
       messages: array(
         object({
@@ -630,6 +671,23 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
           'Research changed the selected passport/destination or lacked valid evidence.',
         ),
         '503': error('Entry research unavailable.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/trip-briefing': {
+    parameters: workspaceParameters,
+    post: operation('Studio', 'Check entry and seasonal weather for every chosen destination', {
+      description: `${actionDescription} The UI may start this action automatically once the route, countries and dates are confirmed. It does not block planning. Visa checks require a declared passport and purpose; otherwise each stop explains what is missing and still researches seasonal weather. Only allowlisted trip inputs are sent, excluding client identities, photos and dates of birth. Uses existing validated entry research and primary meteorological/government climate sources. Weather is explicitly usual seasonal patterns, never a future daily forecast. Each check can fail independently; partial results persist. At most two route workers run with a three-minute overall budget and one-minute per-check limit; remaining checks are marked unavailable on budget expiry. Identical owner/workspace/input requests share in-flight research and matching saved results are reused for six hours, including partial results. Send force: true only for an explicit retry. This action merges only research into the latest workspace when the input key still matches, preserving concurrent unrelated edits. Changed travel inputs cancel stale research and return 409 STUDIO_BRIEFING_STALE. Cached results do not increment the revision. Requires OPENAI_API_KEY for fresh research; unavailable providers never produce fabricated results.`,
+      requestBody: jsonBody(fromZod(actionSchema.extend({ force: z.boolean().optional() }))),
+      responses: {
+        '200': jsonResponse(
+          'Workspace and complete or partial per-stop briefing.',
+          actionResult({ briefing: ref('StudioTripBriefing'), reused: { type: 'boolean' } }),
+        ),
+        '400': error('Chosen destinations, countries or travel dates are not confirmed.'),
+        '404': error('Workspace not found for this owner.'),
+        '409': error('Revision, requestId or changed briefing-input conflict.'),
+        '503': error('The request was cancelled; saved planning remains unchanged.'),
       },
     }),
   },

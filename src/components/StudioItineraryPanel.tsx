@@ -237,77 +237,80 @@ export function StudioItineraryPanel({
             }}
           />
         )}
-        <Card size="2">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (disabled || !ready) return;
-              void onGenerate(
-                [
-                  instructions.trim(),
-                  foodPreference.trim() ? `Food preference: ${foodPreference.trim()}` : '',
-                ]
-                  .filter(Boolean)
-                  .join('\n')
-                  .slice(0, 4000),
-              ).then((saved) => {
-                if (saved) setInstructions('');
-              });
-            }}
-          >
-            <Flex direction="column" gap="3">
-              <Text as="div" size="2" weight="medium">
-                Optional AI activity suggestions
-              </Text>
-              <Text size="1" color="gray">
-                Uses the trip's budget and interests. Add food preferences below if helpful.
-              </Text>
-              <label>
-                <Text as="div" size="2" mb="1">
-                  Food preference · optional
+        <details
+          className="studio-details studio-tool-disclosure"
+          open={!workspace.itinerary || building}
+        >
+          <summary>Optional AI activity suggestions</summary>
+          <Card size="2">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (disabled || !ready) return;
+                void onGenerate(
+                  [
+                    instructions.trim(),
+                    foodPreference.trim() ? `Food preference: ${foodPreference.trim()}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                    .slice(0, 4000),
+                ).then((saved) => {
+                  if (saved) setInstructions('');
+                });
+              }}
+            >
+              <Flex direction="column" gap="3">
+                <Text size="1" color="gray">
+                  Uses the trip's budget and interests. Add food preferences below if helpful.
                 </Text>
-                <TextField.Root
-                  value={foodPreference}
-                  onChange={(event) => setFoodPreference(event.target.value)}
-                  maxLength={500}
-                  disabled={disabled}
-                  placeholder="Vegetarian, local food, family favourites…"
-                />
-              </label>
-              <label>
-                <Text as="div" size="2" weight="medium" mb="1">
-                  Itinerary instructions · optional
-                </Text>
-                <TextArea
-                  value={instructions}
-                  onChange={(event) => setInstructions(event.target.value)}
-                  maxLength={4000}
-                  rows={3}
-                  disabled={disabled}
-                  placeholder="A relaxed pace, more museums, time for shopping…"
-                />
-              </label>
-              <Flex gap="3" wrap="wrap">
-                <Button size="3" disabled={disabled || !ready} loading={building}>
-                  <Sparkles size={16} />
-                  {workspace.itinerary ? 'Regenerate itinerary' : 'Build day-by-day itinerary'}
-                </Button>
-                {workspace.itinerary && (
-                  <Button
-                    type="button"
-                    size="3"
-                    variant="soft"
+                <label>
+                  <Text as="div" size="2" mb="1">
+                    Food preference · optional
+                  </Text>
+                  <TextField.Root
+                    value={foodPreference}
+                    onChange={(event) => setFoodPreference(event.target.value)}
+                    maxLength={500}
                     disabled={disabled}
-                    onClick={onRefine}
-                  >
-                    <MessageCircle size={16} />
-                    Refine in chat
+                    placeholder="Vegetarian, local food, family favourites…"
+                  />
+                </label>
+                <label>
+                  <Text as="div" size="2" weight="medium" mb="1">
+                    Itinerary instructions · optional
+                  </Text>
+                  <TextArea
+                    value={instructions}
+                    onChange={(event) => setInstructions(event.target.value)}
+                    maxLength={4000}
+                    rows={3}
+                    disabled={disabled}
+                    placeholder="A relaxed pace, more museums, time for shopping…"
+                  />
+                </label>
+                <Flex gap="3" wrap="wrap">
+                  <Button size="3" disabled={disabled || !ready} loading={building}>
+                    <Sparkles size={16} />
+                    {workspace.itinerary ? 'Regenerate itinerary' : 'Build day-by-day itinerary'}
                   </Button>
-                )}
+                  {workspace.itinerary && (
+                    <Button
+                      type="button"
+                      size="3"
+                      variant="soft"
+                      disabled={disabled}
+                      onClick={onRefine}
+                    >
+                      <MessageCircle size={16} />
+                      Refine in chat
+                    </Button>
+                  )}
+                </Flex>
               </Flex>
-            </Flex>
-          </form>
-        </Card>
+            </form>
+          </Card>
+        </details>
         {workspace.itinerary && (
           <>
             <StudioItineraryContent itinerary={workspace.itinerary} />

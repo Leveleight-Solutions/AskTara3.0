@@ -36,6 +36,11 @@ import {
 } from '../shared/studio-cruise.ts';
 import { studioItinerarySchema } from '../shared/studio-itinerary.ts';
 import { redactIdentityAndPayment } from './studio-imports.ts';
+import { researchStudioTripBriefing, mergeStudioTripBriefing } from './studio-trip-briefing.ts';
+import {
+  studioTripBriefingInputKey,
+  type StudioTripBriefing,
+} from '../shared/studio-trip-briefing.ts';
 
 type Session = { id: string; owner_id: string; user_id: string | null };
 type Dependencies = {
@@ -57,6 +62,15 @@ const canonical = (value: unknown): unknown =>
         )
       : value;
 type ActionResult = { workspace: StudioWorkspace; [key: string]: unknown };
+type ActionOptions = {
+  merge?: (
+    current: StudioWorkspace,
+    researched: StudioWorkspace,
+    result: Record<string, unknown>,
+  ) => StudioWorkspace;
+  skipSave?: (current: StudioWorkspace, result: Record<string, unknown>) => boolean;
+  abortOnDisconnect?: boolean;
+};
 
 export function installStudioRoutes(app: Express, deps: Dependencies) {
   const { db, store, session, requireActiveSession } = deps;
@@ -65,9 +79,20 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     string,
     {
       sessionId: string;
+      ownerId: string;
       workspaceId: string;
+      kind: string;
+      briefingInputKey: string;
       controller: AbortController;
       promise: Promise<ActionResult>;
+    }
+  >();
+  const briefingJobs = new Map<
+    string,
+    {
+      controller: AbortController;
+      consumers: number;
+      promise: ReturnType<typeof researchStudioTripBriefing>;
     }
   >();
   // A prior process cannot safely complete a model operation after a restart.
@@ -78,6 +103,23 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     },
     cancelWorkspace(id: string) {
       for (const run of active.values()) if (run.workspaceId === id) run.controller.abort();
+    },
+    cancelStaleBriefings(ownerId: string, workspace: StudioWorkspace) {
+      const inputKey = studioTripBriefingInputKey(workspace);
+      for (const run of active.values())
+        if (
+          run.ownerId === ownerId &&
+          run.workspaceId === workspace.id &&
+          run.kind === 'trip-briefing' &&
+          run.briefingInputKey !== inputKey
+        )
+          run.controller.abort(
+            new StudioError(
+              409,
+              'The trip details changed while research was running. The old results were not saved.',
+              'STUDIO_BRIEFING_STALE',
+            ),
+          );
     },
     async shutdown() {
       for (const run of active.values()) run.controller.abort();
@@ -95,7 +137,10 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     store.require(session(res).owner_id, String(req.params.id), expected);
   const save = (res: Response, workspace: StudioWorkspace, expected: number) => {
     requireActiveSession(res);
-    return store.save(session(res).owner_id, workspace, expected);
+    const ownerId = session(res).owner_id;
+    const result = store.save(ownerId, workspace, expected);
+    controls.cancelStaleBriefings(ownerId, result);
+    return result;
   };
   async function action(
     req: Request,
@@ -103,6 +148,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     kind: string,
     body: { revision: number; requestId: string },
     execute: (workspace: StudioWorkspace, signal: AbortSignal) => Promise<Record<string, unknown>>,
+    options?: ActionOptions,
   ) {
     requireActiveSession(res);
     const current = session(res),
@@ -123,9 +169,11 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       store.require(current.owner_id, workspaceId);
       if (previous.status === 'completed') {
         const cached = JSON.parse(String(previous.result)) as ActionResult;
+        const latest = store.require(current.owner_id, workspaceId);
+        options?.merge?.({ ...latest }, cached.workspace, cached);
         return res.json({
           ...cached,
-          workspace: store.require(current.owner_id, workspaceId),
+          workspace: latest,
           replayed: true,
         });
       }
@@ -159,6 +207,17 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       new Date().toISOString(),
     );
     const controller = new AbortController();
+    const disconnected = () => {
+      if (!res.writableEnded)
+        controller.abort(
+          new StudioError(
+            503,
+            'The background trip check was cancelled. Your saved workspace is unchanged.',
+            'STUDIO_BRIEFING_CANCELLED',
+          ),
+        );
+    };
+    if (options?.abortOnDisconnect) res.once('close', disconnected);
     const timeout = setTimeout(() => controller.abort(), 300000);
     timeout.unref();
     const promise = (async () => {
@@ -168,12 +227,18 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         requireActiveSession(res);
         db.exec('BEGIN IMMEDIATE');
         try {
-          store.save(current.owner_id, workspace, body.revision);
-          const result = { ...extra, workspace };
+          const latest = options?.merge ? store.require(current.owner_id, workspaceId) : null;
+          const unchanged = latest && options?.skipSave?.(latest, extra);
+          const merged = latest ? options!.merge!({ ...latest }, workspace, extra) : workspace;
+          const savedWorkspace = unchanged
+            ? latest!
+            : store.save(current.owner_id, merged, latest?.revision ?? body.revision);
+          const result = { ...extra, workspace: savedWorkspace };
           db.prepare(
             "UPDATE studio_requests SET status='completed',result=? WHERE owner_id=? AND request_id=?",
           ).run(JSON.stringify(result), current.owner_id, body.requestId);
           db.exec('COMMIT');
+          controls.cancelStaleBriefings(current.owner_id, savedWorkspace);
           return result;
         } catch (error) {
           db.exec('ROLLBACK');
@@ -183,6 +248,8 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         db.prepare(
           "UPDATE studio_requests SET status='failed' WHERE owner_id=? AND request_id=?",
         ).run(current.owner_id, body.requestId);
+        if (controller.signal.aborted && controller.signal.reason instanceof StudioError)
+          throw controller.signal.reason;
         if (
           error instanceof StudioError ||
           error instanceof z.ZodError ||
@@ -213,10 +280,19 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         );
       } finally {
         clearTimeout(timeout);
+        if (options?.abortOnDisconnect) res.off('close', disconnected);
         active.delete(key);
       }
     })();
-    active.set(key, { sessionId: current.id, workspaceId, controller, promise });
+    active.set(key, {
+      sessionId: current.id,
+      ownerId: current.owner_id,
+      workspaceId,
+      kind,
+      briefingInputKey: kind === 'trip-briefing' ? studioTripBriefingInputKey(workspace) : '',
+      controller,
+      promise,
+    });
     res.json(await promise);
   }
   app.get('/api/studio/agency', (_req, res) =>
@@ -509,6 +585,76 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       ].slice(-20);
       return { entryRequirements: result };
     });
+  });
+  app.post('/api/studio/workspaces/:id/trip-briefing', limiter, async (req, res) => {
+    const body = actionSchema.extend({ force: z.boolean().optional() }).parse(req.body);
+    await action(
+      req,
+      res,
+      'trip-briefing',
+      body,
+      async (workspace, signal) => {
+        const jobKey = JSON.stringify([
+          session(res).owner_id,
+          workspace.id,
+          studioTripBriefingInputKey(workspace),
+        ]);
+        let job = briefingJobs.get(jobKey);
+        if (!job) {
+          const controller = new AbortController();
+          job = {
+            controller,
+            consumers: 0,
+            promise: researchStudioTripBriefing(workspace, controller.signal, {
+              force: body.force,
+            }),
+          };
+          briefingJobs.set(jobKey, job);
+          void job.promise
+            .finally(() => {
+              if (briefingJobs.get(jobKey) === job) briefingJobs.delete(jobKey);
+            })
+            .catch(() => {});
+        }
+        // A shared owner-scoped job survives one disconnected subscriber, but stops
+        // when its final caller leaves. Each caller still cancels its own action.
+        const shared = job;
+        shared.consumers++;
+        let released = false;
+        let abort!: () => void;
+        const release = () => {
+          if (released) return;
+          released = true;
+          shared.consumers--;
+          if (!shared.consumers) shared.controller.abort(signal.reason);
+        };
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          abort = () => {
+            release();
+            reject(signal.reason);
+          };
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+        });
+        try {
+          const result = await Promise.race([shared.promise, cancelled]);
+          signal.throwIfAborted();
+          return result;
+        } finally {
+          signal.removeEventListener('abort', abort);
+          release();
+        }
+      },
+      {
+        abortOnDisconnect: true,
+        merge: (current, _researched, result) =>
+          mergeStudioTripBriefing(current, result.briefing as StudioTripBriefing),
+        skipSave: (current, result) => {
+          const briefing = result.briefing as StudioTripBriefing;
+          return JSON.stringify(current.tripBriefing) === JSON.stringify(briefing);
+        },
+      },
+    );
   });
   app.post('/api/studio/workspaces/:id/cruises/preview', limiter, async (req, res) => {
     const body = actionSchema.extend({ input: studioImportSchema }).parse(req.body);

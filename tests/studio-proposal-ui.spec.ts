@@ -4,6 +4,20 @@ import { randomUUID } from 'node:crypto';
 import type { StudioWorkspace } from '../shared/studio';
 import { choose } from './ui-helpers';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/integrations', (route) =>
+    route.fulfill({
+      json: {
+        ai: false,
+        hotels: false,
+        flights: false,
+        activities: false,
+        mode: 'live',
+      },
+    }),
+  );
+});
+
 test('agent reviews, publishes, updates and revokes a branded client proposal with a real PDF', async ({
   page,
   browser,

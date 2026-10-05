@@ -47,6 +47,7 @@ test('a greeting starts a contextual conversation and short answers update the s
     await expect(page.getByRole('note', { name: 'Basic planning mode' })).toBeVisible();
     const conversation = page.getByRole('log');
     await expect(conversation).toContainText(firstReply);
+    await page.getByRole('tab', { name: 'Route', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Route structure' })).toContainText(
       'Your route will appear here.',
     );
