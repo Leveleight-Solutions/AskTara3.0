@@ -6,6 +6,7 @@ import { createApp } from '../server/app.ts';
 import type { StudioWorkspace } from '../shared/studio.ts';
 import type { StudioCruiseDraft } from '../shared/studio-cruise.ts';
 import type { StudioItinerary } from '../shared/studio-itinerary.ts';
+import { redactIdentityAndPayment } from '../server/studio-imports.ts';
 
 const originalFetch = globalThis.fetch;
 const envNames = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_REASONING_EFFORT', 'NODE_ENV'];
@@ -227,6 +228,8 @@ test('reviewed cruise apply keeps full fare through early exit and reapply prese
   let workspace = await create(client);
   workspace = await patch(client, workspace, { itinerary: manual() });
   const draft = cruise();
+  // A legitimate UUID can contain a long run of digits that resembles a PAN.
+  draft.days[2].id = '11111111-1111-4111-8111-111111111111';
   await stranger
     .post(path(workspace, '/cruises/apply'))
     .send({ revision: workspace.revision, cruise: draft })
@@ -346,6 +349,7 @@ test('edited source cruise details refresh without silently deleting a manual ac
   const { client } = setup();
   let workspace = await create(client);
   const draft = cruise();
+  draft.days[2].id = '11111111-1111-4111-8111-111111111111';
   workspace = (
     await client
       .post(path(workspace, '/cruises/apply'))
@@ -372,6 +376,57 @@ test('edited source cruise details refresh without silently deleting a manual ac
   assert.equal(activities[0].description, draft.days[2].details);
   assert.equal(activities[1].title, 'Manual dinner suggestion');
 });
+
+for (const legacy of [false, true]) {
+  test(`redacted cruise row references preserve manual activities on source refresh (${legacy ? 'legacy rows' : 'stable rows'})`, async () => {
+    const { app, client } = setup();
+    let workspace = await create(client);
+    const draft = cruise();
+    draft.id = '77777777-7777-4777-8777-777777777777';
+    draft.days[2].id = '11111111-1111-4111-8111-111111111111';
+    workspace = (
+      await client
+        .post(path(workspace, '/cruises/apply'))
+        .send({ revision: workspace.revision, cruise: draft })
+        .expect(200)
+    ).body.workspace;
+    const plan = structuredClone(workspace.itinerary!);
+    plan.days[2].activities.push({
+      period: 'evening',
+      title: 'Preserved manual dinner',
+      description: 'Recheck when the source changes.',
+      sources: [],
+    });
+    workspace = await patch(client, workspace, { itinerary: plan });
+    const corrupted = structuredClone(workspace);
+    corrupted.itinerary!.days[2].cruiseDayId = redactIdentityAndPayment(draft.days[2].id!);
+    if (legacy) {
+      for (const day of corrupted.cruises![0].days) delete day.id;
+    } else {
+      corrupted.itinerary!.days[2].cruiseId = redactIdentityAndPayment(draft.id);
+    }
+    app.locals.db
+      .prepare('UPDATE studio_workspaces SET data=? WHERE id=?')
+      .run(JSON.stringify(corrupted), workspace.id);
+    workspace = (await client.get(path(workspace)).expect(200)).body.workspace;
+    const source = structuredClone(workspace.cruises![0]);
+    source.days[2].details = 'New reviewed disembarkation instructions.';
+    workspace = (
+      await client
+        .post(path(workspace, '/cruises/apply'))
+        .send({ revision: workspace.revision, cruise: source })
+        .expect(200)
+    ).body.workspace;
+    const updated = workspace.itinerary!.days.find((day) => day.title === 'Taipei')!;
+    assert.equal(updated.cruiseId, draft.id);
+    assert.equal(updated.cruiseDayId, workspace.cruises![0].days[2].id);
+    assert.equal(updated.activities.length, 2);
+    assert.equal(updated.activities[0].description, source.days[2].details);
+    assert.equal(updated.activities[1].title, 'Preserved manual dinner');
+    assert.equal(workspace.items.find((item) => item.kind === 'cruise')!.price, draft.fullFare);
+    assert.equal(workspace.proposal, null);
+  });
+}
 
 for (const legacy of [false, true]) {
   test(`cruise reapply restores deleted and reordered rows without moving custom transfers (${legacy ? 'legacy' : 'stable identities'})`, async () => {

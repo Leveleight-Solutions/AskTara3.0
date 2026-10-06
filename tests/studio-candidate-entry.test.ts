@@ -9,6 +9,7 @@ import {
   initializeStudioStorage,
   newStudioWorkspace,
   StudioStore,
+  StudioError,
 } from '../server/studio-store.ts';
 import { installStudioRoutes } from '../server/studio-routes.ts';
 import {
@@ -542,6 +543,197 @@ test('entry prose rejects unsearched, executable or unsupported inline citation 
     const unavailable = await researchStudioCandidateEntryRequirements(value);
     assert.equal(unavailable.candidates[0].entryRequirements?.status, 'unavailable');
     assert.equal(unavailable.candidates[0].entryRequirements?.sources.length, 0);
+  }
+});
+
+test('explicit negative entry cautions retain their verified sources instead of being rejected as guarantees', async () => {
+  const value = workspace();
+  Object.assign(value.brief, {
+    preferredDestination: 'Kyoto',
+    destinationCountry: 'JP',
+    tripPurpose: 'tourism',
+  });
+  for (const summary of [
+    'No guaranteed entry.',
+    'No entry is guaranteed.',
+    'There is no guaranteed entry to the destination.',
+    'Guaranteed entry is not available.',
+    'Do not assume guaranteed entry.',
+  ]) {
+    globalThis.fetch = async (_input, init) => {
+      const trip = JSON.parse(JSON.parse(String(init?.body)).input[0].content).trip;
+      return response({ ...entryData(trip), summary });
+    };
+    const result = await checkStudioEntryRequirements(value);
+    assert.equal(result.summary, summary);
+    assert.equal(result.sources[0].url, official);
+    assert.equal(result.category, 'visa_free');
+  }
+});
+
+test('a negative disclaimer cannot hide a positive guarantee in its clause, another clause or another field', async () => {
+  const value = workspace();
+  Object.assign(value.brief, {
+    preferredDestination: 'Kyoto',
+    destinationCountry: 'JP',
+    tripPurpose: 'tourism',
+  });
+  for (const patch of [
+    { summary: 'No guaranteed entry. Guaranteed entry is assured.' },
+    { summary: 'No guaranteed entry, but guaranteed entry is assured.' },
+    { summary: 'No guaranteed entry; however it is completely safe.' },
+    { summary: 'This is not a safe destination, and it is totally safe.' },
+    { summary: 'It is not only guaranteed entry; admission is assured.' },
+    { summary: 'Guaranteed entry is not only available but assured.' },
+    { summary: 'Guaranteed entry is not merely possible; it is certain.' },
+    { summary: 'Guaranteed entry is not impossible.' },
+    { summary: 'There is not no guaranteed entry.' },
+    { summary: 'No guaranteed entry is not available.' },
+    { summary: 'No guaranteed entry cannot be assured.' },
+    { summary: 'No guaranteed entry is not available to tourists.' },
+    { summary: 'No guaranteed entry cannot be assured for ordinary passports.' },
+    { summary: 'Guaranteed entry is not available except to premium clients.' },
+    { summary: 'Guaranteed entry is not available only to students; everyone else has it.' },
+    { summary: 'No guaranteed entry, but admission is certain.' },
+    { summary: 'No guaranteed entry. Your entry is guaranteed.' },
+    { summary: 'No guaranteed entry.', conditions: ['You have guaranteed entry.'] },
+    { summary: 'Entry is not guaranteed.', notes: ['Completely safe.'] },
+  ]) {
+    globalThis.fetch = async (_input, init) => {
+      const trip = JSON.parse(JSON.parse(String(init?.body)).input[0].content).trip;
+      return response({ ...entryData(trip), ...patch });
+    };
+    await assert.rejects(
+      checkStudioEntryRequirements(value),
+      /unsupported safety or entry guarantee/,
+    );
+  }
+});
+
+test('destination research keeps its original safety guard and cannot recommend a directly unsuitable candidate', async () => {
+  const value = workspace();
+  const advisory = 'https://www.gov.uk/foreign-travel-advice/japan';
+  const conditions = 'https://www.jma.go.jp/jma/en/Activities/climate.html';
+  for (const reason of [
+    'This is not a safe destination.',
+    'This is a completely safe destination.',
+    'No guaranteed entry.',
+  ]) {
+    globalThis.fetch = async (input) => {
+      assert.equal(String(input), 'https://api.openai.com/v1/responses');
+      return response(
+        {
+          candidates: [
+            {
+              destination: 'Kyoto',
+              countryCode: 'JP',
+              reason,
+              suggestedDays: 7,
+              thingsToDo: ['Explore gardens'],
+              conditions: 'Consult current notices.',
+              seasonalGuidance: 'Usual patterns.',
+              currentDisruption: false,
+              conditionsVerified: true,
+              advisoryUrl: advisory,
+              sources: [{ url: conditions, publishedAt: stamp() }],
+            },
+          ],
+          notes: [],
+        },
+        [advisory, conditions],
+      );
+    };
+    await assert.rejects(
+      researchStudioDestinations(value),
+      /unsupported safety or entry guarantee/,
+    );
+  }
+});
+
+test('verified inline citations are cleaned before exact entry cautions without admitting contradictory cautions', async () => {
+  const value = workspace();
+  Object.assign(value.brief, {
+    preferredDestination: 'Kyoto',
+    destinationCountry: 'JP',
+    tripPurpose: 'tourism',
+  });
+  const summaries = [
+    `Guaranteed entry is not available ([MOFA](${official})).`,
+    `No guaranteed entry is not available ([MOFA](${official})).`,
+    `No guaranteed entry cannot be assured ([MOFA](${official})).`,
+  ];
+  for (const [index, summary] of summaries.entries()) {
+    globalThis.fetch = async (_input, init) => {
+      const trip = JSON.parse(JSON.parse(String(init?.body)).input[0].content).trip;
+      return response({ ...entryData(trip), summary });
+    };
+    if (!index) {
+      const result = await checkStudioEntryRequirements(value);
+      assert.equal(result.summary, 'Guaranteed entry is not available.');
+      assert.equal(result.sources[0].url, official);
+    } else
+      await assert.rejects(
+        checkStudioEntryRequirements(value),
+        /unsupported safety or entry guarantee/,
+      );
+  }
+});
+
+test('briefing citation failures log only a fixed reason while keeping weather and an explicit review outcome', async () => {
+  const value = workspace();
+  Object.assign(value.brief, {
+    preferredDestination: 'Kyoto',
+    destinationCountry: 'JP',
+    tripPurpose: 'tourism',
+    startDate: '2027-04-01',
+    endDate: '2027-04-04',
+  });
+  const originalWarn = console.warn;
+  const diagnostics: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    diagnostics.push(args);
+  };
+  try {
+    const result = await researchStudioTripBriefing(value, undefined, {
+      researchEntry: async () => {
+        throw new StudioError(
+          502,
+          'Research included a source that was not found in the current search. Please retry.',
+        );
+      },
+      researchWeather: async () => ({
+        kind: 'seasonal_outlook',
+        checkedAt: stamp(),
+        summary: 'Usual seasonal patterns.',
+        sources: [],
+        days: [],
+      }),
+    });
+    assert.equal(result.briefing.stops[0].entryRequirements, null);
+    assert.match(result.briefing.stops[0].entryError, /could not be checked/);
+    assert.equal(result.briefing.stops[0].weather.kind, 'seasonal_outlook');
+    assert.deepEqual(diagnostics, [
+      ['Studio trip briefing component failed', { kind: 'entry', reason: 'research_citation' }],
+    ]);
+    diagnostics.length = 0;
+    await researchStudioTripBriefing(value, undefined, {
+      researchEntry: async () => {
+        throw new Error('PRIVATE PROVIDER BODY, NAME AND PASSPORT');
+      },
+      researchWeather: async () => ({
+        kind: 'unavailable',
+        checkedAt: stamp(),
+        summary: 'Unavailable.',
+        sources: [],
+        days: [],
+      }),
+    });
+    assert.deepEqual(diagnostics, [
+      ['Studio trip briefing component failed', { kind: 'entry', reason: 'internal' }],
+    ]);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /PRIVATE|AU|Kyoto|passport|body/i);
+  } finally {
+    console.warn = originalWarn;
   }
 });
 

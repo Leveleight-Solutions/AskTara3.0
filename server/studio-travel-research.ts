@@ -287,6 +287,31 @@ function assertNoGuarantees(value: string) {
       'Research included an unsupported safety or entry guarantee. Please retry.',
     );
 }
+
+/** Only exact entry cautions are exceptions; destination safety assessment is unchanged. */
+function assertEntryCautions(value: string) {
+  const prose = value.replace(/[’‘]/g, "'");
+  const safety =
+    /\b(?:perfectly|completely|totally|guaranteed)\s+safe\b|\bsafe\s+(?:destination|to\s+(?:visit|travel))\b/i;
+  const entryClaim =
+    /\bguaranteed\s+entry\b|\b(?:entry|admission)\s+(?:(?:is|will\s+be|has\s+been)\s+)?(?:guaranteed|assured|certain)\b/i;
+  const explicitCautions = [
+    /^(?:there\s+is\s+)?no\s+(?:guaranteed\s+entry|entry\s+(?:is\s+)?guaranteed)(?:\s+to\s+(?:the\s+)?destination)?$/i,
+    /^guaranteed\s+entry\s+(?:is\s+not\s+(?:available|confirmed|assured|offered|provided|promised|guaranteed|established)|(?:cannot|can't)\s+be\s+(?:promised|guaranteed|assured|confirmed|offered|provided|established)|remains?\s+(?:unavailable|unconfirmed|uncertain))$/i,
+    /^(?:do\s+not|never)\s+(?:assume|expect|promise|claim)\s+guaranteed\s+entry$/i,
+  ];
+  if (
+    safety.test(prose) ||
+    prose.split(/[.!?;\n]/).some((part) => {
+      const clause = part.trim();
+      return entryClaim.test(clause) && !explicitCautions.some((caution) => caution.test(clause));
+    })
+  )
+    throw new StudioError(
+      502,
+      'Research included an unsupported safety or entry guarantee. Please retry.',
+    );
+}
 function cleanResearchProse(
   value: string,
   sources: Map<string, WebSource>,
@@ -342,6 +367,7 @@ function cleanEntryProse(value: string, sources: Map<string, WebSource>, embedde
     .replace(/\b(?:trip\.)?suggestedStayConfirmed\s*(?:=|:)\s*false\b/g, 'stay length unconfirmed')
     .replace(/\bpublishedAt\b/g, 'publication date')
     .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
     .trim();
 }
 const officialAdviceSchema = z.object({
@@ -688,7 +714,6 @@ Write all user-facing summaries, conditions, authorisation information, observat
       502,
       'Entry research changed the selected passport or destination. Please retry.',
     );
-  assertNoGuarantees(JSON.stringify(result.data));
   const checkedAt = stamp();
   const searched = sourceMap(result.sources);
   const embedded = new Set<string>();
@@ -772,6 +797,13 @@ Write all user-facing summaries, conditions, authorisation information, observat
         ),
       );
   }
+  [
+    summary,
+    ...conditions,
+    electronicAuthorisation,
+    ...notes,
+    ...observations.map((observation) => observation.summary),
+  ].forEach(assertEntryCautions);
   return {
     checkedAt,
     inputKey: JSON.stringify(trip),

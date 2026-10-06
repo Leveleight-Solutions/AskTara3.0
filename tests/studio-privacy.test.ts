@@ -11,6 +11,8 @@ import { reviewStudioBrief, studioReviewSchema } from '../server/studio-models.t
 import { defaultStudioAgency } from '../shared/studio.ts';
 import { applyStudioPatch, qualifyStudio } from '../server/studio-domain.ts';
 import { parseStudioImport } from '../server/studio-imports.ts';
+import { redactIdentityAndPayment } from '../server/studio-imports.ts';
+import { cruiseDraftToItinerary, type StudioCruiseDraft } from '../shared/studio-cruise.ts';
 
 const originalFetch = globalThis.fetch;
 const envNames = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_REASONING_EFFORT'];
@@ -31,6 +33,109 @@ const secret = 'Passport number AB1234567';
 const payment = 'Card number 4111 1111 1111 1111';
 const assertScrubbed = (value: unknown) =>
   assert.doesNotMatch(JSON.stringify(value), /AB1234567|4111[ -]?1111[ -]?1111[ -]?1111/);
+
+const numericCruise = (): StudioCruiseDraft => ({
+  id: '77777777-7777-4777-8777-777777777777',
+  name: 'Reviewed numeric UUID sailing',
+  ship: '',
+  sourceUrl: '',
+  sourceName: 'Reviewed schedule',
+  extractedAt: '2026-10-06T00:00:00.000Z',
+  currency: 'AUD',
+  fullFare: null,
+  disembarkAfterDay: null,
+  onwardTransport: 'undecided',
+  returnTransport: 'undecided',
+  warnings: [],
+  days: [
+    {
+      id: '11111111-1111-4111-8111-111111111111',
+      day: 1,
+      date: '2027-10-03',
+      port: 'Taipei',
+      arrival: '',
+      departure: '',
+      details: 'Reviewed source day.',
+    },
+  ],
+});
+
+test('privacy preserves only cruise references grounded in the same schema-valid reviewed source document', () => {
+  const draft = numericCruise();
+  const document = {
+    cruises: [draft],
+    itinerary: cruiseDraftToItinerary(draft),
+    prose: `${secret}. ${payment}`,
+  };
+  const clean = scrubStudioPrivateData(document);
+  assert.equal(clean.itinerary.days[0].cruiseId, draft.id);
+  assert.equal(clean.itinerary.days[0].cruiseDayId, draft.days[0].id);
+  assert.equal(clean.cruises[0].days[0].id, draft.days[0].id);
+  assertScrubbed(clean.prose);
+  assert.deepEqual(scrubStudioPrivateData(clean), clean);
+  const unknown = scrubStudioPrivateData({ cruiseId: draft.id, cruiseDayId: draft.days[0].id });
+  assert.notEqual(unknown.cruiseId, draft.id);
+  assert.notEqual(unknown.cruiseDayId, draft.days[0].id);
+  const malformed = scrubStudioPrivateData({
+    ...document,
+    cruises: [{ ...draft, fullFare: 10000001 }],
+  });
+  assert.notEqual(malformed.itinerary.days[0].cruiseDayId, draft.days[0].id);
+});
+
+test('previously redacted cruise references recover only an unambiguous matching source row', () => {
+  const draft = numericCruise();
+  const document = { cruises: [draft], itinerary: cruiseDraftToItinerary(draft) };
+  document.itinerary.days[0].cruiseId = redactIdentityAndPayment(draft.id);
+  document.itinerary.days[0].cruiseDayId = redactIdentityAndPayment(draft.days[0].id!);
+  const clean = scrubStudioPrivateData(document);
+  assert.equal(clean.itinerary.days[0].cruiseId, draft.id);
+  assert.equal(clean.itinerary.days[0].cruiseDayId, draft.days[0].id);
+  const changed = structuredClone(document);
+  changed.itinerary.days[0].title = 'Manually renamed ambiguous port';
+  assert.notEqual(scrubStudioPrivateData(changed).itinerary.days[0].cruiseDayId, draft.days[0].id);
+  const conflicting = structuredClone(document);
+  conflicting.itinerary.days[0].cruiseId = draft.id;
+  conflicting.itinerary.days[0].cruiseDayId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  assert.equal(
+    scrubStudioPrivateData(conflicting).itinerary.days[0].cruiseDayId,
+    conflicting.itinerary.days[0].cruiseDayId,
+  );
+  const ambiguous = structuredClone(document);
+  ambiguous.itinerary.days[0].cruiseId = draft.id;
+  ambiguous.cruises[0].days.push({
+    ...draft.days[0],
+    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    day: 2,
+  });
+  assert.notEqual(
+    scrubStudioPrivateData(ambiguous).itinerary.days[0].cruiseDayId,
+    draft.days[0].id,
+  );
+});
+
+for (const field of ['cruiseId', 'cruiseDayId'] as const) {
+  test(`a conflicting numeric UUID ${field} remains distinct after repeated privacy scrubs`, () => {
+    const draft = numericCruise();
+    const document = { cruises: [draft], itinerary: cruiseDraftToItinerary(draft) };
+    const conflictingId = '22222222-2222-4222-8222-222222222222';
+    document.itinerary.days[0][field] = conflictingId;
+    const once = scrubStudioPrivateData(document);
+    const twice = scrubStudioPrivateData(once);
+    assert.equal(once.itinerary.days[0][field], conflictingId);
+    assert.equal(twice.itinerary.days[0][field], conflictingId);
+    assert.deepEqual(twice, once);
+    assert.equal(once.itinerary.days[0].cruiseId, document.itinerary.days[0].cruiseId);
+    assert.equal(once.itinerary.days[0].cruiseDayId, document.itinerary.days[0].cruiseDayId);
+
+    const paymentLike = structuredClone(document);
+    paymentLike.itinerary.days[0][field] = '4111111111111111';
+    assert.notEqual(
+      scrubStudioPrivateData(paymentLike).itinerary.days[0][field],
+      '4111111111111111',
+    );
+  });
+}
 
 test('recursive privacy scrub removes identity/payment prose while preserving IDs, links, photos and agent contact details', () => {
   const original = {

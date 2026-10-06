@@ -19,6 +19,19 @@ const reasons = new Map([
   ['OpenAI returned travel data that failed validation.', 'model_schema'],
   ['OpenAI returned invalid structured output.', 'model_json'],
   ['Web research returned no verifiable search sources. Please retry.', 'research_no_sources'],
+  [
+    'Research included an unsupported safety or entry guarantee. Please retry.',
+    'research_guarantee',
+  ],
+  [
+    'Research included an inline citation that was not found in the current search. Please retry.',
+    'research_citation',
+  ],
+  [
+    'Research included a source that was not found in the current search. Please retry.',
+    'research_citation',
+  ],
+  ['Entry research used an unsupported automated data source. Please retry.', 'research_source'],
 ]);
 
 export function planningFailureReason(error: unknown): string {

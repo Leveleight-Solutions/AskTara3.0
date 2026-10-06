@@ -13,7 +13,8 @@ import {
   type StudioTripBriefing,
   type StudioWeatherOutlook,
 } from '../shared/studio-trip-briefing.ts';
-import { evidenceUrl, structuredResponse } from './agents/openai.ts';
+import { evidenceUrl, structuredResponse, OpenAIPlanningError } from './agents/openai.ts';
+import { planningFailureReason } from './agents/failures.ts';
 import { redactStudioPrivateText } from './studio-imports.ts';
 import { StudioError } from './studio-store.ts';
 import { checkStudioEntryRequirements } from './studio-travel-research.ts';
@@ -248,14 +249,25 @@ export async function researchStudioTripBriefing(
                   entryRequirements = cached;
                   return;
                 }
+                const operationSignal = timedSignal();
                 try {
                   entryRequirements = await entryResearch(
                     workspace,
-                    timedSignal(),
+                    operationSignal,
                     destination.stopId || undefined,
                   );
-                } catch {
+                } catch (error) {
                   signal?.throwIfAborted();
+                  console.warn('Studio trip briefing component failed', {
+                    kind: 'entry',
+                    reason: budget.signal.aborted
+                      ? 'briefing_deadline'
+                      : operationSignal.aborted
+                        ? 'operation_deadline'
+                        : error instanceof OpenAIPlanningError
+                          ? error.code
+                          : planningFailureReason(error),
+                  });
                   entryError = budget.signal.aborted
                     ? 'The trip check reached its time limit. Retry to check entry requirements.'
                     : 'Entry requirements could not be checked. Retry or review the destination authority.';

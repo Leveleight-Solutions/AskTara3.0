@@ -1,10 +1,10 @@
 # Travel scenario testing
 
-These fictional scenarios exercise the same Studio API used by the website. They cover conversational intake, corrections, route acceptance, researched daily plans, persistence and private proposal PDFs. Cruise scenarios additionally cover reviewed source imports, sea days, early disembarkation, manual transfers and regeneration. The supplier matrix independently checks actual sandbox hotel and one-way flight searches. The exact prompts are in [the conversation fixtures](../scripts/fixtures/studio-scenarios.json) and [the additional edge fixtures](../tests/fixtures/studio-scenario-edges.json).
+These fictional scenarios exercise the same Studio API used by the website. They cover conversational intake, corrections, route acceptance, researched daily plans, persistence and private proposal PDFs. Cruise scenarios additionally cover reviewed source imports, sea days, early disembarkation, manual transfers and regeneration. The supplier matrix independently checks actual sandbox hotel and one-way flight searches. The exact prompts are in [the conversation fixtures](../scripts/fixtures/studio-scenarios.json), [the additional edge fixtures](../tests/fixtures/studio-scenario-edges.json) and [the short-answer fixtures](../tests/fixtures/studio-short-conversations.json).
 
 ## Repeat in the website
 
-The [copyable prompts](TRIP_SCENARIO_PROMPTS.md) present all ten conversations in reading order, with their expected final routes and budgets.
+The [copyable prompts](TRIP_SCENARIO_PROMPTS.md) present ten longer conversations in reading order, with their expected final routes and budgets. [Short-answer prompts](AUTOMATIC_ENTRY_CHECKS.md) add the Kyoto honeymoon and Nepal hiking holiday, including automatic passport checks on destination suggestions.
 
 Open `/studio` in the local app and create a separate new proposal for each scenario. Paste its messages one at a time. Check the destination order, arrival/departure dates, nights, party, budget and preferences against the fixture's `expected` fields. Then continue to the route, review and explicitly accept it, and use the fixture's `itineraryPrompt` to generate the daily plan. Reload, inspect the saved itinerary and download the private proposal PDF.
 
@@ -71,6 +71,8 @@ node scripts/test-live-cruise-scenarios.mjs
 ```
 
 The synthetic schedules, land stays and manual actions are defined in [the cruise script](../scripts/test-live-cruise-scenarios.mjs). They are authored test schedules, not real sailings. It checks source-day identity, retained edits, early exit, full fare, all trip dates, land-day research, saved services, private preview, PDF and reload.
+
+Set `ASKTARA_CRUISE_CASE=asia-early-disembarkation` or `mediterranean-honeymoon` to repeat one cruise; omitting it runs both. The browser check opens **Preview proposal** from the compact trip board, then **Preview client proposal** in the details popup. It never publishes or books.
 
 Run the three independent sandbox supplier-party checks:
 

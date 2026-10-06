@@ -1,5 +1,7 @@
-import { after, beforeEach, test } from 'node:test';
+import { after, afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import type { Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,12 +17,16 @@ const initialEnv = {
   LITEAPI_API_KEY: process.env.LITEAPI_API_KEY,
   LITEAPI_MODE: process.env.LITEAPI_MODE,
 };
-const apps: ReturnType<typeof createApp>[] = [];
+const fixtures: { app: ReturnType<typeof createApp>; server: Server }[] = [];
 const temporaryPaths: string[] = [];
-const makeApp = (path = ':memory:') => {
+const makeApp = async (path = ':memory:') => {
   const app = createApp(path);
-  apps.push(app);
-  return app;
+  // Keep one listener per scenario instead of reopening Supertest's implicit
+  // server on every request, including requests made by different session agents.
+  const server = app.listen(0, '127.0.0.1');
+  fixtures.push({ app, server });
+  await once(server, 'listening');
+  return { app, server, client: request.agent(server) };
 };
 const originalFetch = globalThis.fetch;
 // Full customer intake for tests whose subject is a generated itinerary, not the interview.
@@ -45,22 +51,32 @@ beforeEach(() => {
   delete process.env.LITEAPI_MODE;
   globalThis.fetch = originalFetch;
 });
-after(() => {
+afterEach(async () => {
   globalThis.fetch = originalFetch;
-  for (const app of apps)
+  for (const { app, server } of fixtures.splice(0)) {
+    await app.locals.studioActions.shutdown();
+    await app.locals.planningRuns.shutdown();
+    if (server.listening)
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      });
     try {
       app.locals.db.close();
     } catch {
       /* Persistence test already closed this connection. */
     }
+  }
+});
+after(() => {
+  globalThis.fetch = originalFetch;
   for (const path of temporaryPaths) rmSync(path, { recursive: true, force: true });
   for (const [key, value] of Object.entries(initialEnv))
     value === undefined ? delete process.env[key] : (process.env[key] = value);
 });
 
 test('local planner creates and edits a real persisted itinerary, including dates and preferences', async () => {
-  const app = makeApp(),
-    client = request.agent(app);
+  const { client } = await makeApp();
   const response = await client
     .post('/api/chat')
     .send({
@@ -96,7 +112,7 @@ test('local planner creates and edits a real persisted itinerary, including date
 });
 
 test('unknown destinations ask for clarification and do not silently become Kyoto', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const response = await client
     .post('/api/chat')
     .send({ message: 'I want to visit Atlantis for 3 days' })
@@ -113,7 +129,7 @@ test('unknown destinations ask for clarification and do not silently become Kyot
 });
 
 test('the exact London request preserves its city, date, party and accessibility preferences', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const response = await client
     .post('/api/chat')
     .send({
@@ -157,7 +173,7 @@ test('the exact London request preserves its city, date, party and accessibility
 });
 
 test('an unsupported named city with food preferences remains its own draft and never becomes discovery', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const response = await client
     .post('/api/chat')
     .send({
@@ -189,7 +205,7 @@ test('an unsupported named city with food preferences remains its own draft and 
 });
 
 test('an unsupported destination change preserves the existing itinerary and protected stop', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const created = await client
     .post('/api/chat')
     .send({
@@ -227,7 +243,7 @@ test('an unsupported destination change preserves the existing itinerary and pro
 });
 
 test('open discovery asks a short intake question without presenting default budget or choosing a destination', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const result = await client
     .post('/api/chat')
     .send({
@@ -276,7 +292,7 @@ test('destination intent separates origins, unsupported places, discovery and or
 });
 
 test('neighborhood activity edits do not become unsupported destination requests', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   let result = await client
     .post('/api/chat')
     .send({
@@ -304,7 +320,7 @@ test('neighborhood activity edits do not become unsupported destination requests
 });
 
 test('beach discovery retains the requested budget and interests through intake without choosing a destination', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const result = await client
     .post('/api/chat')
     .send({ message: 'Suggest somewhere for a 3-day beach escape for 2 travelers, budget $900.' })
@@ -331,7 +347,7 @@ test('beach discovery retains the requested budget and interests through intake 
 });
 
 test('weekly and hyphenated day durations remain distinct from traveler counts', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const fortnight = await client
     .post('/api/chat')
     .send({ message: itineraryRequest('Kyoto for 2 weeks') })
@@ -348,9 +364,9 @@ test('weekly and hyphenated day durations remain distinct from traveler counts',
 });
 
 test('anonymous owners cannot read, mutate, share, export, or delete each other’s trips or saves', async () => {
-  const app = makeApp(),
-    alice = request.agent(app),
-    bob = request.agent(app);
+  const { server } = await makeApp(),
+    alice = request.agent(server),
+    bob = request.agent(server);
   const created = await alice.post('/api/chat').send({ message: '3 days in Bali' }).expect(200),
     id = created.body.trip.id;
   await bob.get(`/api/trips/${id}`).expect(404);
@@ -368,8 +384,7 @@ test('anonymous owners cannot read, mutate, share, export, or delete each other�
 });
 
 test('registration transfers anonymous data, stores scrypt hashes, and rotates/revokes sessions', async () => {
-  const app = makeApp(),
-    client = request.agent(app);
+  const { app, server, client } = await makeApp();
   const created = await client.post('/api/chat').send({ message: '4 days in Paris' }).expect(200);
   const oldCookie = created.headers['set-cookie'][0].split(';')[0];
   await client.post('/api/saved').send({ type: 'destination', itemId: 'paris' }).expect(201);
@@ -384,7 +399,10 @@ test('registration transfers anonymous data, stores scrypt hashes, and rotates/r
   assert.match(row.password_hash, /^[a-f0-9]{32}:[a-f0-9]{128}$/);
   assert.equal((await client.get('/api/trips')).body.trips.length, 1);
   assert.equal((await client.get('/api/saved')).body.items.length, 1);
-  await request(app).get(`/api/trips/${created.body.trip.id}`).set('Cookie', oldCookie).expect(404);
+  await request(server)
+    .get(`/api/trips/${created.body.trip.id}`)
+    .set('Cookie', oldCookie)
+    .expect(404);
   await client.post('/api/auth/logout').expect(200);
   assert.equal((await client.get('/api/session')).body.user, null);
   assert.equal((await client.get('/api/trips')).body.trips.length, 0);
@@ -400,9 +418,9 @@ test('registration transfers anonymous data, stores scrypt hashes, and rotates/r
 });
 
 test('signing into an existing account merges only anonymous data and deduplicates saves', async () => {
-  const app = makeApp(),
-    account = request.agent(app),
-    guest = request.agent(app);
+  const { server } = await makeApp(),
+    account = request.agent(server),
+    guest = request.agent(server);
   const auth = { email: 'owner@example.com', password: 'safe-password-123' };
   await account
     .post('/api/auth/register')
@@ -414,7 +432,7 @@ test('signing into an existing account merges only anonymous data and deduplicat
   await guest.post('/api/auth/login').send(auth).expect(200);
   assert.equal((await guest.get('/api/saved')).body.items.length, 1);
   await account.get(`/api/trips/${trip.id}`).expect(200);
-  const other = request.agent(app);
+  const other = request.agent(server);
   await other
     .post('/api/auth/register')
     .send({ name: 'Other', email: 'other@example.com', password: 'safe-password-123' })
@@ -423,7 +441,7 @@ test('signing into an existing account merges only anonymous data and deduplicat
 });
 
 test('editing activities survives subsequent reads and date changes, and duration edits regenerate days', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const trip = (
     await client.post('/api/chat').send({ message: itineraryRequest('3 days in Kyoto') })
   ).body.trip as Trip;
@@ -456,23 +474,22 @@ test('editing activities survives subsequent reads and date changes, and duratio
 });
 
 test('public share links omit chat, allow read-only access, and are revoked immediately', async () => {
-  const app = makeApp(),
-    owner = request.agent(app);
+  const { server, client: owner } = await makeApp();
   const trip = (
     await owner.post('/api/chat').send({ message: itineraryRequest('5 days in Lisbon') })
   ).body.trip;
   const share = (await owner.post(`/api/trips/${trip.id}/share`).expect(200)).body;
   assert.match(share.url, /^\/shared\/[a-f0-9]{48}$/);
-  const publicResponse = await request(app).get(`/api/shared/${share.shareToken}`).expect(200);
+  const publicResponse = await request(server).get(`/api/shared/${share.shareToken}`).expect(200);
   assert.deepEqual(publicResponse.body.trip.messages, []);
   assert.equal(publicResponse.body.trip.shareToken, null);
-  await request(app).patch(`/api/trips/${trip.id}`).send({ title: 'Public edit' }).expect(404);
+  await request(server).patch(`/api/trips/${trip.id}`).send({ title: 'Public edit' }).expect(404);
   await owner.delete(`/api/trips/${trip.id}/share`).expect(204);
-  await request(app).get(`/api/shared/${share.shareToken}`).expect(404);
+  await request(server).get(`/api/shared/${share.shareToken}`).expect(404);
 });
 
 test('calendar uses dated events, escaping and CRLF folding; undated trips cannot export', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const trip = (
     await client.post('/api/chat').send({ message: itineraryRequest('2 days in Kyoto') })
   ).body.trip as Trip;
@@ -495,14 +512,14 @@ test('calendar uses dated events, escaping and CRLF folding; undated trips canno
 test('SQLite data and anonymous sessions survive application restart', async () => {
   const path = mkdtempSync(join(tmpdir(), 'asktara-test-'));
   temporaryPaths.push(path);
-  const app = makeApp(join(path, 'test.sqlite'));
-  const response = await request(app)
+  const { app, server } = await makeApp(join(path, 'test.sqlite'));
+  const response = await request(server)
     .post('/api/chat')
     .send({ message: itineraryRequest('4 days in Madeira') })
     .expect(200);
   const cookie = response.headers['set-cookie'][0].split(';')[0];
   app.locals.db.close();
-  const restarted = makeApp(join(path, 'test.sqlite'));
+  const { server: restarted } = await makeApp(join(path, 'test.sqlite'));
   const persisted = await request(restarted)
     .get(`/api/trips/${response.body.trip.id}`)
     .set('Cookie', cookie)
@@ -511,7 +528,7 @@ test('SQLite data and anonymous sessions survive application restart', async () 
 });
 
 test('validation rejects invalid dates, excessive lengths, unknown fields, foreign origins, and malformed JSON', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   await client.post('/api/chat').send({ message: '' }).expect(400);
   await client
     .post('/api/chat')
@@ -545,7 +562,7 @@ test('validation rejects invalid dates, excessive lengths, unknown fields, forei
 });
 
 test('provider status and absent flight/hotel credentials are explicit', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   assert.deepEqual((await client.get('/api/integrations')).body, {
     ai: false,
     flights: false,
@@ -578,7 +595,7 @@ test('provider status and absent flight/hotel credentials are explicit', async (
 test('AI provider failure returns an unavailable error without creating a replacement trip', async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   globalThis.fetch = async () => new Response('{}', { status: 503 });
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const response = await client
     .post('/api/chat')
     .send({ message: '6 days in Istanbul' })
@@ -623,7 +640,7 @@ test('Duffel adapter sends validated requests and distinguishes test offers', as
       },
     });
   };
-  const response = await request(makeApp())
+  const response = await request((await makeApp()).server)
     .post('/api/flights/search')
     .send({
       origin: 'lhr',
@@ -678,7 +695,7 @@ test('LiteAPI adapter can provide flight search and one key is enough for both s
       ],
     });
   };
-  const response = await request(makeApp())
+  const response = await request((await makeApp()).server)
     .post('/api/flights/search')
     .send({
       origin: 'lhr',
@@ -698,8 +715,7 @@ test('LiteAPI adapter can provide flight search and one key is enough for both s
 });
 
 test('live structured agent plan is validated, persisted, and cannot restore a revoked share link', async () => {
-  const app = makeApp(),
-    client = request.agent(app);
+  const { server, client } = await makeApp();
   const trip = (
     await client.post('/api/chat').send({ message: itineraryRequest('2 days in Kyoto') })
   ).body.trip as Trip;
@@ -852,12 +868,11 @@ test('live structured agent plan is validated, persisted, and cannot restore a r
   ]);
   assert.equal(result.body.trip.itinerary[0].title, 'A quiet afternoon');
   assert.equal(result.body.trip.shareToken, null);
-  await request(app).get(`/api/shared/${token}`).expect(404);
+  await request(server).get(`/api/shared/${token}`).expect(404);
 });
 
 test('in-flight AI work cannot write or return an old owner’s trip after logout', async () => {
-  const app = makeApp(),
-    client = request.agent(app);
+  const { app, client } = await makeApp();
   await client
     .post('/api/auth/register')
     .send({ name: 'Owner', email: 'race@example.com', password: 'safe-password-123' })
@@ -898,8 +913,7 @@ test('in-flight AI work cannot write or return an old owner’s trip after logou
 });
 
 test('signing in while a new guest plan is generating cannot leave a trip under an orphaned owner', async () => {
-  const app = makeApp(),
-    client = request.agent(app);
+  const { app, client } = await makeApp();
   await client.get('/api/session').expect(200);
   process.env.OPENAI_API_KEY = 'test-key';
   let respond!: (value: Response) => void, started!: () => void;
@@ -929,7 +943,7 @@ test('signing in while a new guest plan is generating cannot leave a trip under 
 });
 
 test('untrusted AI output fails without altering the saved destination, days or itinerary', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const trip = (
     await client.post('/api/chat').send({ message: itineraryRequest('3 days in Kyoto') })
   ).body.trip as Trip;
@@ -968,7 +982,7 @@ test('untrusted AI output fails without altering the saved destination, days or 
 });
 
 test('calendar activity IDs cannot inject extra events through request input', async () => {
-  const client = request.agent(makeApp());
+  const { client } = await makeApp();
   const trip = (
     await client.post('/api/chat').send({ message: itineraryRequest('2 days in Paris') })
   ).body.trip as Trip;
@@ -1003,7 +1017,7 @@ test('LiteAPI adapter uses catalog coordinates, guest nationality and clearly ma
       ],
     });
   };
-  const response = await request(makeApp())
+  const response = await request((await makeApp()).server)
     .post('/api/hotels/search')
     .send({
       destinationId: 'kyoto',

@@ -2,6 +2,7 @@
  * Opt-in synthetic cruise integration checks against a running local API.
  * ASKTARA_RUN_LIVE_CRUISES=1 node scripts/test-live-cruise-scenarios.mjs
  * Optional: ASKTARA_CRUISE_BROWSER=1 (local frontend defaults to port 5175).
+ * Optional: ASKTARA_CRUISE_CASE=asia-early-disembarkation (defaults to both cases).
  * Uses the app's configured AI for source extraction. Never books, pays or publishes.
  */
 import assert from 'node:assert/strict';
@@ -110,6 +111,14 @@ Day 5: 2027-10-05 Shanghai arrival 09:00`,
     dates: ['2027-10-01', '2027-10-02', '2027-10-03', '2027-10-04', '2027-10-05'],
   },
 ];
+const requestedCase = process.env.ASKTARA_CRUISE_CASE?.trim();
+const selectedCases = requestedCase
+  ? cases.filter((fixture) => fixture.id === requestedCase)
+  : cases;
+assert.ok(
+  selectedCases.length,
+  `ASKTARA_CRUISE_CASE must be one of: ${cases.map((fixture) => fixture.id).join(', ')}.`,
+);
 
 function pdfText(buffer) {
   const raw = buffer.toString('latin1');
@@ -161,7 +170,7 @@ function pdfText(buffer) {
   return result;
 }
 const report = { startedAt: stamp(), base, scenarios: [] };
-for (const fixture of cases) {
+for (const fixture of selectedCases) {
   const result = { id: fixture.id, checks: [], failures: [], workarounds: [], cleanup: false };
   report.scenarios.push(result);
   const cookies = new Map();
@@ -682,13 +691,32 @@ for (const fixture of cases) {
           })),
         );
         const page = await context.newPage();
+        const forbiddenActions = [];
+        await page.route('**/api/**', async (route) => {
+          const request = route.request();
+          const path = new URL(request.url()).pathname;
+          if (
+            /\/(?:bookings?|orders?|payments?|prebook)(?:\/|$)/.test(path) ||
+            (request.method() !== 'GET' && /\/proposal$/.test(path))
+          ) {
+            forbiddenActions.push(path);
+            await route.abort();
+          } else await route.continue();
+        });
         await page.goto(`${frontend}/studio/${workspace.id}`);
-        await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
-        await page.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
+        await page
+          .getByTestId('studio-trip-board')
+          .getByRole('button', { name: 'Preview proposal', exact: true })
+          .click();
+        const tools = page.getByRole('dialog').filter({
+          has: page.getByRole('tablist', { name: 'Plan details', exact: true }),
+        });
+        await tools.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
         await page
           .getByTestId('client-proposal')
           .getByText(fixture.name, { exact: true })
           .waitFor();
+        assert.deepEqual(forbiddenActions, [], 'Private preview must not publish, book or pay.');
         await page.screenshot({ path: `${output}/${fixture.id}-browser.png`, fullPage: true });
         result.checks.push('real browser displays private cruise-and-land proposal preview');
       } finally {

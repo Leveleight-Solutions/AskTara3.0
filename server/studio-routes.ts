@@ -20,6 +20,7 @@ import { parseStudioImport, studioImportSchema, StudioImportError } from './stud
 import { planningFailureReason } from './agents/failures.ts';
 import { OpenAIPlanningError } from './agents/openai.ts';
 import { runStudioAssistant } from './studio-assistant.ts';
+import { hasRedactedStudioIdentifier } from './studio-privacy.ts';
 import { generateStudioItinerary, studioTripEndConflicts } from './studio-itinerary.ts';
 import {
   installStudioClientRoutes,
@@ -1074,7 +1075,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         )
           edited = uniqueEdited(
             (candidate) =>
-              legacy(candidate) &&
+              (legacy(candidate) || hasRedactedStudioIdentifier(candidate.cruiseDayId)) &&
               candidate.date === original.date &&
               candidate.title === original.title,
           );
