@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { newStudioWorkspace } from '../server/studio-store.ts';
 import { studioQuoteFingerprint } from '../server/studio-suppliers.ts';
+import type { StudioJourneyOption } from '../shared/studio-journey.ts';
 import {
   studioChatQuoteContextKey,
   studioChatSearchBriefPatch,
@@ -142,4 +143,111 @@ test('a stale open search popup cannot overwrite trip facts that were saved mean
   value.brief.adults = 3;
   value.brief.hotelStandard = 'Five stars';
   assert.deepEqual(studioChatSearchBriefPatch(value, draft, 'hotels'), { patch: {}, error: '' });
+});
+
+const sourcedRoute = (returning = false): StudioJourneyOption => ({
+  id: returning ? 'return-route' : 'outward-route',
+  basis: 'route_guidance',
+  title: 'Synthetic sourced route',
+  operator: 'Synthetic airline',
+  origin: returning ? 'London' : 'Melbourne',
+  destination: returning ? 'Melbourne' : 'London',
+  originAirportCode: returning ? 'LHR' : 'MEL',
+  destinationAirportCode: returning ? 'MEL' : 'LHR',
+  via: ['Dubai'],
+  duration: 'Confirm the dated schedule.',
+  summary: 'Published route guidance.',
+  returnSummary: 'Compare return departures separately.',
+  sources: [
+    {
+      url: 'https://www.qantas.com/',
+      label: 'Synthetic official source fixture',
+      checkedAt: new Date().toISOString(),
+    },
+  ],
+  departureDate: '',
+  arrivalDate: '',
+  price: null,
+});
+
+test('sourced journey handoff supplies airport codes but never an arrival date as departure', () => {
+  const value = workspace();
+  value.structureAccepted = false;
+  const draft = studioChatSearchDraft(value, { direction: 'outbound', option: sourcedRoute() });
+  assert.equal(draft.origin, 'MEL');
+  assert.equal(draft.destination, 'LHR');
+  assert.equal(draft.departureDate, '');
+  assert.equal(value.brief.startDate, '2027-06-02');
+  const noSources = sourcedRoute();
+  noSources.sources = [];
+  const unchecked = studioChatSearchDraft(value, { direction: 'outbound', option: noSources });
+  assert.equal(unchecked.origin, '');
+  assert.equal(unchecked.destination, '');
+  const invalidCodes = sourcedRoute();
+  invalidCodes.originAirportCode = 'SYDNEY';
+  invalidCodes.destinationAirportCode = 'lhr';
+  const unmapped = studioChatSearchDraft(value, { direction: 'outbound', option: invalidCodes });
+  assert.equal(unmapped.origin, '');
+  assert.equal(unmapped.destination, '');
+});
+
+test('return route handoff reverses sourced airports and uses only explicit return departure', () => {
+  const value = workspace();
+  value.brief.departureDate = '2027-06-01';
+  value.brief.returnDepartureDate = '2027-06-08';
+  const draft = studioChatSearchDraft(value, { direction: 'return', option: sourcedRoute(true) });
+  assert.equal(draft.origin, 'LHR');
+  assert.equal(draft.destination, 'MEL');
+  assert.equal(draft.departureDate, '2027-06-08');
+  assert.equal(draft.returnJourney, 'one_way');
+  assert.equal(draft.returnDate, '');
+  value.brief.returnDepartureDate = '';
+  assert.equal(
+    studioChatSearchDraft(value, { direction: 'return', option: sourcedRoute(true) }).departureDate,
+    '',
+  );
+});
+
+test('preapproval search saves explicit outward and return departure without changing arrival or trip days', () => {
+  const value = workspace();
+  value.structureAccepted = false;
+  value.brief.tripDays = 4;
+  const draft = studioChatSearchDraft(value, { direction: 'outbound', option: sourcedRoute() });
+  draft.departureDate = '2027-06-01';
+  draft.returnDate = '2027-06-08';
+  assert.deepEqual(studioChatSearchBriefPatch(value, draft, 'flights', { direction: 'outbound' }), {
+    patch: { departureDate: '2027-06-01', returnDepartureDate: '2027-06-08' },
+    error: '',
+  });
+  const home = studioChatSearchDraft(value, { direction: 'return', option: sourcedRoute(true) });
+  home.departureDate = '2027-06-09';
+  assert.deepEqual(studioChatSearchBriefPatch(value, home, 'flights', { direction: 'return' }), {
+    patch: { returnDepartureDate: '2027-06-09' },
+    error: '',
+  });
+  assert.equal(value.brief.startDate, '2027-06-02');
+  assert.equal(value.brief.tripDays, 4);
+  assert.equal(value.stops[0].nights, 3);
+});
+
+test('fare context includes explicit duration, return departure, direction and source identity while metadata is irrelevant', () => {
+  const value = workspace();
+  const context = {
+    direction: 'outbound' as const,
+    optionId: 'outward-route',
+    inputKey: 'a'.repeat(64),
+  };
+  const key = studioChatQuoteContextKey(value, context);
+  value.revision++;
+  assert.equal(studioChatQuoteContextKey(value, context), key);
+  assert.notEqual(studioChatQuoteContextKey(value, { ...context, direction: 'return' }), key);
+  assert.notEqual(
+    studioChatQuoteContextKey(value, { ...context, optionId: 'another-source' }),
+    key,
+  );
+  value.brief.tripDays = 4;
+  assert.notEqual(studioChatQuoteContextKey(value, context), key);
+  const durationKey = studioChatQuoteContextKey(value, context);
+  value.brief.returnDepartureDate = '2027-06-09';
+  assert.notEqual(studioChatQuoteContextKey(value, context), durationKey);
 });

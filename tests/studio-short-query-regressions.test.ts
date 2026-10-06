@@ -52,6 +52,13 @@ const stop = (name: string, nights: number | null = null): StudioStop => ({
   neighbourhood: '',
   notes: '',
 });
+const ask = (workspace: StudioWorkspace, content: string) =>
+  workspace.messages.push({
+    id: `field-question-${workspace.messages.length}`,
+    role: 'assistant',
+    content,
+    createdAt: new Date().toISOString(),
+  });
 
 test('a short Kyoto honeymoon conversation retains purpose, passport and explicit dates without inferring nights from days', () => {
   const workspace = newStudioWorkspace();
@@ -64,12 +71,17 @@ test('a short Kyoto honeymoon conversation retains purpose, passport and explici
   assert.match(purpose, /Noted: travel purpose: tourism/);
   turn(workspace, '3 days');
   assert.equal(workspace.stops[0].nights, null);
+  ask(workspace, 'How many nights would you like in Kyoto?');
   turn(workspace, 'three nights');
+  ask(workspace, 'How many adults are travelling?');
   turn(workspace, 'two');
+  ask(workspace, 'Are any children travelling?');
   turn(workspace, 'no');
+  ask(workspace, 'What date will you arrive in Kyoto?');
   turn(workspace, '18 Nov 2027');
   turn(workspace, 'budget AUD 6000');
   turn(workspace, '4 star');
+  ask(workspace, 'Which passport will the client travel on?');
   turn(workspace, 'Australian');
   assert.equal(workspace.brief.passportNationality, 'AU');
   assert.equal(workspace.brief.startDate, '2027-11-18');
@@ -86,16 +98,18 @@ test('a short Kyoto honeymoon conversation retains purpose, passport and explici
 test('tiny multi-city stay replies target one asked destination and preserve the other stops', () => {
   const workspace = newStudioWorkspace();
   const first = turn(workspace, 'Paris then London');
-  assert.match(first, /How many nights would you like in Paris/);
+  assert.match(first, /Flight or Cruise/);
   const ids = workspace.stops.map((entry) => entry.id);
+  ask(workspace, 'Noted: Paris and London. How many nights would you like in Paris?');
   const second = turn(workspace, 'three');
-  assert.match(second, /How many nights would you like in London/);
+  assert.match(second, /Noted: Paris for 3 nights/);
   assert.deepEqual(
     workspace.stops.map((entry) => entry.nights),
     [3, null],
   );
+  ask(workspace, 'How many nights would you like in London?');
   const next = turn(workspace, 'two nights');
-  assert.match(next, /How many adults/);
+  assert.match(next, /Flight or Cruise/);
   assert.deepEqual(
     workspace.stops.map((entry) => entry.nights),
     [3, 2],
@@ -267,12 +281,14 @@ test('a short yes to children asks for the count rather than inventing it, then 
   const workspace = newStudioWorkspace();
   turn(workspace, 'Paris for 3 nights');
   turn(workspace, '2 adults');
+  ask(workspace, 'Are any children travelling?');
   const yes = turn(workspace, 'yes');
   assert.match(yes, /How many children/);
   assert.equal(workspace.brief.children, null);
   turn(workspace, 'two');
   assert.equal(workspace.brief.children, 2);
   assert.deepEqual(workspace.brief.childAges, []);
+  ask(workspace, 'What are the children’s ages?');
   turn(workspace, '8 and 12');
   assert.deepEqual(workspace.brief.childAges, [8, 12]);
   assert.equal(workspace.brief.adults, 2);

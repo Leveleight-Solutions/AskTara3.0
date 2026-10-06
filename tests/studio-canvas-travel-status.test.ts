@@ -54,24 +54,26 @@ test('final unverified/conflicting and blank completed entry responses are not p
     assert.equal(result.weatherLabel, 'Seasonal outlook ready', status);
   }
 });
-test('missing passport, purpose and confirmed dates identify the missing facts', () => {
+test('missing passport is explicit while unknown purpose and dates queue preliminary checks', () => {
   const workspace = fixture();
   workspace.brief.passportNationality = '';
   workspace.tripBriefing = syntheticTripBriefing(workspace);
   assert.equal(studioCanvasTravelStatus(workspace).entryLabel, 'Add passport nationality');
   workspace.brief.passportNationality = 'AU';
   workspace.brief.tripPurpose = 'undecided';
-  assert.equal(studioCanvasTravelStatus(workspace).entryLabel, 'Add trip purpose for entry advice');
+  assert.equal(studioCanvasTravelStatus(workspace).entryLabel, 'Entry checks need refreshing');
   workspace.brief.tripPurpose = 'tourism';
   workspace.stops[0].arrivalDate = '';
-  assert.equal(
-    studioCanvasTravelStatus(workspace).entryLabel,
-    'Confirm trip details for entry advice',
-  );
+  assert.equal(studioCanvasTravelStatus(workspace).entryLabel, 'Entry checks need refreshing');
   assert.equal(
     studioCanvasTravelStatus(workspace).weatherLabel,
-    'Confirm dates for weather guidance',
+    'Weather guidance needs refreshing',
   );
+  workspace.tripBriefing = null;
+  assert.deepEqual(studioCanvasTravelStatus(workspace), {
+    entryLabel: 'Entry checks pending',
+    weatherLabel: 'Weather guidance pending',
+  });
 });
 test('pending describes only eligible checks without a completed snapshot', () => {
   const workspace = fixture();

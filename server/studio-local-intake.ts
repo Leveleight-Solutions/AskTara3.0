@@ -17,6 +17,8 @@ import {
   studioStayConfirmation,
 } from './studio-intake-continuity.ts';
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
+import { buildStudioGuidedQuestions } from '../shared/studio-assistant.ts';
+import { studioJourneyIntakeReply } from './studio-journey-intake.ts';
 
 const normal = (value: string) => value.normalize('NFKC').trim().toLowerCase();
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -27,16 +29,37 @@ const greeting =
   /^(?:hi|hello|hey|good (?:morning|afternoon|evening))(?:\s+(?:tara|there))?[,.!\s]*(?:how are you[?!.\s]*)?$/i;
 const thanks = /^(?:thanks(?: a lot)?|thank you(?: very much)?|cheers)[!.\s]*$/i;
 const acknowledgement = /^(?:ok(?:ay)?|sure|great|sounds good|got it|understood)[!.\s]*$/i;
+const placePrefix = (text: string, index: number) =>
+  (
+    text
+      .slice(0, index)
+      .split(/[,;.!?\n]|\bbut\b/i)
+      .at(-1) || ''
+  ).replace(
+    /\b(?:no|without)\s+(?:children|kids|infants|passports?|nationality|budget|flights?|hotels?)\b/gi,
+    '',
+  );
+const uncertainPlacePrefix = (prefix: string) =>
+  /\b(?:not|never|no|without|maybe|possibly|might|if|unless|instead of|rather than|considering)\b|\bdon['’]t\b|\b(?:could|would)\s*$/i.test(
+    prefix,
+  );
 
 function nextQuestion(workspace: StudioWorkspace, agency: StudioAgency) {
-  const questions = qualifyStudio(workspace, agency).questions;
+  const questions = buildStudioGuidedQuestions({
+    ...workspace,
+    qualification: qualifyStudio(workspace, agency),
+  });
   const priority = [
     'route',
-    'nights',
+    'outboundTransport',
+    'origin',
+    'departureDate',
+    'returnTransport',
     'adults',
     'children',
     'childAges',
     'startDate',
+    'nights',
     'budget',
     'hotelStandard',
   ];
@@ -92,6 +115,13 @@ function changedDetails(before: StudioWorkspace, after: StudioWorkspace) {
     facts.push(`travel purpose: ${b.tripPurpose}`);
   if (a.tripType !== b.tripType && b.tripType !== 'undecided')
     facts.push(b.tripType === 'single' ? 'single destination' : 'multiple destinations');
+  if (a.tripDays !== b.tripDays && b.tripDays !== null && b.tripDays !== undefined)
+    facts.push(`${b.tripDays}-day trip`);
+  if (a.origin !== b.origin && b.origin) facts.push(`departure city: ${b.origin}`);
+  if (a.departureDate !== b.departureDate && b.departureDate)
+    facts.push(`outbound departure ${b.departureDate}`);
+  if (a.returnDepartureDate !== b.returnDepartureDate && b.returnDepartureDate)
+    facts.push(`return departure ${b.returnDepartureDate}`);
   if (a.outboundTransport !== b.outboundTransport && b.outboundTransport !== 'undecided')
     facts.push(`arrival by ${b.outboundTransport}`);
   if (a.returnTransport !== b.returnTransport && b.returnTransport !== 'undecided')
@@ -135,7 +165,7 @@ function cleanPlace(value: string) {
   // Keep a literal place name, not the surrounding planning instructions or preferences.
   if (
     !name ||
-    /\b(?:adults?|children|kids?|travell?ers?|budget|nights?|days?|hotels?|proposal|client|please|prefer|with|for|from|starting|we|want|need|add|more|remove|extend|shorten|the|a|an|somewhere|anywhere)\b/i.test(
+    /\b(?:adults?|children|kids?|travell?ers?|budget|nights?|days?|hotels?|proposal|client|please|prefer|with|for|from|starting|we|want|need|add|more|remove|extend|shorten|the|a|an|somewhere|anywhere|maybe|possibly|not|never|if|hi|hello|thanks)\b/i.test(
       name,
     ) ||
     /^(?:exactly|precisely|roughly|about|around|approximately|just|only)$/i.test(name)
@@ -149,6 +179,15 @@ function readMentions(text: string, current: StudioStop[]): Mention[] {
   const add = (label: string, index: number, end: number, nights?: number, country = '') => {
     const name = cleanPlace(label);
     if (!name || (nights !== undefined && nights > 120)) return;
+    const prefix = placePrefix(text, index);
+    if (
+      uncertainPlacePrefix(prefix) ||
+      /\b(?:from|origin(?: city)?\s*[:=])\s*$/i.test(prefix) ||
+      /^\s+(?:is|as)\s+(?:(?:my|our|the)\s+)?(?:origin|departure city|home city|birthplace|residence)\b/i.test(
+        text.slice(end),
+      )
+    )
+      return;
     const known = destinations.find((entry) => normal(entry.name) === normal(name));
     const old = current.find((entry) => normal(entry.name) === normal(name));
     const duplicate = mentions.find((entry) => normal(entry.name) === normal(name));
@@ -186,7 +225,7 @@ function readMentions(text: string, current: StudioStop[]): Mention[] {
 
   // Explicitly directed names also work outside the editorial destination catalog.
   const directed = new RegExp(
-    String.raw`\b(?:trip\s+to|travel\s+to|visit|arrive(?:\s+in)?|stay\s+in|destination\s*[:=])\s+(${placePattern})(?=$|[.,;\n!?]|\s+(?:then|and|on|for|starting|with|from)\b)`,
+    String.raw`\b(?:trip\s+to|(?:go(?:ing)?|travel(?:l?ing)?)\s+to|visit|arrive(?:\s+in)?|stay\s+in|destination\s*[:=])\s+(${placePattern})(?=$|[.,;\n!?]|\s+(?:then|and|on|for|starting|with|from)\b)`,
     'giu',
   );
   for (const match of text.matchAll(directed))
@@ -215,6 +254,7 @@ function readDates(text: string, brief: StudioBrief, stops: StudioStop[]) {
         .split(/[.;\n]/)
         .at(-1) || '';
     const tail = prefix.slice(-100);
+    if (uncertainPlacePrefix(placePrefix(text, match.index || 0))) continue;
     if (/\b(?:end(?:s|ing)?|return(?:s|ing)?|until|through|leav(?:e|ing))\b[^,;]*$/i.test(tail)) {
       brief.endDate = match[0];
       continue;
@@ -237,12 +277,12 @@ function readDates(text: string, brief: StudioBrief, stops: StudioStop[]) {
       /\b(?:start(?:s|ing)?|begin(?:s|ning)?|arrival\s+date)\s*(?:date\s*)?(?:is\s*|[:=]\s*|on\s*)?$/i.test(
         tail,
       );
-    const bareInitial = !brief.startDate && new RegExp(`^\\s*${datePattern}[.!]?\\s*$`).test(text);
     const firstStay =
       !brief.startDate &&
       stops[0] &&
+      requestedStudioNights(text, stops[0].name, stops[0].nights, true) !== undefined &&
       new RegExp(`${escape(stops[0].name)}\\s+on\\s+$`, 'i').test(tail);
-    if (explicitStart || bareInitial || firstStay) brief.startDate = match[0];
+    if (explicitStart || firstStay) brief.startDate = match[0];
   }
   const range = text.match(
     new RegExp(
@@ -271,6 +311,7 @@ function readBrief(
     answering === 'adults' ||
     answering === 'children' ||
     answering === 'childAges' ||
+    answering === 'tripDays' ||
     answering === 'budget'
   )
     facts.push({ field: answering, evidence: text });
@@ -294,6 +335,8 @@ function readBrief(
     /\b(?:start(?:s|ing)?|begin(?:s|ning)?|arrival date)\b|\barriv(?:e|es|ing|al)\s+(?:on\s+)?(?=\d)/i,
   );
   include('endDate', /\b(?:return(?:s|ing)?|end date|leav(?:e|ing))\b/i);
+  include('departureDate', /\b(?:depart(?:ing|ure)?|outbound)\b/i);
+  include('returnDepartureDate', /\b(?:return(?:ing)?|fly(?:ing)? back|leav(?:e|ing))\b/i);
   include(
     'datesFlexible',
     /\b(?:flexible|fixed)\s+dates?\b|\bdates?\s+(?:are |is )?(?:flexible|fixed|not flexible)\b/i,
@@ -303,6 +346,16 @@ function readBrief(
     /\b(?:budget|spend)\b|\b(?:AUD|USD|GBP|EUR|NZD|CAD|JPY|SGD|CHF|HKD)\s*[\d$]|[$€£]\s*\d/i,
   );
   const brief = groundedStudioBrief(current, current, facts, text, [], { messages });
+  const originMatch = text.match(
+    /\b(?:(?:i|we)\s+(?:am |are )?from|(?:depart(?:ing)?|fly(?:ing)?|start(?:ing)?)\s+from|origin(?: city)?\s*[:=])\s+([\p{L}][\p{L}\p{M} .’'-]{0,79}?)(?=\s+(?:to|on|having|with|holding|and|for)\b|[,.!;\n]|$)/iu,
+  );
+  const origin =
+    originMatch && !uncertainPlacePrefix(placePrefix(text, originMatch.index || 0))
+      ? originMatch[1]?.trim()
+      : undefined;
+  const place = origin || (answering === 'origin' ? text.trim().replace(/[.!]$/, '') : '');
+  if (place && contextualPlace(place.charAt(0).toUpperCase() + place.slice(1)))
+    brief.origin = place;
   const single =
     /\b(?:single[- ]destination|one destination|single[- ]city|one city)\b/i.test(text) ||
     (answering === 'tripType' && /^\s*(?:single|one)[.!]?\s*$/i.test(text));
@@ -363,7 +416,10 @@ function readBrief(
     brief.children = 0;
     brief.childAges = [];
   }
-  if (answering === 'startDate' && /^\s*(?:flexible|any dates?)[.!]?\s*$/i.test(text))
+  if (
+    ['startDate', 'departureDate', 'datesFlexible'].includes(answering || '') &&
+    /^\s*(?:flexible|any dates?)[.!]?\s*$/i.test(text)
+  )
     brief.datesFlexible = true;
   const stars = text.match(/\b([1-5])\s*[- ]?\s*stars?\b/i);
   if (stars) brief.hotelStandard = `${stars[1]} star`;
@@ -390,13 +446,56 @@ export function localStudioReview(
   const before = structuredClone(workspace);
   const pending = nextQuestion(workspace, agency);
   const lastReply = workspace.messages.findLast((entry) => entry.role === 'assistant')?.content;
+  const contextualAnswer = [
+    'adults',
+    'children',
+    'childAges',
+    'budget',
+    'startDate',
+    'endDate',
+    'departureDate',
+    'nights',
+    'tripDays',
+    'datesFlexible',
+  ].find((field) =>
+    studioAnsweringField({ messages: workspace.messages, brief: workspace.brief }, field),
+  );
+  const directQuestion = lastReply?.match(/[^.!?]+\?/g)?.at(-1) || '';
+  const otherAnswer = /\bpassport\b/i.test(directQuestion)
+    ? 'passportNationality'
+    : /\b(?:single|multi|multiple)\b.*\b(?:destination|trip)\b/i.test(directQuestion)
+      ? 'tripType'
+      : /\bwhere\b.*\b(?:depart|start)\b.*\bfrom\b/i.test(directQuestion)
+        ? 'origin'
+        : /\b(?:travel there|reach.*destination|outbound|outward|arrival)\b/i.test(
+              directQuestion,
+            ) && !/\breturn\b/i.test(directQuestion)
+          ? 'outboundTransport'
+          : /\breturn\b/i.test(directQuestion) && /\b(?:flight|cruise)\b/i.test(directQuestion)
+            ? 'returnTransport'
+            : undefined;
+  // Transport buttons save the chosen mode without adding a conversation turn.
+  // That one completed question may therefore precede the next literal origin answer.
+  const completedTransportQuestion =
+    otherAnswer === 'outboundTransport' &&
+    /\bflight\b/i.test(directQuestion) &&
+    /\bcruise\b/i.test(directQuestion) &&
+    ['flight', 'cruise'].includes(workspace.brief.outboundTransport || '') &&
+    !workspace.brief.origin.trim() &&
+    workspace.stops.length === 1 &&
+    Boolean(workspace.stops[0].name.trim()) &&
+    pending?.id === 'origin';
   const answering =
-    pending &&
+    (completedTransportQuestion ? 'origin' : otherAnswer) ||
+    contextualAnswer ||
+    (pending &&
     (lastReply?.endsWith(pending.label) ||
-      (['adults', 'children', 'childAges', 'budget', 'startDate'].includes(pending.id) &&
+      (['adults', 'children', 'childAges', 'budget', 'startDate', 'departureDate'].includes(
+        pending.id,
+      ) &&
         studioAnsweringField({ messages: workspace.messages, brief: workspace.brief }, pending.id)))
       ? pending.id
-      : undefined;
+      : undefined);
   const useImports =
     (!workspace.brief.request && !workspace.stops.length) ||
     /\b(?:review|read|use|update|build|plan)\b.{0,60}\b(?:import(?:ed)?|source|document|client information)\b/i.test(
@@ -410,7 +509,13 @@ export function localStudioReview(
   let stops = structuredClone(workspace.stops);
   for (const { text, answering: context } of sources) {
     brief = readBrief(brief, text, context, context ? workspace.messages : []);
-    const mentions = readMentions(text, stops);
+    const mentions =
+      context === 'origin' && contextualPlace(text.charAt(0).toUpperCase() + text.slice(1))
+        ? []
+        : readMentions(text, stops);
+    const nightIndex = text.search(/\bnights?\b/i);
+    const affirmativeNights =
+      nightIndex < 0 || !uncertainPlacePrefix(placePrefix(text, nightIndex));
     if (
       !mentions.length &&
       stops.length === 1 &&
@@ -471,9 +576,21 @@ export function localStudioReview(
       const shortNights = text.match(/^\s*(\d{1,3})\s+nights?\s*(?:please)?[.!]?\s*$/i);
       if (stops.length === 1 && shortNights && +shortNights[1] <= 120)
         stops[0].nights = +shortNights[1];
+      const namedTargets =
+        context === 'nights'
+          ? stops.filter((stop) =>
+              new RegExp(`(?:^|[^\\p{L}])${escape(stop.name)}(?=$|[^\\p{L}])`, 'iu').test(
+                directQuestion,
+              ),
+            )
+          : [];
       const targetedStop =
-        context === 'nights' && pending && 'stopId' in pending
-          ? stops.find((entry) => entry.id === pending.stopId)
+        context === 'nights'
+          ? namedTargets.length === 1
+            ? namedTargets[0]
+            : stops.length === 1
+              ? stops[0]
+              : undefined
           : undefined;
       if (targetedStop && /^\s*(?:[\p{L}\s-]+|\d{1,3})(?:\s+nights?)?[.!]?\s*$/iu.test(text)) {
         const nights = requestedStudioNights(
@@ -489,7 +606,12 @@ export function localStudioReview(
       // Combined replies can supply duration together with passport, dates and transport.
       // Reuse route grounding so another city's nights or a relative adjustment cannot leak in.
       const durations = [...text.matchAll(/\b(\d{1,3})\s+nights?\b/gi)];
-      if (stops.length === 1 && durations.length === 1 && +durations[0][1] <= 120) {
+      if (
+        affirmativeNights &&
+        stops.length === 1 &&
+        durations.length === 1 &&
+        +durations[0][1] <= 120
+      ) {
         const proposed = [{ ...stops[0], nights: +durations[0][1] }];
         try {
           assertStudioRouteGrounding(stops, proposed, text, [], text, {
@@ -503,7 +625,7 @@ export function localStudioReview(
       }
     }
     readDates(text, brief, stops);
-    if (stops.length === 1) {
+    if (affirmativeNights && stops.length === 1) {
       const nights = requestedStudioNights(text, stops[0].name, stops[0].nights, true);
       if (nights !== undefined && Number.isInteger(nights) && nights >= 0 && nights <= 120)
         stops[0].nights = nights;
@@ -529,12 +651,15 @@ export function localStudioReview(
       .join('\n')
       .slice(-16000);
   if (workspace.clarification) return studioStayConfirmation(workspace)!;
+  if (answering === 'children' && /^\s*(?:yes|yep|yeah)[.!]?\s*$/i.test(message))
+    return 'How many children are travelling? I’ll also need their ages.';
+  const journey = studioJourneyIntakeReply(workspace);
+  if (journey)
+    return changes.length ? `Noted: ${changes.slice(0, 3).join('; ')}. ${journey}` : journey;
   const next =
     nextQuestion(workspace, agency)?.label ||
     'You can review and accept the route to continue to services.';
   if (changes.length) return `Noted: ${changes.slice(0, 4).join('; ')}. ${next}`;
-  if (answering === 'children' && /^\s*(?:yes|yep|yeah)[.!]?\s*$/i.test(message))
-    return 'How many children are travelling? I’ll also need their ages.';
   if (greeting.test(message.trim())) return `Hi! Let’s put together your client’s trip. ${next}`;
   if (thanks.test(message.trim())) return `You’re welcome. ${next}`;
   if (acknowledgement.test(message.trim())) return `All right. ${next}`;

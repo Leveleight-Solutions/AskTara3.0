@@ -1,10 +1,14 @@
 import type { StudioWorkspace } from './studio';
-import type { StudioEntryRequirements, StudioTravelEvidence } from './studio-travel-research';
+import type {
+  StudioEntryRequirements,
+  StudioTravelEvidence,
+  StudioCandidateEntryRequirements,
+} from './studio-travel-research';
 import { normalizeStudioCountry } from './studio-travel-research';
 import { studioEntryPurposeDeclarations } from './studio-entry-context';
 
 export interface StudioWeatherOutlook {
-  kind: 'forecast' | 'seasonal_outlook' | 'unavailable';
+  kind: 'forecast' | 'seasonal_outlook' | 'climate_overview' | 'unavailable';
   checkedAt: string;
   summary: string;
   sources: StudioTravelEvidence[];
@@ -28,12 +32,17 @@ export interface StudioTripBriefing {
   checkedAt: string;
   status: 'complete' | 'partial';
   stops: (StudioBriefingDestination & {
+    scope?: 'preliminary' | 'dated_trip';
     entryRequirements: StudioEntryRequirements | null;
+    preliminaryEntryRequirements?: StudioPreliminaryEntryRequirements | null;
     entryError: string;
     weather: StudioWeatherOutlook;
   })[];
   notes: string[];
 }
+export type StudioPreliminaryEntryRequirements = Omit<StudioCandidateEntryRequirements, 'scope'> & {
+  scope: 'preliminary_trip';
+};
 
 export const STUDIO_TRIP_BRIEFING_FRESH_MS = 6 * 60 * 60 * 1000;
 const validDate = (value: string) =>
@@ -68,25 +77,53 @@ export function studioTripBriefingDestinations(
   });
 }
 
-/** Weather is useful before the passport or purpose is declared; entry checks wait for both. */
+/** A known destination starts preliminary checks without requiring dates or route approval. */
 export function studioTripBriefingReady(workspace: StudioWorkspace): boolean {
   const destinations = studioTripBriefingDestinations(workspace);
   return (
-    !workspace.clarification &&
+    destinations.length > 0 &&
     destinations.length <= 20 &&
-    destinations.every(
-      (stop) =>
-        Boolean(stop.destination.trim() && stop.countryCode) &&
-        validDate(stop.startDate) &&
-        validDate(stop.endDate) &&
-        stop.endDate >= stop.startDate,
-    )
+    destinations.some((stop) => Boolean(stop.destination.trim() && stop.countryCode))
   );
+}
+export function studioBriefingDestinationDated(
+  workspace: StudioWorkspace,
+  destination: StudioBriefingDestination,
+): boolean {
+  return Boolean(
+    !workspace.clarification &&
+    !workspace.brief.datesFlexible &&
+    destination.destination.trim() &&
+    destination.countryCode &&
+    validDate(destination.startDate) &&
+    validDate(destination.endDate) &&
+    destination.endDate >= destination.startDate,
+  );
+}
+export function studioPreliminaryEntryInputKey(workspace: StudioWorkspace, stopId = ''): string {
+  const brief = workspace.brief as StudioWorkspace['brief'] & {
+    tripDays?: number | null;
+    returnDepartureDate?: string;
+  };
+  return JSON.stringify({
+    scope: 'preliminary_trip_v1',
+    trip: studioEntryRequirementsTrip(workspace, stopId),
+    datesFlexible: workspace.brief.datesFlexible,
+    clarification: Boolean(workspace.clarification),
+    nights: workspace.stops.find((stop) => stop.id === stopId)?.nights ?? null,
+    tripDays: brief.tripDays ?? null,
+    returnDepartureDate: brief.returnDepartureDate || '',
+  });
 }
 
 /** Shared, stable allowlist so the automatic UI and server compare exactly the same inputs. */
 export function studioTripBriefingInputKey(workspace: StudioWorkspace): string {
+  const brief = workspace.brief as StudioWorkspace['brief'] & {
+    tripDays?: number | null;
+    returnDepartureDate?: string;
+  };
   return JSON.stringify({
+    version: 2,
     passport: normalizeStudioCountry(workspace.brief.passportNationality || '')?.code || '',
     purpose: workspace.brief.tripPurpose || 'undecided',
     declaredActivities: studioEntryPurposeDeclarations(workspace.brief),
@@ -96,6 +133,9 @@ export function studioTripBriefingInputKey(workspace: StudioWorkspace): string {
     outboundTransport: workspace.brief.outboundTransport || 'undecided',
     returnTransport: workspace.brief.returnTransport || 'undecided',
     pendingDateClarification: Boolean(workspace.clarification),
+    datesFlexible: workspace.brief.datesFlexible,
+    tripDays: brief.tripDays ?? null,
+    returnDepartureDate: brief.returnDepartureDate || '',
     destinations: studioTripBriefingDestinations(workspace),
     onwardTransport: workspace.stops.map((stop) => stop.onwardTransport),
   });

@@ -8,6 +8,12 @@ import {
 } from './studio-travel-research.ts';
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 import type { StudioTravelHistoryEntry } from '../shared/studio-travel-research.ts';
+import { studioJourneyIntakeReply } from './studio-journey-intake.ts';
+import { researchStudioTripBriefing, mergeStudioTripBriefing } from './studio-trip-briefing.ts';
+import {
+  studioTripBriefingDestinations,
+  studioBriefingDestinationDated,
+} from '../shared/studio-trip-briefing.ts';
 
 /** Each turn runs inside the route's revision-checked, atomic action transaction. */
 export async function runStudioAssistant(
@@ -37,20 +43,48 @@ export async function runStudioAssistant(
           'Which country issued the client’s passport? I only need the nationality, never a passport number.',
         nextAction: 'structure',
       };
-    if (!workspace.stops.length)
+    if (
+      !workspace.stops.length &&
+      !(
+        workspace.brief.preferredDestination &&
+        normalizeStudioCountry(workspace.brief.destinationCountry || '')
+      )
+    )
       return {
         ...review,
         reply:
           'Choose a destination first, then I can check entry requirements for the client’s passport nationality.',
         nextAction: 'structure',
       };
-    const stop = workspace.stops[0];
+    const stop = workspace.stops[0] || {
+      id: '',
+      name: workspace.brief.preferredDestination || '',
+      country: workspace.brief.destinationCountry || '',
+    };
     if (!normalizeStudioCountry(stop.country))
       return {
         ...review,
         reply: `Add the destination country for ${stop.name} in Brief & route, then I can check its entry requirements.`,
         nextAction: 'structure',
       };
+    const destination = studioTripBriefingDestinations(workspace).find(
+      (entry) => entry.stopId === stop.id,
+    );
+    if (
+      !destination ||
+      !studioBriefingDestinationDated(workspace, destination) ||
+      !workspace.brief.tripPurpose ||
+      workspace.brief.tripPurpose === 'undecided'
+    ) {
+      const { briefing } = await researchStudioTripBriefing(workspace, signal);
+      Object.assign(workspace, mergeStudioTripBriefing(workspace, briefing));
+      return {
+        ...review,
+        reply:
+          'The preliminary travel checks are ready in Entry & weather below. Review the official sources; the dated eligibility check will refresh when the trip details are confirmed.',
+        nextAction: 'journey',
+      };
+    }
     const result = await checkStudioEntryRequirements(workspace, signal, stop.id);
     workspace.entryRequirements = [
       ...(workspace.entryRequirements || []).filter((value) => value.stopId !== stop.id),
@@ -130,6 +164,19 @@ export async function runStudioAssistant(
     };
   }
   if (action === 'services' || action === 'proposal') {
+    if (
+      action === 'services' &&
+      /\b(?:flights?|flying|fly|airfare|cruises?|sailing|transport)\b/i.test(message) &&
+      workspace.stops.length
+    ) {
+      return {
+        ...review,
+        reply:
+          studioJourneyIntakeReply(workspace) ||
+          'Compare outbound and return journeys below. Select a supplier schedule to use its dates; you can edit the plan afterwards.',
+        nextAction: 'journey',
+      };
+    }
     if (!workspace.structureAccepted)
       return {
         ...review,

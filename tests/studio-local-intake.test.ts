@@ -55,7 +55,13 @@ test('local conversation progresses from a greeting through a short client brief
   await converse(value, 'hi');
   const destination = await converse(value, 'Paris');
   assert.equal(value.stops[0].name, 'Paris');
-  assert.match(destination.reply, /Noted: Paris\. How many nights would you like in Paris\?/);
+  assert.match(destination.reply, /Paris.*Flight or Cruise\?/);
+  await converse(value, 'flight');
+  assert.equal(value.brief.outboundTransport, 'flight');
+  await converse(value, 'Sydney');
+  assert.equal(value.brief.origin, 'Sydney');
+  await converse(value, 'dates flexible');
+  await converse(value, 'return by flight');
   const nights = await converse(value, '3 nights');
   assert.equal(value.stops[0].nights, 3);
   assert.match(nights.reply, /How many adults/);
@@ -65,7 +71,7 @@ test('local conversation progresses from a greeting through a short client brief
   assert.match(adults.reply, /children/);
   const children = await converse(value, 'no children');
   assert.equal(value.brief.children, 0);
-  assert.match(children.reply, /arrival date, or are dates flexible/);
+  assert.doesNotMatch(children.reply, /what date.*arriv|when.*arriv/i);
   const dates = await converse(value, 'dates flexible');
   assert.equal(value.brief.datesFlexible, true);
   assert.match(dates.reply, /group budget/);
@@ -76,6 +82,75 @@ test('local conversation progresses from a greeting through a short client brief
   assert.match(budget.reply, /hotel standard/);
   assert.equal(value.stops.length, 1);
   assert.equal(value.stops[0].nights, 3);
+});
+
+for (const selectedMode of ['flight', 'cruise'] as const) {
+  test(`one origin answer follows a ${selectedMode} button choice even when the chat still shows the transport question`, async () => {
+    const value = newStudioWorkspace();
+    await converse(value, 'hi');
+    const destination = await converse(value, 'London');
+    assert.match(destination.reply, /How would you like to travel there: Flight or Cruise\?/);
+    value.brief.outboundTransport = selectedMode; // The button saves the brief without a chat turn.
+    const originalRoute = structuredClone(value.stops);
+    const reply = await converse(value, 'Sydney');
+    assert.equal(value.brief.origin, 'Sydney');
+    assert.equal(value.brief.outboundTransport, selectedMode);
+    assert.deepEqual(value.stops, originalRoute);
+    assert.equal(value.brief.departureDate || '', '');
+    assert.equal(value.brief.startDate, '');
+    assert.equal(value.brief.passportNationality || '', '');
+    assert.equal(value.brief.adults, null);
+    assert.equal(value.brief.children, null);
+    assert.match(reply.reply, /departure city: Sydney/);
+    assert.doesNotMatch(reply.reply, /Where will you depart from|couldn’t read/);
+  });
+}
+
+test('a saved transport choice does not turn an ambiguous or unrelated short reply into an origin', async () => {
+  const make = async () => {
+    const value = newStudioWorkspace();
+    await converse(value, 'hi');
+    await converse(value, 'London');
+    value.brief.outboundTransport = 'flight';
+    return value;
+  };
+  for (const message of ['yes', 'no', 'thanks', 'Maybe Sydney', 'Not Sydney', '18 November 2027']) {
+    const value = await make();
+    const route = structuredClone(value.stops);
+    await converse(value, message);
+    assert.equal(value.brief.origin, '', message);
+    assert.equal(value.brief.startDate, '', message);
+    assert.equal(value.brief.departureDate || '', '', message);
+    assert.equal(value.brief.passportNationality || '', '', message);
+    assert.deepEqual(value.stops, route, message);
+  }
+  for (const condition of [
+    'undecided',
+    'known-origin',
+    'multiple-stops',
+    'different-question',
+    'no-destination',
+  ] as const) {
+    const value = await make();
+    if (condition === 'undecided') value.brief.outboundTransport = 'undecided';
+    if (condition === 'known-origin') value.brief.origin = 'Melbourne';
+    if (condition === 'multiple-stops')
+      value.stops.push({ ...value.stops[0], id: 'paris', name: 'Paris', country: 'France' });
+    if (condition === 'different-question')
+      value.messages.push({
+        id: 'passport',
+        role: 'assistant',
+        content: 'Which passport will you travel on?',
+        createdAt: new Date().toISOString(),
+      });
+    if (condition === 'no-destination') value.stops = [];
+    const before = structuredClone(value);
+    await converse(value, 'Sydney');
+    assert.equal(value.brief.origin, before.brief.origin, condition);
+    assert.equal(value.brief.startDate, before.brief.startDate, condition);
+    assert.equal(value.brief.passportNationality || '', '', condition);
+    assert.deepEqual(value.stops, before.stops, condition);
+  }
 });
 
 test('local intake accepts adjacent currency codes without reading codes inside words', async () => {
@@ -95,16 +170,32 @@ test('short answers use only the last targeted question and keep unknown party f
   const value = newStudioWorkspace();
   await converse(value, 'hi');
   await converse(value, 'Paris');
+  const unassigned = await converse(value, '3');
+  assert.equal(value.stops[0].nights, null);
+  assert.equal(value.brief.adults, null);
+  assert.match(unassigned.reply, /Flight or Cruise/);
+  const ask = (content: string) =>
+    value.messages.push({
+      id: String(value.messages.length),
+      role: 'assistant',
+      content,
+      createdAt: new Date().toISOString(),
+    });
+  ask('How many nights would you like in Paris?');
   await converse(value, '3');
   assert.equal(value.stops[0].nights, 3);
   assert.equal(value.brief.adults, null);
+  ask('How many adults are travelling?');
   await converse(value, 'two');
   assert.equal(value.brief.adults, 2);
   assert.equal(value.brief.children, null);
+  ask('Are any children travelling?');
   await converse(value, 'no');
   assert.equal(value.brief.children, 0);
+  ask('When would you like to depart, or are dates flexible?');
   await converse(value, 'flexible');
   assert.equal(value.brief.datesFlexible, true);
+  ask('What is the group budget?');
   await converse(value, '3000');
   assert.equal(value.brief.budget, 3000);
   assert.equal(value.brief.adults, 2);
@@ -133,6 +224,158 @@ test('a literal unknown destination answer is retained without inventing a city 
   assert.equal(country.stops[0].country, '');
 });
 
+test('natural travel declarations retain uncatalogued named cities without inventing stay nights or passport facts', async () => {
+  for (const [message, name] of [
+    ['I wanna go to Kathmandu for a hiking holiday for twelve days.', 'Kathmandu'],
+    ['We are going to New York for a business trip for seven days.', 'New York'],
+    ['I would like to travel to Singapore for a business trip for three days.', 'Singapore'],
+    ['We want to go to Sydney for a cruise holiday for nine days.', 'Sydney'],
+  ]) {
+    const value = newStudioWorkspace();
+    const result = await converse(value, message);
+    assert.equal(value.stops.length, 1, message);
+    assert.equal(value.stops[0].name, name, message);
+    assert.equal(value.stops[0].nights, null, message);
+    assert.equal(value.stops[0].arrivalDate, '', message);
+    assert.equal(value.brief.startDate, '', message);
+    assert.equal(value.brief.adults, null, message);
+    assert.equal(value.brief.children, null, message);
+    assert.equal(value.brief.passportNationality || '', '', message);
+    assert.match(result.reply, /Flight or Cruise/);
+    assert.doesNotMatch(result.reply, /couldn’t read|when.*arriv/i);
+  }
+});
+
+test('negated, hypothetical and chatter place mentions cannot create a committed route', async () => {
+  for (const message of [
+    'Do not go to Kathmandu for twelve days.',
+    'Maybe go to Singapore for three days.',
+    'If we go to New York for seven days.',
+    'We might go to Sydney for nine days.',
+    'I could go to Kathmandu for twelve days.',
+    'Do not visit Paris for three nights.',
+    'Maybe London for three nights.',
+    'Thanks for three nights.',
+  ]) {
+    const value = newStudioWorkspace();
+    await converse(value, message);
+    assert.deepEqual(value.stops, [], message);
+    assert.equal(value.brief.startDate, '', message);
+    assert.equal(value.brief.adults, null, message);
+    assert.equal(value.brief.passportNationality || '', '', message);
+  }
+});
+
+test('declared or directly asked origin cities never become destinations or passport evidence', async () => {
+  for (const message of ['I am from Paris.', 'origin city: London', 'Depart from Kyoto.']) {
+    const value = newStudioWorkspace();
+    await converse(value, message);
+    assert.equal(
+      value.brief.origin,
+      message.includes('Paris') ? 'Paris' : message.includes('London') ? 'London' : 'Kyoto',
+    );
+    assert.deepEqual(value.stops, []);
+    assert.equal(value.brief.passportNationality || '', '');
+  }
+  const value = newStudioWorkspace();
+  value.messages.push({
+    id: 'origin-question',
+    role: 'assistant',
+    content: 'Where will you depart from?',
+    createdAt: new Date().toISOString(),
+  });
+  await converse(value, 'Paris');
+  assert.equal(value.brief.origin, 'Paris');
+  assert.deepEqual(value.stops, []);
+  assert.equal(value.brief.passportNationality || '', '');
+});
+
+test('the actual last night question fills only its named stop while transport remains undecided', async () => {
+  const value = newStudioWorkspace();
+  await converse(value, 'Paris then London');
+  assert.equal(value.stops.length, 2);
+  const ids = value.stops.map((stop) => stop.id);
+  value.messages.push({
+    id: 'targeted-nights',
+    role: 'assistant',
+    content: 'Noted: Paris and London. How many nights would you like in London?',
+    createdAt: new Date().toISOString(),
+  });
+  await converse(value, 'three');
+  assert.equal(value.stops[0].nights, null);
+  assert.equal(value.stops[1].nights, 3);
+  assert.deepEqual(
+    value.stops.map((stop) => stop.id),
+    ids,
+  );
+  assert.equal(value.brief.outboundTransport, 'undecided');
+  assert.equal(value.brief.adults, null);
+  value.messages.push({
+    id: 'ambiguous-nights',
+    role: 'assistant',
+    content: 'How many nights in Paris or London?',
+    createdAt: new Date().toISOString(),
+  });
+  await converse(value, '2');
+  assert.equal(value.stops[0].nights, null);
+  assert.equal(value.stops[1].nights, 3);
+});
+
+test('a newly recorded origin, departure or trip duration is acknowledged without claiming arrival is known', async () => {
+  const value = newStudioWorkspace();
+  await converse(value, 'London');
+  await converse(value, 'flight');
+  const origin = await converse(value, 'Sydney');
+  assert.match(origin.reply, /Noted:.*departure city: Sydney/);
+  const departure = await converse(value, 'depart on 18 November 2027');
+  assert.match(departure.reply, /Noted:.*outbound departure 2027-11-18/);
+  const duration = await converse(value, 'The trip lasts four days.');
+  assert.equal(value.brief.tripDays, 4);
+  assert.match(duration.reply, /Noted:.*4-day trip/);
+  assert.doesNotMatch(duration.reply, /couldn’t read/i);
+  assert.equal(value.brief.startDate, '');
+  assert.equal(value.stops[0].nights, null);
+});
+
+test('negative stay and origin declarations preserve a saved route and its unknown arrival', async () => {
+  const value = newStudioWorkspace();
+  await converse(value, 'Paris for four nights.');
+  const route = structuredClone(value.stops);
+  for (const message of [
+    'Do not change Paris to three nights.',
+    'Maybe stay in Paris for three nights.',
+    'Do not start on 2027-11-18.',
+    'Maybe depart from Sydney.',
+  ]) {
+    await converse(value, message);
+    assert.deepEqual(value.stops, route, message);
+    assert.equal(value.brief.origin, '', message);
+    assert.equal(value.brief.startDate, '', message);
+  }
+});
+
+test('an unassigned short date or a city date paired only with trip days cannot become arrival', async () => {
+  const value = newStudioWorkspace();
+  await converse(value, 'London');
+  for (const message of ['2027-11-18', '18 November 2027', 'London on 2027-11-18 for four days.']) {
+    await converse(value, message);
+    assert.equal(value.brief.startDate, '', message);
+    assert.equal(value.brief.departureDate || '', '', message);
+    assert.equal(value.stops[0].arrivalDate, '', message);
+    assert.equal(value.stops[0].nights, null, message);
+  }
+  value.messages.push({
+    id: 'actual-arrival-question',
+    role: 'assistant',
+    content: 'What date will you arrive in London?',
+    createdAt: new Date().toISOString(),
+  });
+  await converse(value, '2027-11-18');
+  assert.equal(value.brief.startDate, '2027-11-18');
+  assert.equal(value.stops[0].arrivalDate, '2027-11-18');
+  assert.equal(value.stops[0].nights, null);
+});
+
 test('chatter and unsupported input do not become destinations or claim saved facts', async () => {
   const value = newStudioWorkspace();
   await converse(value, 'hi');
@@ -159,9 +402,9 @@ test('chatter and unsupported input do not become destinations or claim saved fa
   const route = structuredClone(value.stops);
   const request = value.brief.request;
   const thanks = await converse(value, 'thank you');
-  assert.match(thanks.reply, /^You’re welcome\. How many adults/);
+  assert.match(thanks.reply, /Flight or Cruise/);
   const hello = await converse(value, 'hello');
-  assert.match(hello.reply, /How many adults/);
+  assert.match(hello.reply, /Flight or Cruise/);
   assert.deepEqual(value.stops, route);
   assert.equal(value.brief.request, request);
 });
@@ -324,26 +567,34 @@ test('changing child count clears stale ages and leaves unknown ages unset', asy
   assert.deepEqual(value.brief.childAges, []);
 });
 
-test('local conversation collects passport, trip scope and independent arrival/return answers after the core brief', async () => {
+test('local conversation collects transport first, then passport and scope without repeating known facts', async () => {
   const value = newStudioWorkspace();
   const complete = await converse(
     value,
     'Paris for 3 nights. 2 adults, no children, dates flexible, budget AUD 3000 and 4-star hotels.',
   );
-  assert.match(complete.reply, /country issued the passport/);
-  const nationality = await converse(value, 'Pakistani');
-  assert.equal(value.brief.passportNationality, 'PK');
-  assert.match(nationality.reply, /single-destination or multi-destination/);
-  const scope = await converse(value, 'single');
-  assert.equal(value.brief.tripType, 'single');
-  assert.match(scope.reply, /reach the destination by flight or cruise/);
+  assert.match(complete.reply, /Flight or Cruise/);
   const outbound = await converse(value, 'cruise');
   assert.equal(value.brief.outboundTransport, 'cruise');
   assert.equal(value.brief.returnTransport, 'undecided');
-  assert.match(outbound.reply, /return be by flight or cruise/);
-  await converse(value, 'flight');
+  assert.match(outbound.reply, /depart from/);
+  const origin = await converse(value, 'Sydney');
+  assert.equal(value.brief.origin, 'Sydney');
+  assert.match(origin.reply, /return be by flight or cruise/);
+  const back = await converse(value, 'flight');
   assert.equal(value.brief.returnTransport, 'flight');
+  assert.match(back.reply, /country issued the passport/);
+  const nationality = await converse(value, 'Pakistani');
+  assert.equal(value.brief.passportNationality, 'PK');
+  assert.match(nationality.reply, /trip for/);
+  const purpose = await converse(value, 'tourism');
+  assert.equal(value.brief.tripPurpose, 'tourism');
+  assert.match(purpose.reply, /single-destination or multi-destination/);
+  await converse(value, 'single');
+  assert.equal(value.brief.tripType, 'single');
+  assert.equal(value.brief.startDate, '');
   assert.equal(value.stops.length, 1);
+  assert.equal(value.stops[0].name, 'Paris');
 });
 
 test('local Stage 1 declarations work without a prior question and residence never establishes passport nationality', async () => {

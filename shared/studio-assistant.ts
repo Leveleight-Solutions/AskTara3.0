@@ -1,4 +1,4 @@
-import type { StudioWorkspace } from './studio';
+import type { StudioQuestion, StudioWorkspace } from './studio';
 
 export type StudioAssistantActionKind =
   | 'answer'
@@ -10,7 +10,8 @@ export type StudioAssistantActionKind =
   | 'food'
   | 'generate_itinerary'
   | 'preview'
-  | 'destinations';
+  | 'destinations'
+  | 'journey';
 export interface StudioAssistantAction {
   id: string;
   label: string;
@@ -18,6 +19,8 @@ export interface StudioAssistantAction {
   kind: StudioAssistantActionKind;
   questionId?: string;
   stopId?: string;
+  direction?: 'outbound' | 'return';
+  mode?: 'flight' | 'cruise';
   disabledReason?: string;
   choices?: { label: string; message: string }[];
 }
@@ -58,6 +61,120 @@ export function studioFlightsArrangedExternally(workspace: StudioWorkspace): boo
   return external;
 }
 
+/** Known trip facts are never turned back into compulsory intake questions. */
+export function buildStudioGuidedQuestions(workspace: StudioWorkspace): StudioQuestion[] {
+  const brief = workspace.brief;
+  const externallyArranged = studioFlightsArrangedExternally(workspace);
+  const cruiseRequested =
+    brief.outboundTransport === 'cruise' || brief.returnTransport === 'cruise';
+  const known: Record<string, boolean> = {
+    route: Boolean(workspace.stops.length || workspace.cruises?.length),
+    origin: Boolean(brief.origin.trim()),
+    departureDate: Boolean(brief.departureDate || brief.datesFlexible),
+    returnDepartureDate: Boolean(brief.returnDepartureDate || brief.datesFlexible),
+    tripDays: brief.tripDays != null,
+    startDate: Boolean(brief.startDate || brief.datesFlexible),
+    adults: brief.adults !== null,
+    children: brief.children !== null,
+    childAges:
+      brief.children === 0 ||
+      (brief.children !== null && brief.childAges.length === brief.children),
+    nights: Boolean(
+      workspace.stops.length && workspace.stops.every((stop) => stop.nights !== null),
+    ),
+    passportNationality: Boolean(brief.passportNationality),
+    tripPurpose: Boolean(brief.tripPurpose && brief.tripPurpose !== 'undecided'),
+    tripType: Boolean(brief.tripType && brief.tripType !== 'undecided'),
+    outboundTransport: Boolean(brief.outboundTransport && brief.outboundTransport !== 'undecided'),
+    returnTransport: Boolean(brief.returnTransport && brief.returnTransport !== 'undecided'),
+    budget: brief.budget !== null,
+    hotelStandard: Boolean(brief.hotelStandard.trim()),
+  };
+  const questions = workspace.qualification.questions.filter(
+    (question) =>
+      !known[question.id] &&
+      !(
+        externallyArranged &&
+        !cruiseRequested &&
+        ['origin', 'departureDate', 'outboundTransport', 'returnTransport'].includes(question.id)
+      ),
+  );
+  const add = (question: StudioQuestion) => {
+    if (!known[question.id] && !questions.some((existing) => existing.id === question.id))
+      questions.push(question);
+  };
+  // With arrival still open, establish the outward journey before asking for it.
+  // Existing confirmed stay dates can still be edited without redoing transport intake.
+  if (!brief.startDate && (!externallyArranged || cruiseRequested)) {
+    add({
+      id: 'outboundTransport',
+      label: 'How would you like to travel there?',
+      reason: 'Choose a flight or cruise to explore outward routes before setting the arrival.',
+      required: false,
+    });
+    add({
+      id: 'origin',
+      label: 'Where will you depart from?',
+      reason: 'A city, airport or port is enough to research possible routes.',
+      required: false,
+    });
+    add({
+      id: 'departureDate',
+      label: 'When would you like to depart?',
+      reason: 'This is departure from your origin. Arrival is confirmed from the travel schedule.',
+      required: false,
+    });
+  }
+  add({
+    id: 'tripPurpose',
+    label: 'What is this trip for?',
+    reason: 'Entry requirements depend on the purpose of the visit.',
+    required: false,
+  });
+  const priority =
+    !brief.startDate && !externallyArranged
+      ? [
+          'route',
+          'outboundTransport',
+          'origin',
+          'departureDate',
+          'tripDays',
+          'returnTransport',
+          'returnDepartureDate',
+          'adults',
+          'children',
+          'childAges',
+          'startDate',
+          'nights',
+          'passportNationality',
+          'tripPurpose',
+          'tripType',
+          'budget',
+          'hotelStandard',
+        ]
+      : [
+          'route',
+          'adults',
+          'children',
+          'childAges',
+          'startDate',
+          'nights',
+          'passportNationality',
+          'tripPurpose',
+          'tripType',
+          'tripDays',
+          'budget',
+          'hotelStandard',
+          'outboundTransport',
+          'returnTransport',
+          'origin',
+          'departureDate',
+          'returnDepartureDate',
+        ];
+  const order = (id: string) => (priority.includes(id) ? priority.indexOf(id) : priority.length);
+  return questions.sort((left, right) => order(left.id) - order(right.id));
+}
+
 /** Grounded UI controls, not model instructions or authorisation to book/publish. */
 export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioAssistantAction[] {
   if (workspace.clarification) {
@@ -90,7 +207,10 @@ export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioA
       detail,
       ...(stopId ? { stopId } : {}),
     });
-  if (!workspace.stops.length && !workspace.cruises?.length) {
+  const destinationKnown = Boolean(
+    workspace.stops.length || workspace.cruises?.length || workspace.brief.preferredDestination,
+  );
+  if (!destinationKnown) {
     actions.push({
       id: 'destination-ideas',
       kind: 'destinations',
@@ -101,15 +221,70 @@ export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioA
     addAnswer('route', 'Choose a destination', 'Tell Tara where this trip should go.');
     return actions;
   }
+  const externalFlights = studioFlightsArrangedExternally(workspace);
+  if (
+    !workspace.structureAccepted &&
+    (!externalFlights ||
+      workspace.brief.outboundTransport === 'cruise' ||
+      workspace.brief.returnTransport === 'cruise')
+  ) {
+    const outward: StudioAssistantAction[] = [];
+    if (!externalFlights)
+      outward.push({
+        id: 'journey-outbound-flight',
+        kind: 'journey',
+        direction: 'outbound',
+        mode: 'flight',
+        label: 'Explore flight routes',
+        detail: 'Compare sourced routes and connections before confirming the arrival date.',
+      });
+    outward.push({
+      id: 'journey-outbound-cruise',
+      kind: 'journey',
+      direction: 'outbound',
+      mode: 'cruise',
+      label: 'Explore cruise routes',
+      detail: 'Explore real operators and ports; a sailing schedule confirms travel dates.',
+    });
+    if (workspace.brief.outboundTransport === 'cruise') outward.reverse();
+    actions.push(...outward);
+    if (!externalFlights || workspace.brief.returnTransport === 'cruise')
+      actions.push({
+        id: 'journey-return',
+        kind: 'journey',
+        direction: 'return',
+        ...(workspace.brief.returnTransport === 'flight' ||
+        workspace.brief.returnTransport === 'cruise'
+          ? { mode: workspace.brief.returnTransport }
+          : {}),
+        label: 'Plan return travel',
+        detail: 'Compare the return separately, including a different travel mode.',
+      });
+  }
+  if (!workspace.stops.length && !workspace.cruises?.length)
+    addAnswer(
+      'route',
+      'Review the destination',
+      'Add the destination to the route without assuming stay dates or nights.',
+    );
   const missingNights = workspace.stops.find((stop) => stop.nights === null);
-  if (missingNights)
+  if (missingNights) {
     addAnswer(
       'nights',
       `Nights in ${missingNights.name}`,
       'Confirm this stay length without assuming hotel nights from trip days.',
       missingNights.id,
     );
-  else if (!workspace.structureAccepted)
+    if (workspace.stops.length === 1 && missingNights.arrivalDate && workspace.brief.tripDays) {
+      const nights = workspace.brief.tripDays - 1;
+      actions.at(-1)!.choices = [
+        {
+          label: `${workspace.brief.tripDays} days at destination · ${nights} ${nights === 1 ? 'night' : 'nights'}`,
+          message: `Use ${nights} nights in ${missingNights.name}.`,
+        },
+      ];
+    }
+  } else if (!workspace.structureAccepted && (workspace.stops.length || workspace.cruises?.length))
     actions.push({
       id: 'approve-route',
       kind: 'approve_route',

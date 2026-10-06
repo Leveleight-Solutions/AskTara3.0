@@ -4,6 +4,71 @@ Use a fresh proposal for each fictional scenario. Send the numbered messages one
 
 For one-word answers, automatic passport checks on suggestions, passport corrections and short multi-stop conversations, see [automatic entry checks and short prompts](AUTOMATIC_ENTRY_CHECKS.md).
 
+## Transport first: short business-trip conversation
+
+Use a fresh fictional client with an explicitly recorded Australian passport. A country of residence or nationality field alone does not establish the passport held. These prompts exercise the flow while the destination arrival date is still unknown.
+
+Send these messages one at a time:
+
+1. `hi`
+2. `I want to go to London for a business trip for four days.`
+3. Choose **Flight** in the outbound journey panel, or reply `flight` to Tara’s outbound transport question.
+4. `Sydney`
+5. `Depart on 18 November 2027.`
+6. `One adult, no children. Economy. Return by flight on 22 November 2027.`
+
+London should be retained as the destination, with a four-day requested trip duration. Hotel nights and destination arrival should remain unknown. Tara should offer the transport choice and departure details before asking you to invent an arrival date. A short city reply to “Where will you depart from?” should fill the origin without adding another destination.
+
+Review the sourced flight-route cards. **Use this route** records a route preference. Open the separate supplier flight search with the suggested airport codes, check the travel dates and party, and select a returned supplier offer if one is available. The selected offer’s actual dated arrival supplies the arrival field. If supplier search is unavailable, the app should show the outage and keep arrival unknown while leaving sourced route guidance usable.
+
+For a manual continuation of this fictional test, enter explicit reviewed stay details rather than treating a route card as a flight schedule:
+
+```text
+For this fictional test, set London arrival to 19 November 2027. Stay three nights and leave on 22 November 2027. Keep one adult and no children. Budget AUD 5000, a 4-star hotel, vegetarian food and quiet evenings. Keep weekday 9 am to 5 pm free for meetings. Flights will be arranged separately.
+```
+
+Review the route, edit any field if needed, and accept it. Then send:
+
+```text
+Build the complete London business itinerary for 19–22 November 2027, three nights for one adult. Keep the weekday meeting windows free, travel days light, and dining and optional sightseeing sourced. Do not book anything or invent prices, flight times or availability.
+```
+
+The final plan should retain the explicit stay dates and external flight arrangements. The requested trip duration and hotel night count are separate fields.
+
+## Short destination and trip-type checks
+
+Use a fresh proposal for each row. After the initial message, choose **Flight** or **Cruise**, give an origin when asked, and give an explicit departure date. Do not supply a destination arrival until you select a dated supplier schedule or enter it manually.
+
+| Initial message                                                   | Destination | Requested days | Hotel nights initially |
+| ----------------------------------------------------------------- | ----------- | -------------- | ---------------------- |
+| `I want to go to London for a business trip for four days.`       | London      | 4              | Unknown                |
+| `I want to go to Bali for a honeymoon for eight days.`            | Bali        | 8              | Unknown                |
+| `I want to go to Kathmandu for a hiking holiday for twelve days.` | Kathmandu   | 12             | Unknown                |
+| `I want to go to New York for a vacation for seven days.`         | New York    | 7              | Unknown                |
+| `I want to go to Paris for a family holiday for six days.`        | Paris       | 6              | Unknown                |
+| `I want to go to Kyoto for a holiday for five days.`              | Kyoto       | 5              | Unknown                |
+| `I want to go to Singapore for a business trip for three days.`   | Singapore   | 3              | Unknown                |
+| `I want to go to Sydney for a cruise holiday for nine days.`      | Sydney      | 9              | Unknown                |
+
+The cruise-holiday wording records the travel interest; the outbound **Flight/Cruise** choice determines the actual travel mode. A nine-day request does not establish that a cruise between any two cities exists or fits that duration.
+
+Try `yes`, `3`, `no` and `maybe` when the only question is **Flight or Cruise**. These replies should leave transport, traveller counts, days, nights and arrival unresolved. When Tara specifically asks “How many nights in Kathmandu?”, a short answer such as `one` should update that stop alone. A question mentioning two alternative stops needs clarification before a bare number can be assigned.
+
+## Cruise selection and travel evidence
+
+Start with a named destination and choose **Cruise** before deciding the destination arrival. Give the departure port and any explicit departure date. Compare current official operator route guidance, then import or review the actual sailing schedule using the cruise fixtures in [the testing guide](TRIP_SCENARIO_TESTING.md). Apply only the reviewed sailing or an explicitly chosen segment. Check embarkation, early-disembarkation permission, onward transport and return transport independently; a port call does not establish permission to start or end a cruise there.
+
+| Information shown                 | What it establishes                                                             | What must remain unknown or subject to review                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Sourced flight/cruise route card  | An official published route to explore, with cited hubs or operator details     | Dated departure/arrival, inventory, fare and booking                                                           |
+| Selected supplier flight offer    | The supplier’s dated schedule and quoted terms, labelled test/live/provider     | Booking confirmation and any unsupported baggage or transit assumptions                                        |
+| Reviewed cruise schedule          | Its literal dates, ports and source details                                     | Invented dates for undated rows, port permissions, prorated fares or bookings                                  |
+| Automatic preliminary entry check | Conditional guidance for the explicitly recorded passport and suggested country | Final admissibility, missing purpose/dates/passport type, other travellers’ passports and transit requirements |
+
+After actual travel details change, the dated entry and weather checks should refresh for the current route. Preliminary entry guidance on a suggestion must remain labelled as preliminary, and a long-range seasonal weather outlook must not become a daily forecast. All fields stay editable; a stale route card should require refreshed research before selection.
+
+The scenarios below provide explicit stay dates and exercise itinerary editing, party requirements and final planning alongside the transport-first checks above.
+
 ## Bali honeymoon for two adults
 
 Case: `bali_honeymoon`. Expected final route: **Ubud (5 nights, 2026-11-12–2026-11-17)**.

@@ -6,6 +6,14 @@ Suggestions now receive an automatic second check for the **passport declared in
 
 Residence and nationality do not establish which passport a traveller will use. Different passports in one party need separate checks; the lead client's passport does not cover everyone. Changing the active trip's passport, purpose, activities or transport invalidates candidate entry advice without discarding the destination shortlist. Editing a saved profile does not silently overwrite an explicit passport in an existing proposal. Both research caches expire after six hours. A failed candidate check stays visible as unavailable and does not discard successful checks for other suggestions.
 
+## Selected destinations before exact dates
+
+A known route stop and country now start the travel briefing before arrival, stay length or route approval. With a declared passport, Tara researches conditional preliminary entry guidance in a separate `preliminaryEntryRequirements` result. Unknown dates, purpose, transit or transport remain listed as unresolved. It is never copied into the full `entryRequirements` array or treated as confirmed eligibility. If no passport is known, only entry is skipped; destination climate research still runs.
+
+Undated or flexible-date stops use `climate_overview`, not a dated forecast. Ordered confirmed dates and a declared purpose invalidate the preliminary key and trigger a new full entry check and seasonal weather outlook. A pending date contradiction keeps the checks preliminary. Changes to passport, purpose, declared activities, date flexibility, explicit trip duration, return departure or route invalidate the relevant saved evidence. An unknown country is reported per stop without blocking other known stops.
+
+The conversation offers Flight/Cruise route research before requesting hotel arrival. A chosen supplier schedule can supply the arrival; the existing route editor remains available. **Entry & weather** shows the automatic checks and their sources without requiring a separate visa/weather action.
+
 ## Repeat the short honeymoon conversation
 
 Start a new fictional proposal. Send each line as a separate message:

@@ -13,23 +13,9 @@ import {
 } from '@radix-ui/themes';
 import type { StudioBrief, StudioQuestion, StudioStop, StudioWorkspace } from '../../shared/studio';
 import { studioCountries } from '../../shared/studio-travel-research';
+import { buildStudioGuidedQuestions } from '../../shared/studio-assistant';
 
 type Answer = { brief?: Partial<StudioBrief>; stops?: StudioStop[] };
-const priority = [
-  'route',
-  'adults',
-  'children',
-  'childAges',
-  'startDate',
-  'nights',
-  'passportNationality',
-  'tripPurpose',
-  'tripType',
-  'outboundTransport',
-  'returnTransport',
-  'budget',
-  'hotelStandard',
-];
 
 /** Direct answers save declared facts without asking the model to interpret a form. */
 export function StudioGuidedBrief({
@@ -54,18 +40,7 @@ export function StudioGuidedBrief({
   const [saving, setSaving] = useState(false);
   const questionHeading = useRef<HTMLHeadingElement | null>(null);
   const focusNext = useRef(false);
-  const questions = [...workspace.qualification.questions];
-  if (!workspace.brief.tripPurpose || workspace.brief.tripPurpose === 'undecided')
-    questions.push({
-      id: 'tripPurpose',
-      label: 'What is this trip for?',
-      reason: 'Entry requirements depend on the purpose of the visit.',
-      required: false,
-    });
-  questions.sort((a, b) => {
-    const order = (id: string) => (priority.includes(id) ? priority.indexOf(id) : priority.length);
-    return order(a.id) - order(b.id);
-  });
+  const questions = buildStudioGuidedQuestions(workspace);
   const question =
     questions.find((q) => q.id === selected) || questions.find((q) => !skipped.includes(q.id));
   useEffect(() => {
@@ -76,13 +51,21 @@ export function StudioGuidedBrief({
     const brief = workspace.brief;
     setValues({
       currency: brief.currency,
-      date: brief.startDate,
+      date:
+        question?.id === 'departureDate'
+          ? brief.departureDate || ''
+          : question?.id === 'returnDepartureDate'
+            ? brief.returnDepartureDate || ''
+            : brief.startDate,
+      origin: brief.origin,
       passport: brief.passportNationality || '',
-      ...(question?.id === 'adults' && brief.adults !== null
-        ? { number: String(brief.adults) }
-        : question?.id === 'children' && brief.children !== null
-          ? { number: String(brief.children) }
-          : {}),
+      ...(question?.id === 'tripDays' && brief.tripDays != null
+        ? { number: String(brief.tripDays) }
+        : question?.id === 'adults' && brief.adults !== null
+          ? { number: String(brief.adults) }
+          : question?.id === 'children' && brief.children !== null
+            ? { number: String(brief.children) }
+            : {}),
       ...Object.fromEntries(
         workspace.stops
           .filter((stop) => stop.nights !== null)
@@ -193,6 +176,14 @@ export function StudioGuidedBrief({
         brief: { preferredDestination: stop.name, destinationCountry: stop.country },
         stops: [stop],
       });
+    } else if (id === 'origin') {
+      await save({ brief: { origin: values.origin.trim() } });
+    } else if (id === 'departureDate') {
+      await save({ brief: { departureDate: values.date, datesFlexible: false } });
+    } else if (id === 'returnDepartureDate') {
+      await save({ brief: { returnDepartureDate: values.date } });
+    } else if (id === 'tripDays') {
+      await save({ brief: { tripDays: Number(values.number) } });
     } else if (id === 'startDate') {
       const startDate = values.date;
       await save({
@@ -290,6 +281,24 @@ export function StudioGuidedBrief({
               </Button>
             </>
           )}
+          {id === 'origin' && field('origin', 'Departure city, airport or port')}
+          {id === 'departureDate' && (
+            <>
+              {field('date', 'Origin departure date', 'date')}
+              <Button
+                type="button"
+                variant="soft"
+                color="gray"
+                disabled={blocked}
+                onClick={() => void save({ brief: { departureDate: '', datesFlexible: true } })}
+              >
+                Dates are flexible
+              </Button>
+            </>
+          )}
+          {id === 'returnDepartureDate' && field('date', 'Return departure date', 'date')}
+          {id === 'tripDays' &&
+            field('number', 'Trip duration in days', 'number', { min: 1, max: 366 })}
           {id === 'nights' && (
             <Grid columns={{ initial: '1', sm: '2' }} gap="3">
               {workspace.stops.map((stop) => (
@@ -398,6 +407,10 @@ export function StudioGuidedBrief({
             'route',
             'passportNationality',
             'startDate',
+            'departureDate',
+            'returnDepartureDate',
+            'tripDays',
+            'origin',
             'nights',
             'adults',
             'children',
@@ -512,18 +525,24 @@ export function StudioGuidedBrief({
                   : q.id === 'tripType'
                     ? 'Trip type'
                     : q.id === 'startDate'
-                      ? 'Dates'
-                      : q.id === 'outboundTransport'
-                        ? 'Outbound travel'
-                        : q.id === 'returnTransport'
-                          ? 'Return travel'
-                          : q.id === 'hotelStandard'
-                            ? 'Accommodation'
-                            : q.id === 'tripPurpose'
-                              ? 'Purpose'
-                              : q.id === 'childAges'
-                                ? 'Child ages'
-                                : q.id.replace(/^./, (letter) => letter.toUpperCase())}
+                      ? 'Arrival'
+                      : q.id === 'departureDate'
+                        ? 'Departure'
+                        : q.id === 'returnDepartureDate'
+                          ? 'Return departure'
+                          : q.id === 'tripDays'
+                            ? 'Trip days'
+                            : q.id === 'outboundTransport'
+                              ? 'Outbound travel'
+                              : q.id === 'returnTransport'
+                                ? 'Return travel'
+                                : q.id === 'hotelStandard'
+                                  ? 'Accommodation'
+                                  : q.id === 'tripPurpose'
+                                    ? 'Purpose'
+                                    : q.id === 'childAges'
+                                      ? 'Child ages'
+                                      : q.id.replace(/^./, (letter) => letter.toUpperCase())}
               </Button>
             ))}
           </Flex>

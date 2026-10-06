@@ -1,5 +1,7 @@
 import type { StudioAgency, StudioBrief, StudioStop, StudioWorkspace } from '../shared/studio.ts';
 import { applyStudioPatch } from './studio-domain.ts';
+import { studioJourneyIntakeReply } from './studio-journey-intake.ts';
+import { studioFlightsArrangedExternally } from '../shared/studio-assistant.ts';
 import {
   groundedStudioDates,
   requestedStudioNights,
@@ -181,6 +183,11 @@ export function prepareStudioStayClarification(
 export function studioIntakeRecoveryReply(workspace: StudioWorkspace, message: string) {
   const stop = workspace.stops[0];
   if (!stop) return 'Where would you like to travel?';
+  if (!workspace.brief.startDate && !studioFlightsArrangedExternally(workspace))
+    return (
+      studioJourneyIntakeReply(workspace) ||
+      `${stop.name}${stop.nights !== null ? ` for ${stop.nights} nights` : ''} is noted. Compare outbound and return journeys below; a selected schedule will confirm arrival.`
+    );
   if (!workspace.brief.startDate && workspace.brief.departureDate)
     return `Your departure${workspace.brief.origin ? ` from ${workspace.brief.origin}` : ''} is ${dateLabel(workspace.brief.departureDate)}. What date will you arrive in ${stop.name}?`;
   if (!workspace.brief.startDate) {

@@ -567,6 +567,7 @@ function questionFields(
   else if (/\b(?:child(?:ren)?|kids?|infants?)\b/i.test(question)) fields.add('children');
   if (/\b(?:budget|spend|price point|group total)\b/i.test(question)) fields.add('budget');
   if (/\b(?:nights?|length of stay|how long)\b/i.test(question)) fields.add('nights');
+  if (/\b(?:trip duration|how many days|duration.*days)\b/i.test(question)) fields.add('tripDays');
   if (/\b(?:arrival|arrive|start(?:ing)? date|when.*(?:travel|go|begin|start))\b/i.test(question))
     fields.add('startDate');
   if (/\b(?:return|end date)\b/i.test(question)) fields.add('endDate');
@@ -597,6 +598,26 @@ export function studioAnsweringField(context: StudioGroundingContext, field: str
   return answersField(questionFields(context, context.brief), field);
 }
 
+/** Retain an explicitly requested trip duration without treating days as hotel nights. */
+export function requestedStudioTripDays(source: string): number | undefined {
+  const text = numeric(source);
+  if (
+    !/\b(?:trip|holiday|vacation|honeymoon|travel|go|going|visit|visiting|stay|staying)\b/i.test(
+      text,
+    )
+  )
+    return;
+  const declarations = [
+    ...text.matchAll(
+      /\b(?:for|stay(?:ing)?|trip(?: lasts?)?)\s+(\d{1,3})\s+days?\b|\b(\d{1,3})[- ]day\s+(?:trip|holiday|vacation|honeymoon|itinerary)\b/gi,
+    ),
+  ]
+    .filter((match) => affirmativeClause(text, match.index))
+    .map((match) => Number(match[1] || match[2]));
+  const values = [...new Set(declarations)];
+  if (values.length === 1 && values[0] >= 1 && values[0] <= 366) return values[0];
+}
+
 /** Apply only source-grounded critical facts. The model chooses fields; it cannot invent their values. */
 export function groundedStudioBrief(
   current: StudioBrief,
@@ -607,9 +628,18 @@ export function groundedStudioBrief(
   context: StudioGroundingContext = {},
 ): StudioBrief {
   const next = structuredClone(current);
+  const explicitDays = requestedStudioTripDays(message);
+  if (explicitDays !== undefined) next.tripDays = explicitDays;
   const asked = questionFields({ ...context, brief: current }, current);
   const contextual = (source: string, field: string) =>
     normal(source) === normal(message) && answersField(asked, field);
+  if (
+    contextual(message, 'tripDays') &&
+    /^\s*\d{1,3}(?:\s+days?)?[.!]?\s*$/i.test(numeric(message))
+  ) {
+    const days = Number(numeric(message).match(/\d+/)![0]);
+    if (days >= 1 && days <= 366) next.tripDays = days;
+  }
   const valid = facts
     .map((fact) => ({ ...fact, sources: actualSources(fact.evidence, message, documentTexts) }))
     .filter((fact) => fact.sources.length);
@@ -786,7 +816,7 @@ export function groundedStudioBrief(
     else if (/^(?:undecided|not sure(?: yet)?)$/.test(direct)) next.tripType = 'undecided';
   }
   const asksArrival =
-    /\b(?:outbound|outward|arrival|arriv(?:e|ing)|reach(?: the)? destination)\b/i.test(
+    /\b(?:outbound|outward|arrival|arriv(?:e|ing)|reach(?: the)? destination|travel there)\b/i.test(
       lastQuestion,
     );
   const asksReturn = /\b(?:return|back|home)\b/i.test(lastQuestion);
@@ -913,6 +943,8 @@ export function groundedStudioBrief(
     'startDate',
     'endDate',
     'departureDate',
+    'tripDays',
+    'returnDepartureDate',
     'datesFlexible',
     'passportNationality',
     'tripType',
@@ -971,6 +1003,18 @@ export function groundedStudioBrief(
         brief: current,
       });
       if (value) next[fact.field] = value;
+    } else if (fact.field === 'tripDays') {
+      const days = requestedStudioTripDays(source);
+      if (days !== undefined) next.tripDays = days;
+    } else if (fact.field === 'returnDepartureDate') {
+      // Only explicit returning/leaving destination evidence establishes this field.
+      if (
+        /\b(?:return(?:ing)?|fly(?:ing)? back|sail(?:ing)? back|leav(?:e|ing))\b/i.test(source) ||
+        movementDateRole(source, { ...context, brief: current }) === 'endDate'
+      ) {
+        const value = dateFor(source, 'endDate', false, { ...context, brief: current });
+        if (value) next.returnDepartureDate = value;
+      }
     } else if (fact.field === 'datesFlexible') {
       if (
         /\b(?:dates? (?:are |is )?(?:flexible|not fixed)|flexible dates?|any dates?|no fixed dates?)\b/i.test(

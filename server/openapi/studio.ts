@@ -14,6 +14,12 @@ import { flightSearchSchema } from '../validation.ts';
 import { studioItinerarySchema } from '../../shared/studio-itinerary.ts';
 import { studioCruiseDraftSchema } from '../../shared/studio-cruise.ts';
 import { studioClientProfileSchema } from '../studio-clients.ts';
+import {
+  studioJourneyInputSchema,
+  studioJourneyOptionSchema,
+  studioJourneyResearchSchema,
+  studioJourneySelectionSchema,
+} from '../../shared/studio-journey.ts';
 import { fromZod, jsonBody, jsonResponse, operation } from './helpers.ts';
 
 type Schema = OpenAPIV3_1.SchemaObject | OpenAPIV3_1.ReferenceObject;
@@ -219,10 +225,13 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
           'generate_itinerary',
           'preview',
           'destinations',
+          'journey',
         ],
       },
       questionId: text,
       stopId: text,
+      direction: { type: 'string', enum: ['outbound', 'return'] },
+      mode: { type: 'string', enum: ['flight', 'cruise'] },
       disabledReason: text,
       choices: array(object({ label: text, message: text })),
     },
@@ -446,7 +455,10 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
     ),
   }),
   StudioWeatherOutlook: object({
-    kind: { type: 'string', enum: ['forecast', 'seasonal_outlook', 'unavailable'] },
+    kind: {
+      type: 'string',
+      enum: ['forecast', 'seasonal_outlook', 'climate_overview', 'unavailable'],
+    },
     checkedAt: timestamp,
     summary: text,
     sources: array(ref('StudioTravelEvidence')),
@@ -476,13 +488,47 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
           countryCode: text,
           startDate: { type: 'string', format: 'date' },
           endDate: { type: 'string', format: 'date' },
+          scope: { type: 'string', enum: ['preliminary', 'dated_trip'] },
           entryRequirements: { anyOf: [ref('StudioEntryRequirements'), { type: 'null' }] },
+          preliminaryEntryRequirements: {
+            anyOf: [ref('StudioPreliminaryEntryRequirements'), { type: 'null' }],
+          },
           entryError: text,
           weather: ref('StudioWeatherOutlook'),
         }),
       ),
       maxItems: 20,
     },
+    notes: array(text),
+  }),
+  StudioJourneyInput: fromZod(studioJourneyInputSchema),
+  StudioJourneyOption: fromZod(studioJourneyOptionSchema),
+  StudioJourneyResearch: fromZod(studioJourneyResearchSchema),
+  StudioJourneySelection: fromZod(studioJourneySelectionSchema),
+  StudioPreliminaryEntryRequirements: object({
+    scope: { type: 'string', const: 'preliminary_trip' },
+    passportCountry: text,
+    passportCountryCode: text,
+    destinationCountryCode: text,
+    inputKey: text,
+    checkedAt: timestamp,
+    status: {
+      type: 'string',
+      enum: [
+        'pending',
+        'missing_passport',
+        'preliminary',
+        'unverified',
+        'conflicting',
+        'unavailable',
+      ],
+    },
+    category: visaCategory,
+    summary: text,
+    electronicAuthorisation: text,
+    conditions: array(text),
+    missingFacts: array(text),
+    sources: array(ref('StudioTravelEvidence')),
     notes: array(text),
   }),
   StudioHotelQuote: object({
@@ -602,6 +648,20 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
       destinationResearch: { anyOf: [ref('StudioDestinationResearch'), { type: 'null' }] },
       entryRequirements: array(ref('StudioEntryRequirements')),
       tripBriefing: { anyOf: [ref('StudioTripBriefing'), { type: 'null' }] },
+      journeyResearch: {
+        type: 'object',
+        properties: {
+          outbound: ref('StudioJourneyResearch'),
+          return: ref('StudioJourneyResearch'),
+        },
+      },
+      journeySelections: {
+        type: 'object',
+        properties: {
+          outbound: ref('StudioJourneySelection'),
+          return: ref('StudioJourneySelection'),
+        },
+      },
       imports: array(ref('StudioImport')),
       messages: array(
         object({
@@ -1038,17 +1098,132 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
   '/api/studio/workspaces/{id}/trip-briefing': {
     parameters: workspaceParameters,
     post: operation('Studio', 'Check entry and seasonal weather for every chosen destination', {
-      description: `${actionDescription} The UI may start this action automatically once the route, countries and dates are confirmed. It does not block planning. Visa checks require a declared passport and purpose; otherwise each stop explains what is missing and still researches seasonal weather. Only allowlisted trip inputs are sent, excluding client identities, photos and dates of birth. Uses existing validated entry research and primary meteorological/government climate sources. Weather is explicitly usual seasonal patterns, never a future daily forecast. Each check can fail independently; partial results persist. At most two route workers run with a three-minute overall budget and one-minute per-check limit; remaining checks are marked unavailable on budget expiry. Identical owner/workspace/input requests share in-flight research and matching saved results are reused for six hours, including partial results. Send force: true only for an explicit retry. This action merges only research into the latest workspace when the input key still matches, preserving concurrent unrelated edits. Changed travel inputs cancel stale research and return 409 STUDIO_BRIEFING_STALE. Cached results do not increment the revision. Requires OPENAI_API_KEY for fresh research; unavailable providers never produce fabricated results.`,
+      description: `${actionDescription} The UI starts automatic checks once a destination and country are known, before dates or route approval. A known passport triggers conditional preliminary entry guidance while dates or purpose remain open; it is never promoted into confirmed eligibility. Missing passport skips only entry. Undated stops receive a destination climate overview; ordered confirmed dates and purpose trigger a fresh dated entry check and seasonal weather outlook. Preliminary entry remains separate from full entryRequirements. It does not block planning. Only allowlisted trip inputs are sent, excluding client identities, photos and dates of birth. Uses existing validated entry research and primary meteorological/government climate sources. Weather is explicitly usual seasonal patterns, never a future daily forecast. Each check can fail independently; partial results persist. At most two route workers run with a three-minute overall budget and ninety-second component limit (the underlying weather lookup remains limited to one minute); remaining checks are marked unavailable on budget expiry. Identical owner/workspace/input requests share in-flight research and matching saved results are reused for six hours, including partial results. Send force: true only for an explicit retry. This action merges only research into the latest workspace when the input key still matches, preserving concurrent unrelated edits. Changed travel inputs cancel stale research and return 409 STUDIO_BRIEFING_STALE. Cached results do not increment the revision. Requires OPENAI_API_KEY for fresh research; unavailable providers never produce fabricated results.`,
       requestBody: jsonBody(fromZod(actionSchema.extend({ force: z.boolean().optional() }))),
       responses: {
         '200': jsonResponse(
           'Workspace and complete or partial per-stop briefing.',
           actionResult({ briefing: ref('StudioTripBriefing'), reused: { type: 'boolean' } }),
         ),
-        '400': error('Chosen destinations, countries or travel dates are not confirmed.'),
+        '400': error('No known destination and country are available for automatic research.'),
         '404': error('Workspace not found for this owner.'),
         '409': error('Revision, requestId or changed briefing-input conflict.'),
         '503': error('The request was cancelled; saved planning remains unchanged.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/journey/research': {
+    parameters: workspaceParameters,
+    post: operation(
+      'Studio travel research',
+      'Research outbound or return transport routes before route approval',
+      {
+        description: `${actionDescription} Requires mode and different origin/destination cities, but no hotel arrival, party, cabin or exact travel dates. Uses current official airline/airport/cruise sources; returns published route guidance with blank schedule dates and no fare. Return direction reverses the final destination and origin. Sends only allowlisted travel inputs. Exact input hash and six-hour freshness guard cached results and merge into the latest revision, preserving unrelated edits. Changed inputs return STUDIO_RESEARCH_STALE; disconnected requests cancel. This does not book travel or derive arrival from estimates.`,
+        requestBody: jsonBody(
+          fromZod(
+            actionSchema
+              .extend({
+                direction: z.enum(['outbound', 'return']),
+                mode: z.enum(['flight', 'cruise']).optional(),
+                force: z.boolean().optional(),
+              })
+              .strict(),
+          ),
+        ),
+        responses: {
+          '200': jsonResponse(
+            'Saved source-backed journey research.',
+            actionResult({ research: ref('StudioJourneyResearch'), reused: { type: 'boolean' } }),
+          ),
+          '409': error('Revision conflict or changed journey inputs.'),
+          '502': error('Research lacked verified official sources or changed the requested route.'),
+          '503': error('Research integration unavailable.'),
+        },
+      },
+    ),
+  },
+  '/api/studio/workspaces/{id}/journey/select': {
+    parameters: workspaceParameters,
+    post: operation('Studio travel research', 'Save a researched journey preference', {
+      description: `${actionDescription} Selects a current source-backed option from this owner’s saved research. Leaves arrival, nights, itinerary and services unchanged. Expired or changed inputs require fresh research. This is a route preference, not a flight quote, sailing schedule or reservation.`,
+      requestBody: jsonBody(
+        fromZod(
+          actionSchema
+            .extend({
+              direction: z.enum(['outbound', 'return']),
+              optionId: z.string().min(1).max(80),
+            })
+            .strict(),
+        ),
+      ),
+      responses: {
+        '200': jsonResponse(
+          'Selected route preference and workspace.',
+          actionResult({ selection: ref('StudioJourneySelection') }),
+        ),
+        '404': error('No journey research found.'),
+        '409': error('Expired research or changed inputs.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/journey/flights/search': {
+    parameters: workspaceParameters,
+    post: operation('Studio suppliers', 'Search dated flight quotes on a draft route', {
+      description: `${revisionDescription} Allows an unapproved known stop. Requires explicit airports, departure date, confirmed adult party with zero children, and cabin. Searches outbound or return direction; optional roundtrip return date must be ordered. Uses immutable server-owned quote scope with owner, input fingerprint and supplier/30-minute expiry. Exact arrival remains unconfirmed until a supplier schedule is selected. Family route guidance remains available; reviewed family supplier quotes are required for fares. No reservation or ticket is created.`,
+      requestBody: jsonBody(
+        fromZod(
+          flightSearchSchema
+            .safeExtend({
+              revision: positiveRevision,
+              stopId: z.string().min(1).max(150),
+              direction: z.enum(['outbound', 'return']),
+              adults: z.number().int().min(1).max(9),
+              cabinClass: z.enum(['economy', 'premium_economy', 'business', 'first']),
+            })
+            .strict(),
+        ),
+      ),
+      responses: {
+        '200': jsonResponse(
+          'Unselected dated supplier flight quotes.',
+          ref('StudioFlightSearchResult'),
+        ),
+        '400': error('Missing party, cabin, dates or unsupported family fare search.'),
+        '404': error('Workspace or stop not found.'),
+        '409': error('Revision or search inputs changed.'),
+        '503': error('Supplier unavailable; no fares or dates fabricated.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/journey/quotes/{quoteId}': {
+    parameters: [
+      ...workspaceParameters,
+      { name: 'quoteId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+    ],
+    post: operation('Studio suppliers', 'Use a supplier flight schedule to set trip dates', {
+      description: `${revisionDescription} Explicitly selects a matching unexpired journey quote and records it in the proposal. Derives local arrival only from actual supplier timestamps, never an approximate duration. Roundtrip return departure can establish the trip end and exact single-stop nights. Multi-stop fixed-date conflicts require review. An unknown timezone for a UTC timestamp leaves its local date unresolved. Known supplier airport-city mismatches require a reviewed ground transfer before stay arrival/checkout is changed, and preserve existing stay dates. Dates exceeding a requested trip duration are flagged for review without rewriting tripDays. Days are never converted to hotel nights. This creates no booking.`,
+      requestBody: jsonBody(
+        fromZod(
+          z
+            .object({ revision: positiveRevision, direction: z.enum(['outbound', 'return']) })
+            .strict(),
+        ),
+      ),
+      responses: {
+        '200': jsonResponse(
+          'Workspace and source-based date resolution.',
+          object({
+            workspace: ref('StudioWorkspace'),
+            dateResolution: object({
+              arrivalDate: { type: ['string', 'null'] },
+              returnDepartureDate: { type: ['string', 'null'] },
+              nights: { type: ['integer', 'null'] },
+              notes: array(text),
+            }),
+          }),
+        ),
+        '404': error('Journey quote not found.'),
+        '409': error('Quote expired, direction mismatch or conflicting trip inputs.'),
       },
     }),
   },
@@ -1103,7 +1278,14 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
             model: text,
             nextAction: {
               type: 'string',
-              enum: ['structure', 'itinerary', 'services', 'recommendations', 'proposal'],
+              enum: [
+                'structure',
+                'itinerary',
+                'services',
+                'recommendations',
+                'proposal',
+                'journey',
+              ],
             },
           }),
         ),

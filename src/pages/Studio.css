@@ -115,3 +115,14 @@
     padding: var(--space-4);
   }
 }
+.studio-agent-briefing {
+  border-top: 1px solid var(--gray-5);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+.studio-agent-briefing > summary {
+  cursor: pointer;
+  color: var(--gray-11);
+  font-size: 12px;
+  padding-bottom: 8px;
+}

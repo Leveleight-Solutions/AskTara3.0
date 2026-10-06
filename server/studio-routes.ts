@@ -50,6 +50,17 @@ import {
   type StudioTripBriefing,
 } from '../shared/studio-trip-briefing.ts';
 import { studioDestinationResearchFresh } from '../shared/studio-travel-research.ts';
+import {
+  researchStudioJourney,
+  applyStudioJourneyChoice,
+  studioJourneyInputHash,
+} from './studio-journey.ts';
+import {
+  studioJourneyInput,
+  studioJourneyResearchFresh,
+  studioJourneyResearchSchema,
+  studioJourneySelectionSchema,
+} from '../shared/studio-journey.ts';
 
 type Session = { id: string; owner_id: string; user_id: string | null };
 type Dependencies = {
@@ -968,6 +979,85 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         skipSave: (current, result) => {
           const briefing = result.briefing as StudioTripBriefing;
           return JSON.stringify(current.tripBriefing) === JSON.stringify(briefing);
+        },
+      },
+    );
+  });
+  app.post('/api/studio/workspaces/:id/journey/research', limiter, async (req, res) => {
+    const body = actionSchema
+      .extend({
+        direction: z.enum(['outbound', 'return']),
+        mode: z.enum(['flight', 'cruise']).optional(),
+        force: z.boolean().optional(),
+      })
+      .strict()
+      .parse(req.body);
+    await action(
+      req,
+      res,
+      `journey-research-${body.direction}`,
+      body,
+      async (workspace, signal) =>
+        researchStudioJourney(workspace, body.direction, body.mode, signal, { force: body.force }),
+      {
+        abortOnDisconnect: true,
+        merge: (current, researched, result) => {
+          const research = studioJourneyResearchSchema.parse(result.research);
+          if (
+            studioJourneyInput(current, body.direction).mode !==
+              studioJourneyInput(researched, body.direction).mode ||
+            research.inputKey !==
+              studioJourneyInputHash(studioJourneyInput(current, body.direction, body.mode)) ||
+            !studioJourneyResearchFresh(current, research, body.direction, body.mode)
+          )
+            throw new StudioError(
+              409,
+              'The journey details changed during research. The old routes were not saved.',
+              'STUDIO_RESEARCH_STALE',
+            );
+          return {
+            ...current,
+            journeyResearch: { ...current.journeyResearch, [body.direction]: research },
+          };
+        },
+        skipSave: (current, result) =>
+          JSON.stringify(current.journeyResearch?.[body.direction]) ===
+          JSON.stringify(result.research),
+      },
+    );
+  });
+  app.post('/api/studio/workspaces/:id/journey/select', async (req, res) => {
+    const body = actionSchema
+      .extend({ direction: z.enum(['outbound', 'return']), optionId: z.string().min(1).max(80) })
+      .strict()
+      .parse(req.body);
+    await action(
+      req,
+      res,
+      'journey-select',
+      body,
+      async (workspace) => {
+        const research = workspace.journeyResearch?.[body.direction];
+        if (!research) throw new StudioError(404, 'Research this journey before choosing a route.');
+        const selection = applyStudioJourneyChoice(workspace, research, body.optionId);
+        workspace.journeySelections = {
+          ...workspace.journeySelections,
+          [body.direction]: selection,
+        };
+        // A route card records a preference, never an arrival, sailing or fare.
+        return { selection };
+      },
+      {
+        merge: (current, _researched, result) => {
+          const research = current.journeyResearch?.[body.direction];
+          if (!research || research.input.direction !== body.direction)
+            throw new StudioError(409, 'Research this journey again before choosing a route.');
+          applyStudioJourneyChoice(current, research, body.optionId);
+          const selection = studioJourneySelectionSchema.parse(result.selection);
+          return {
+            ...current,
+            journeySelections: { ...current.journeySelections, [body.direction]: selection },
+          };
         },
       },
     );

@@ -6,18 +6,20 @@ import { studioTripBriefingDisplay } from './studioTripBriefingView';
 export function studioCanvasTravelStatus(workspace: StudioWorkspace, now = Date.now()) {
   const view = studioTripBriefingDisplay(workspace, now);
   const passport = normalizeStudioCountry(workspace.brief.passportNationality || '');
-  const purpose = workspace.brief.tripPurpose || 'undecided';
   const oldEntry = Boolean(workspace.tripBriefing || workspace.entryRequirements?.length);
   const entryLabel = !passport
     ? 'Add passport nationality'
-    : purpose === 'undecided'
-      ? 'Add trip purpose for entry advice'
-      : !view.ready
-        ? 'Confirm trip details for entry advice'
-        : view.rows.length &&
-            view.rows.every((row) => row.entryRequirements?.status === 'corroborated')
-          ? 'Entry sources checked'
-          : view.rows.some((row) => row.entryRequirements || row.entryError) || view.fresh
+    : !view.ready
+      ? 'Choose destination for entry advice'
+      : view.rows.length &&
+          view.rows.every((row) => row.entryRequirements?.status === 'corroborated')
+        ? 'Entry sources checked'
+        : view.rows.some((row) => row.preliminaryEntryRequirements?.status === 'preliminary')
+          ? 'Preliminary entry guidance ready'
+          : view.rows.some(
+                (row) =>
+                  row.entryRequirements || row.preliminaryEntryRequirements || row.entryError,
+              ) || view.fresh
             ? 'Entry advice needs review'
             : oldEntry
               ? 'Entry checks need refreshing'
@@ -25,13 +27,15 @@ export function studioCanvasTravelStatus(workspace: StudioWorkspace, now = Date.
   const weatherAvailable =
     view.rows.length && view.rows.every((row) => row.weather && row.weather.kind !== 'unavailable');
   const weatherLabel = !view.ready
-    ? 'Confirm dates for weather guidance'
+    ? 'Choose destination for climate guidance'
     : weatherAvailable
-      ? view.rows.every((row) => row.weather?.kind === 'seasonal_outlook')
-        ? 'Seasonal outlook ready'
-        : view.rows.every((row) => row.weather?.kind === 'forecast')
-          ? 'Weather forecast ready'
-          : 'Weather guidance ready'
+      ? view.rows.every((row) => row.weather?.kind === 'climate_overview')
+        ? 'Destination climate ready'
+        : view.rows.every((row) => row.weather?.kind === 'seasonal_outlook')
+          ? 'Seasonal outlook ready'
+          : view.rows.every((row) => row.weather?.kind === 'forecast')
+            ? 'Weather forecast ready'
+            : 'Weather guidance ready'
       : view.fresh
         ? 'Weather guidance needs review'
         : workspace.tripBriefing

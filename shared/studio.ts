@@ -3,6 +3,7 @@ import type { StudioCruiseDraft } from './studio-cruise';
 import type { StudioDestinationResearch, StudioEntryRequirements } from './studio-travel-research';
 import type { StudioTripBriefing } from './studio-trip-briefing';
 import type { StudioServicePresentation } from './studio-services';
+import type { StudioJourneyResearch, StudioJourneySelection } from './studio-journey';
 
 /** Travel-agent workspace: route, daily planning, services and client proposal. */
 export type StudioStage =
@@ -35,6 +36,10 @@ export interface StudioBrief {
   request: string;
   /** Outbound departure from the origin; separate from arrival at the first stop. */
   departureDate?: string;
+  /** Explicit requested trip days; separate from hotel nights and origin departure. */
+  tripDays?: number | null;
+  /** Return departure from the destination, independently editable from the last hotel stay. */
+  returnDepartureDate?: string;
   startDate: string;
   endDate: string;
   datesFlexible: boolean;
@@ -135,6 +140,8 @@ export interface StudioPricing {
 export interface StudioWorkspace {
   id: string;
   revision: number;
+  journeyResearch?: Partial<Record<'outbound' | 'return', StudioJourneyResearch>>;
+  journeySelections?: Partial<Record<'outbound' | 'return', StudioJourneySelection>>;
   title: string;
   stage: StudioStage;
   brief: StudioBrief;

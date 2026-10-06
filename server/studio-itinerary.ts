@@ -12,7 +12,8 @@ import { cruiseDraftToItinerary, cruiseIsoDate } from '../shared/studio-cruise.t
 import { addNights, recalculateStudioStops } from './studio-domain.ts';
 import { StudioError } from './studio-store.ts';
 import { redactStudioPrivateText } from './studio-imports.ts';
-import { evidenceUrl, structuredResponse } from './agents/openai.ts';
+import { evidenceUrl, structuredResponse, OpenAIPlanningError } from './agents/openai.ts';
+import { planningFailureReason } from './agents/failures.ts';
 import { hasSuitabilityGuarantee } from './agents/research.ts';
 import { studioRecommendationHistory } from './studio-client-context.ts';
 import {
@@ -457,8 +458,9 @@ export async function generateStudioItinerary(
       notes: plan.notes,
     });
   const generationDeadline = Date.now() + 150000;
-  const requestItinerary = (validationFeedback = '') =>
-    structuredResponse({
+  const requestItinerary = (validationFeedback = '') => {
+    const started = Date.now();
+    return structuredResponse({
       name: 'studio_daily_itinerary',
       schema: responseSchema,
       webSearch: true,
@@ -544,7 +546,18 @@ If validationFeedback identifies a rejected generated claim or source, correct t
             }
           : null,
       },
+    }).catch((error: unknown) => {
+      console.warn('Studio itinerary generation failed', {
+        phase: validationFeedback ? 'repair' : 'initial',
+        reason: error instanceof OpenAIPlanningError ? error.code : planningFailureReason(error),
+        days: generatedSlots.length,
+        stops: workspace.stops.length,
+        elapsedMs: Date.now() - started,
+        remainingMs: Math.max(0, generationDeadline - Date.now()),
+      });
+      throw error;
     });
+  };
   const finishItinerary = (result: Awaited<ReturnType<typeof requestItinerary>>) => {
     if (result.data.days.length !== generatedSlots.length)
       throw new StudioError(502, 'The itinerary did not cover every trip day. Please retry.');
@@ -706,6 +719,11 @@ If validationFeedback identifies a rejected generated claim or source, correct t
     )
       throw error;
     // One repair is allowed; the same complete validation runs again before saving.
+    console.info('Studio itinerary repair requested', {
+      reason: error instanceof StudioItineraryClaimError ? 'research_claim' : 'research_citation',
+      days: generatedSlots.length,
+      remainingMs: Math.max(0, generationDeadline - Date.now()),
+    });
     return finishItinerary(await requestItinerary(error.feedback));
   }
 }

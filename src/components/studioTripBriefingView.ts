@@ -7,6 +7,8 @@ import {
   studioTripBriefingDestinations,
   studioTripBriefingFresh,
   studioTripBriefingReady,
+  studioBriefingDestinationDated,
+  studioPreliminaryEntryInputKey,
 } from '../../shared/studio-trip-briefing';
 
 function currentEntry(
@@ -53,7 +55,8 @@ export function studioTripBriefingDisplay(workspace: StudioWorkspace, now = Date
         ...(workspace.entryRequirements?.filter((entry) => entry.stopId === destination.stopId) ||
           []),
       ];
-      const entryRequirements = ready
+      const dated = studioBriefingDestinationDated(workspace, destination);
+      const entryRequirements = dated
         ? candidates.reduce<StudioEntryRequirements | null>((latest, candidate) => {
             const entry = currentEntry(workspace, candidate, destination.stopId, now);
             // A later standalone recheck can contradict the cached briefing. Equal timestamps
@@ -63,12 +66,31 @@ export function studioTripBriefingDisplay(workspace: StudioWorkspace, now = Date
               : latest;
           }, null)
         : null;
+      const preliminary = checked?.preliminaryEntryRequirements;
+      const preliminaryAge = preliminary ? now - Date.parse(preliminary.checkedAt) : NaN;
+      const preliminaryEntryRequirements =
+        preliminary &&
+        normalizeStudioCountry(workspace.brief.passportNationality || '') &&
+        preliminary.scope === 'preliminary_trip' &&
+        preliminary.inputKey === studioPreliminaryEntryInputKey(workspace, destination.stopId) &&
+        Number.isFinite(preliminaryAge) &&
+        preliminaryAge >= 0 &&
+        preliminaryAge < STUDIO_TRIP_BRIEFING_FRESH_MS
+          ? preliminary
+          : null;
       const weatherAge = checked ? now - Date.parse(checked.weather.checkedAt) : NaN;
       const weather =
         Number.isFinite(weatherAge) && weatherAge >= 0 && weatherAge < STUDIO_TRIP_BRIEFING_FRESH_MS
           ? checked!.weather
           : null;
-      return { ...destination, entryRequirements, weather, entryError: checked?.entryError || '' };
+      return {
+        ...destination,
+        scope: checked?.scope || (dated ? 'dated_trip' : 'preliminary'),
+        entryRequirements,
+        preliminaryEntryRequirements,
+        weather,
+        entryError: checked?.entryError || '',
+      };
     });
   return { ready, fresh, rows };
 }

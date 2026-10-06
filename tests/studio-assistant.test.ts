@@ -93,12 +93,12 @@ test('London follow-up through the HTTP conversation applies combined date and n
     reply: 'When would you like to arrive and how many nights would you like to stay?',
   });
   const originalId = workspace.stops[0].id;
-  await turn('18 November 2026, for 3 nights', {
+  await turn('Arrive in London on 18 November 2026, for 3 nights', {
     ...reviewData(workspace),
     brief: { ...workspace.brief, startDate: '2026-11-18' },
     facts: [],
     route: [{ ...london(3), arrivalDate: '2026-11-18', arrivalFixed: true }],
-    routeEvidence: '18 November 2026, for 3 nights',
+    routeEvidence: 'Arrive in London on 18 November 2026, for 3 nights',
   });
   assert.equal(workspace.stops[0].id, originalId);
   assert.equal(workspace.stops[0].nights, 3);
@@ -238,7 +238,8 @@ test('unreliable model route changes get one repair and then a clarification wit
   };
   const result = await reviewStudioBrief(workspace, '3 nights', defaultStudioAgency());
   assert.equal(calls, 2);
-  assert.match(result.reply, /London.*3 nights/);
+  assert.match(result.reply, /London.*Flight or Cruise/);
+  assert.doesNotMatch(result.reply, /when.*arriv|what date.*arriv/i);
   assert.deepEqual(workspace.stops, before.stops);
   assert.deepEqual(workspace.brief, {
     ...before.brief,

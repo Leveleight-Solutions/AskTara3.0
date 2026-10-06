@@ -19,11 +19,13 @@ export function StudioChatActions({
   busy,
   onAction,
   notice,
+  onChoice,
 }: {
   workspace: StudioWorkspace;
   busy: boolean;
   onAction: (action: StudioAssistantAction) => void;
   notice?: string;
+  onChoice?: (message: string) => void;
 }) {
   const actions = buildStudioAssistantActions(workspace);
   const main = actions[0];
@@ -56,9 +58,10 @@ export function StudioChatActions({
           const Icon =
             action.kind === 'hotels'
               ? BedDouble
-              : action.kind === 'flights'
+              : action.kind === 'flights' || (action.kind === 'journey' && action.mode !== 'cruise')
                 ? Plane
-                : action.kind === 'cruises'
+                : action.kind === 'cruises' ||
+                    (action.kind === 'journey' && action.mode === 'cruise')
                   ? Ship
                   : action.kind === 'food'
                     ? Utensils
@@ -82,6 +85,30 @@ export function StudioChatActions({
           );
         })}
       </div>
+      {onChoice &&
+        actions
+          .filter((action) => action.questionId !== 'clarification' && action.choices?.length)
+          .map((action) => (
+            <div
+              className="studio-chat-action-chips"
+              key={`${action.id}-choices`}
+              aria-label="Choose the destination stay length"
+            >
+              {action.choices?.map((choice) => (
+                <button
+                  key={choice.message}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onChoice(choice.message)}
+                >
+                  <Check size={13} /> {choice.label}
+                </button>
+              ))}
+              <button type="button" disabled={busy} onClick={() => onAction(action)}>
+                Edit stay length
+              </button>
+            </div>
+          ))}
     </section>
   );
 }

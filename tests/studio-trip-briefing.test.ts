@@ -18,6 +18,7 @@ import {
   studioTripBriefingFresh,
   studioTripBriefingInputKey,
   studioTripBriefingReady,
+  studioBriefingDestinationDated,
   type StudioWeatherOutlook,
 } from '../shared/studio-trip-briefing.ts';
 import { applyStudioPatch } from '../server/studio-domain.ts';
@@ -213,13 +214,17 @@ async function setup() {
   return { app, client, stranger, value, path: `/api/studio/workspaces/${value.id}` };
 }
 
-test('briefing readiness requires confirmed real dates and each chosen stop, but never guesses passport or purpose', () => {
+test('briefing readiness starts with known geography while dated scope still requires confirmed real dates', () => {
   const value = workspace();
   value.brief.passportNationality = '';
   value.brief.tripPurpose = 'undecided';
   assert.equal(studioTripBriefingReady(value), true);
   value.brief.startDate = '2027-02-30';
-  assert.equal(studioTripBriefingReady(value), false);
+  assert.equal(studioTripBriefingReady(value), true);
+  assert.equal(
+    studioBriefingDestinationDated(value, studioTripBriefingDestinations(value)[0]),
+    false,
+  );
   value.brief.startDate = '2027-04-01';
   value.clarification = {
     kind: 'stay_dates',
@@ -229,7 +234,11 @@ test('briefing readiness requires confirmed real dates and each chosen stop, but
     statedNights: 7,
     proposedNights: 8,
   };
-  assert.equal(studioTripBriefingReady(value), false);
+  assert.equal(studioTripBriefingReady(value), true);
+  assert.equal(
+    studioBriefingDestinationDated(value, studioTripBriefingDestinations(value)[0]),
+    false,
+  );
   value.clarification = null;
   value.stops = [
     {
@@ -244,7 +253,11 @@ test('briefing readiness requires confirmed real dates and each chosen stop, but
       notes: '',
     },
   ];
-  assert.equal(studioTripBriefingReady(value), false);
+  assert.equal(studioTripBriefingReady(value), true);
+  assert.equal(
+    studioBriefingDestinationDated(value, studioTripBriefingDestinations(value)[0]),
+    false,
+  );
 });
 
 test('safe keys exclude identity data and track passport, purpose, route, date and explicit activities', () => {
@@ -596,12 +609,15 @@ test('same-owner simultaneous automatic calls share one research job despite dis
   assert.equal(results[0].body.workspace.revision, results[1].body.workspace.revision);
 });
 
-test('briefing rejects premature automation and documents its complete public contract', async () => {
+test('briefing rejects missing geography and documents its complete public contract', async () => {
   const { client, value, path } = await setup();
   const changed = (
     await client
       .patch(path)
-      .send({ revision: value.revision, brief: { endDate: '' } })
+      .send({
+        revision: value.revision,
+        brief: { preferredDestination: '', destinationCountry: '' },
+      })
       .expect(200)
   ).body.workspace;
   await client

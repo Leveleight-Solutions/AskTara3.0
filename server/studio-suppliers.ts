@@ -6,11 +6,19 @@ import type { StudioItem, StudioWorkspace } from '../shared/studio.ts';
 import { searchFlights, searchHotels } from './integrations.ts';
 import { studioHotelDestination } from './studio-models.ts';
 import { StudioError, type StudioStore } from './studio-store.ts';
-import { structureFingerprint } from './studio-domain.ts';
+import { applyStudioPatch, structureFingerprint } from './studio-domain.ts';
 import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
 import { buildStudioFlightQuote } from './studio-flight-planning.ts';
 import { publicHotelQuote, recommendStudioHotels } from './studio-hotels.ts';
 import { studioClientTravelHistory } from './studio-clients.ts';
+import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
+import type { FlightOffer } from '../shared/types.ts';
+import {
+  studioFlightLocalDate,
+  studioJourneyDatePatch,
+  studioJourneyFlightDates,
+  type StudioJourneyDirection,
+} from './studio-journey-flight-dates.ts';
 
 const revisionSchema = z.number().int().positive();
 const hotelRequest = z
@@ -24,6 +32,23 @@ const hotelRequest = z
   })
   .strict();
 const selectRequest = z.object({ revision: revisionSchema }).strict();
+const journeySelectRequest = z
+  .object({ revision: revisionSchema, direction: z.enum(['outbound', 'return']) })
+  .strict();
+const journeySearchRequest = z
+  .object({
+    revision: revisionSchema,
+    stopId: z.string().min(1).max(150),
+    direction: z.enum(['outbound', 'return']),
+  })
+  .passthrough();
+type JourneyQuoteScope = {
+  scope: 'journey';
+  direction: StudioJourneyDirection;
+  stopId: string;
+  input: z.infer<typeof flightSearchSchema>;
+};
+type StoredQuoteScope = { fingerprint: string; expiresAt: string } & Partial<JourneyQuoteScope>;
 const quoteLifetimeMs = 30 * 60 * 1000;
 type SupplierDependencies = {
   flights?: typeof searchFlights;
@@ -48,6 +73,8 @@ export function studioQuoteFingerprint(workspace: StudioWorkspace) {
         cabin: workspace.brief.cabin,
         origin: workspace.brief.origin,
         departureDate: workspace.brief.departureDate || '',
+        returnDepartureDate: workspace.brief.returnDepartureDate || '',
+        tripDays: workspace.brief.tripDays ?? null,
         outboundTransport: workspace.brief.outboundTransport || 'undecided',
         returnTransport: workspace.brief.returnTransport || 'undecided',
       }),
@@ -55,8 +82,8 @@ export function studioQuoteFingerprint(workspace: StudioWorkspace) {
     .digest('hex');
 }
 
-function requireSearchableParty(workspace: StudioWorkspace, hotels = false) {
-  if (!workspace.structureAccepted || !workspace.stops.length)
+function requireSearchableParty(workspace: StudioWorkspace, hotels = false, planning = false) {
+  if ((!planning && !workspace.structureAccepted) || !workspace.stops.length)
     throw new StudioError(400, 'Accept the trip structure before searching for services.');
   if (
     workspace.brief.adults === null ||
@@ -81,6 +108,77 @@ function requireSearchableParty(workspace: StudioWorkspace, hotels = false) {
       'Automatic supplier search currently supports adults only. Add a reviewed family quote from your supplier manually; adult-only prices are not valid for this party.',
       'STUDIO_FAMILY_SEARCH_UNSUPPORTED',
     );
+}
+
+function requireJourneyStop(
+  workspace: StudioWorkspace,
+  stopId: string,
+  direction: StudioJourneyDirection,
+) {
+  const stop = direction === 'outbound' ? workspace.stops[0] : workspace.stops.at(-1);
+  if (!stop || stop.id !== stopId || !stop.name.trim() || !normalizeStudioCountry(stop.country))
+    throw new StudioError(
+      400,
+      'Choose a known first destination for outbound flights or a known last destination for return flights.',
+    );
+  return stop;
+}
+
+/** Only an offer covering the requested airport legs can change the trip schedule. */
+function matchingJourneyOffer(
+  offer: FlightOffer,
+  input: z.infer<typeof flightSearchSchema>,
+  country: string,
+  direction: StudioJourneyDirection,
+) {
+  if (offer.origin !== input.origin || offer.destination !== input.destination) return false;
+  const journeys = offer.journeys || [];
+  if (input.returnDate && journeys.length !== 2) return false;
+  if (!input.returnDate && journeys.length > 1) return false;
+  if (journeys.length) {
+    for (const journey of journeys) {
+      if (
+        journey.segments.length &&
+        (journey.segments[0].origin.code !== journey.origin.code ||
+          journey.segments.at(-1)!.destination.code !== journey.destination.code)
+      )
+        return false;
+    }
+    const first = journeys[0];
+    if (first.origin.code !== input.origin || first.destination.code !== input.destination)
+      return false;
+    const departureAirport = first.origin.timeZone ? first.origin : first.segments[0]?.origin;
+    const firstDate = studioFlightLocalDate(first.departure, departureAirport);
+    if (firstDate && firstDate !== input.departureDate) return false;
+    const boundaries =
+      direction === 'outbound'
+        ? [first.destination, first.segments.at(-1)?.destination]
+        : [first.origin, first.segments[0]?.origin];
+    if (
+      boundaries.some(
+        (airport) => airport?.countryCode && airport.countryCode.toUpperCase() !== country,
+      )
+    )
+      return false;
+    if (input.returnDate) {
+      const inbound = journeys[1];
+      if (inbound.origin.code !== input.destination || inbound.destination.code !== input.origin)
+        return false;
+      if (
+        [inbound.origin, inbound.segments[0]?.origin].some(
+          (airport) => airport?.countryCode && airport.countryCode.toUpperCase() !== country,
+        )
+      )
+        return false;
+      const airport = inbound.origin.timeZone ? inbound.origin : inbound.segments[0]?.origin;
+      const date = studioFlightLocalDate(inbound.departure, airport);
+      if (date && date !== input.returnDate) return false;
+    }
+  } else {
+    const departure = studioFlightLocalDate(offer.departure);
+    if (departure && departure !== input.departureDate) return false;
+  }
+  return true;
 }
 
 function abortOnDisconnect(req: Request, res: Response) {
@@ -147,13 +245,26 @@ export function installStudioSupplierRoutes(
     workspace: StudioWorkspace,
     quotes: { item: StudioItem; expiresAt?: string }[],
     append = false,
+    journeyScope?: JourneyQuoteScope,
   ) {
     const now = Date.now();
     const valid = quotes.filter((quote) => !quote.expiresAt || Date.parse(quote.expiresAt) > now);
     db.exec('BEGIN IMMEDIATE');
     try {
       // New search results replace only this owner's old, unselected quote list.
-      if (!append)
+      if (journeyScope) {
+        const old = db
+          .prepare('SELECT id,structure FROM studio_quotes WHERE owner_id=? AND workspace_id=?')
+          .all(ownerId, workspace.id);
+        const remove = db.prepare(
+          'DELETE FROM studio_quotes WHERE id=? AND owner_id=? AND workspace_id=?',
+        );
+        for (const row of old) {
+          const scope = JSON.parse(String(row.structure)) as StoredQuoteScope;
+          if (scope.scope === 'journey' && scope.direction === journeyScope.direction)
+            remove.run(String(row.id), ownerId, workspace.id);
+        }
+      } else if (!append)
         db.prepare('DELETE FROM studio_quotes WHERE owner_id=? AND workspace_id=?').run(
           ownerId,
           workspace.id,
@@ -172,6 +283,7 @@ export function installStudioSupplierRoutes(
           JSON.stringify({
             fingerprint: studioQuoteFingerprint(workspace),
             expiresAt: new Date(expiry).toISOString(),
+            ...journeyScope,
           }),
           JSON.stringify(quote.item),
           new Date(now).toISOString(),
@@ -184,6 +296,173 @@ export function installStudioSupplierRoutes(
     }
     return valid.map((quote) => quote.item);
   }
+  app.post('/api/studio/workspaces/:id/journey/flights/search', async (req, res) => {
+    const { revision, stopId, direction, ...fields } = journeySearchRequest.parse(req.body);
+    if (!Object.hasOwn(fields, 'adults') || !Object.hasOwn(fields, 'cabinClass'))
+      throw new StudioError(400, 'Confirm the adult count and cabin class for this flight search.');
+    const input = flightSearchSchema.parse(fields);
+    const ownerId = session(res).owner_id;
+    const workspace = store.require(ownerId, String(req.params.id), revision);
+    requireSearchableParty(workspace, false, true);
+    const stop = requireJourneyStop(workspace, stopId, direction);
+    if (workspace.brief.adults !== input.adults)
+      throw new StudioError(400, 'The flight passenger count must match the confirmed trip party.');
+    if (input.returnDate && (direction === 'return' || workspace.stops.length > 1))
+      throw new StudioError(
+        400,
+        'Choose a one-way return from the last destination. For a multi-stop trip, search the outbound and return separately.',
+      );
+    const requestScope = abortOnDisconnect(req, res);
+    try {
+      const result = await providers.flights(input, requestScope.signal);
+      requestScope.signal.throwIfAborted();
+      requireActiveSession(res);
+      const current = store.require(ownerId, workspace.id, revision);
+      requireSearchableParty(current, false, true);
+      requireJourneyStop(current, stopId, direction);
+      const now = new Date().toISOString();
+      const mode = result.mode === 'test' || result.mode === 'live' ? result.mode : 'provider';
+      const country = normalizeStudioCountry(stop.country)!.code;
+      const matching = result.offers.filter((offer) =>
+        matchingJourneyOffer(offer, input, country, direction),
+      );
+      if (result.offers.length && !matching.length)
+        throw new StudioError(
+          502,
+          'The supplier did not return a complete schedule matching these airports and journey. Search again or review an external quote.',
+          'STUDIO_FLIGHT_SCHEDULE_UNVERIFIED',
+        );
+      const quotes = remember(
+        ownerId,
+        current,
+        matching.slice(0, 30).map((offer) => {
+          const item: StudioItem = {
+            ...baseItem('flight', result.mode, now),
+            supplier: result.source === 'duffel' ? 'Duffel' : 'LiteAPI',
+            source: result.source === 'duffel' ? 'manual' : 'liteapi',
+            title: `${offer.airline} · ${input.origin} to ${input.destination}${input.returnDate ? ' return' : ''}`,
+            description: [
+              `${direction === 'outbound' ? 'Outbound' : 'Return'} journey · ${input.adults} adults · ${input.cabinClass.replaceAll('_', ' ')}.`,
+              offer.priceScope === 'all_passengers_complete_journey' &&
+              offer.passengerCount === input.adults
+                ? 'Supplier total for all confirmed adults and the complete requested journey.'
+                : 'Quoted total; passenger coverage must be confirmed with the supplier.',
+              'Use flight dates applies only dates supplied in the selected schedule. Hotel check-in, checkout, transit eligibility, baggage and fare conditions still need confirmation.',
+            ].join('\n'),
+            stopId,
+            startDate: input.departureDate,
+            endDate: input.returnDate || '',
+            price: offer.price,
+            currency: offer.currency,
+          };
+          const flight = buildStudioFlightQuote(offer, item.id, current, mode, now);
+          // A return-only offer must not be described as arrival at the first destination.
+          if (direction === 'return')
+            flight.advisories = flight.advisories.filter(
+              (advice) => advice.kind !== 'gap' && advice.kind !== 'hotel_timing',
+            );
+          item.imageUrl = flight.airlineLogoUrl;
+          item.presentation = { kind: 'flight', flight };
+          return { item, expiresAt: offer.expiresAt };
+        }),
+        true,
+        { scope: 'journey', direction, stopId, input },
+      );
+      res.json({
+        quotes,
+        flights: quotes.flatMap((quote) =>
+          quote.presentation?.kind === 'flight' ? [quote.presentation.flight] : [],
+        ),
+        mode: result.mode,
+        warning: `${result.warning} Using flight dates adds this quote and its supplied schedule to the proposal. It does not hold a fare, issue a ticket, reserve a hotel or establish entry eligibility.`,
+      });
+    } finally {
+      requestScope.clean();
+    }
+  });
+  app.post('/api/studio/workspaces/:id/journey/quotes/:quoteId', (req, res) => {
+    const { revision, direction } = journeySelectRequest.parse(req.body);
+    const ownerId = session(res).owner_id;
+    const workspace = store.require(ownerId, String(req.params.id), revision);
+    const quoteId = z.string().uuid().parse(req.params.quoteId);
+    const row = db
+      .prepare(
+        'SELECT data,structure FROM studio_quotes WHERE id=? AND owner_id=? AND workspace_id=?',
+      )
+      .get(quoteId, ownerId, workspace.id);
+    if (!row)
+      throw new StudioError(
+        404,
+        'This quote is unavailable. Search again for current suggestions.',
+      );
+    const scope = JSON.parse(String(row.structure)) as StoredQuoteScope;
+    const item = JSON.parse(String(row.data)) as StudioItem;
+    if (
+      scope.scope !== 'journey' ||
+      scope.direction !== direction ||
+      !scope.stopId ||
+      item.presentation?.kind !== 'flight'
+    )
+      throw new StudioError(
+        409,
+        'This quote belongs to a different journey. Search for the required outbound or return flight.',
+        'STUDIO_QUOTE_SCOPE_MISMATCH',
+      );
+    if (!Number.isFinite(Date.parse(scope.expiresAt)) || Date.parse(scope.expiresAt) <= Date.now())
+      throw new StudioError(409, 'This quote expired. Search again for a current price.');
+    requireSearchableParty(workspace, false, true);
+    requireJourneyStop(workspace, scope.stopId, direction);
+    if (workspace.items.some((selected) => selected.id === quoteId)) {
+      res.json({
+        workspace,
+        dateResolution: studioJourneyFlightDates(
+          item.presentation.flight,
+          direction,
+          workspace.stops.find((stop) => stop.id === scope.stopId),
+        ),
+      });
+      return;
+    }
+    if (scope.fingerprint !== studioQuoteFingerprint(workspace))
+      throw new StudioError(
+        409,
+        'The route, party or journey preferences changed. Search again for a matching quote.',
+      );
+    if (workspace.items.length >= 100)
+      throw new StudioError(
+        400,
+        'This proposal already has 100 services. Remove an item before adding another.',
+      );
+    const patch = studioJourneyDatePatch(
+      workspace,
+      item.presentation.flight,
+      direction,
+      scope.stopId,
+    );
+    requireActiveSession(res);
+    const updated = applyStudioPatch(
+      workspace,
+      { revision, brief: patch.brief, stops: patch.stops },
+      store.getAgency(ownerId),
+    );
+    updated.items.push({
+      ...item,
+      included: true,
+      needsReview: item.needsReview || patch.needsDateReview,
+    });
+    if (!updated.itineraryManual) updated.itinerary = null;
+    else if (updated.itinerary)
+      updated.itinerary.notes = [
+        ...new Set([
+          ...updated.itinerary.notes,
+          'A transport service changed. Review the daily plan against its schedule.',
+        ]),
+      ].slice(-20);
+    res.json({
+      workspace: store.save(ownerId, updated, revision),
+      dateResolution: patch.dateResolution,
+    });
+  });
   app.post('/api/studio/workspaces/:id/hotels/search', async (req, res) => {
     const input = hotelRequest.parse(req.body),
       ownerId = session(res).owner_id;
@@ -381,7 +660,13 @@ export function installStudioSupplierRoutes(
       );
     const item = JSON.parse(String(row.data)) as StudioItem;
     requireSearchableParty(workspace, item.kind === 'hotel');
-    const scope = JSON.parse(String(row.structure)) as { fingerprint: string; expiresAt: string };
+    const scope = JSON.parse(String(row.structure)) as StoredQuoteScope;
+    if (scope.scope === 'journey')
+      throw new StudioError(
+        409,
+        'Use the journey flight-date selection for this quote.',
+        'STUDIO_QUOTE_SCOPE_MISMATCH',
+      );
     if (scope.fingerprint !== studioQuoteFingerprint(workspace))
       throw new StudioError(
         409,

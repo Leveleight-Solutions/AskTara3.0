@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { StudioBrief, StudioItem, StudioWorkspace } from '../../shared/studio';
 import type { StudioCruiseDraft } from '../../shared/studio-cruise';
+import type { StudioJourneyDirection, StudioJourneyOption } from '../../shared/studio-journey';
 import type {
   HotelPhoto,
   StudioHotelQuote,
@@ -36,6 +37,7 @@ import {
   studioChatSearchDraft,
   type StudioChatSearchDraft,
   type StudioChatSearchKind,
+  type StudioChatJourneyContext,
 } from './studioChatOfferState';
 import './StudioChatOffers.css';
 
@@ -49,6 +51,8 @@ export interface StudioChatOffersProps {
   showActions?: boolean;
   selectedKind?: StudioChatOfferKind | null;
   selectedStopId?: string | null;
+  journeyDirection?: StudioJourneyDirection;
+  journeyOption?: StudioJourneyOption;
   onKindChange?: (kind: StudioChatOfferKind | null) => void;
   onUpdateWorkspace: (workspace: StudioWorkspace) => void;
   onSaveBrief: (brief: Partial<StudioBrief>) => Promise<StudioWorkspace | false | undefined>;
@@ -67,6 +71,14 @@ type Batch = {
   hotels?: StudioHotelSearchResult;
   flights?: StudioFlightSearchResult;
   warning: string;
+  planning?: boolean;
+  journey?: StudioChatJourneyContext;
+};
+type JourneyDateResolution = {
+  arrivalDate: string | null;
+  returnDepartureDate: string | null;
+  nights: number | null;
+  notes: string[];
 };
 
 function QuotePrice({ price, currency }: { price: number | null; currency: string }) {
@@ -277,6 +289,8 @@ export function StudioChatFlightCard({
   disabled,
   onSelect,
   onDetails,
+  selectLabel = 'Add to proposal',
+  direction,
 }: {
   flight: StudioFlightQuote;
   added: boolean;
@@ -285,8 +299,16 @@ export function StudioChatFlightCard({
   disabled: boolean;
   onSelect: () => void;
   onDetails: () => void;
+  selectLabel?: string;
+  direction?: StudioJourneyDirection;
 }) {
   const expiry = flightExpiry(flight.expiresAt);
+  const firstJourneyLabel =
+    direction === 'return'
+      ? 'Return'
+      : direction === 'outbound' || flight.journeys?.length === 2
+        ? 'Outbound'
+        : 'Requested journey';
   const review =
     added &&
     (needsReview ||
@@ -320,13 +342,17 @@ export function StudioChatFlightCard({
         {(flight.journeys || []).map((journey, journeyIndex) => (
           <section
             key={journey.id}
-            aria-label={journeyIndex === 0 ? 'Outbound flight legs' : 'Return flight legs'}
+            aria-label={
+              journeyIndex === 0
+                ? `${firstJourneyLabel === 'Requested journey' ? 'Requested' : firstJourneyLabel} flight legs`
+                : 'Return flight legs'
+            }
             className="studio-chat-offer__journey"
           >
             <div className="studio-chat-offer__eyebrow">
               <strong>
                 {journeyIndex === 0
-                  ? 'Outbound'
+                  ? firstJourneyLabel
                   : journeyIndex === 1
                     ? 'Return'
                     : `Journey ${journeyIndex + 1}`}
@@ -435,7 +461,7 @@ export function StudioChatFlightCard({
                 <Check size={14} /> Added
               </>
             ) : (
-              'Add to proposal'
+              selectLabel
             )}
           </Button>
         </div>
@@ -451,8 +477,8 @@ export function StudioChatFlightCard({
           </details>
         )}
         <small className="studio-chat-offer__muted">
-          {added ? 'Saved quote · reconfirm current fare.' : expiry.label} Times are local to each
-          airport.
+          {added ? 'Saved quote · reconfirm current fare.' : expiry.label} Times are shown as
+          supplied; confirm airport local times.
         </small>
       </div>
     </article>
@@ -543,6 +569,8 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
   const [dialog, setDialog] = useState<{
     kind: StudioChatSearchKind;
     draft: StudioChatSearchDraft;
+    planning?: boolean;
+    journey?: StudioChatJourneyContext;
   } | null>(null);
   const [batch, setBatch] = useState<Batch | null>(null);
   const [working, setWorking] = useState(false),
@@ -552,6 +580,11 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     [hotelFilter, setHotelFilter] = useState('');
   const [flightDetails, setFlightDetails] = useState<StudioFlightQuote | null>(null);
   const [now, setNow] = useState(Date.now());
+  const noticeContext = useRef('');
+  const [resolutionNotes, setResolutionNotes] = useState<{
+    contextKey: string;
+    notes: string[];
+  } | null>(null);
   const epoch = useRef(0),
     controller = useRef<AbortController | null>(null),
     lock = useRef(false),
@@ -578,7 +611,8 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     if (operationContext.current !== contextKey && lock.current) cancel();
     setBatch((current) => (current?.contextKey === contextKey ? current : null));
     setError('');
-    setNotice('');
+    setNotice((current) => (noticeContext.current === contextKey ? current : ''));
+    setResolutionNotes((current) => (current?.contextKey === contextKey ? current : null));
     setShowAll(false);
   }, [contextKey]);
   useEffect(() => {
@@ -596,14 +630,35 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     setActiveKind(kind);
     setError('');
     if (kind !== 'cruises') {
-      const draft = studioChatSearchDraft(latest.current.workspace);
+      const currentProps = latest.current;
+      const journey =
+        kind === 'flights' &&
+        (currentProps.journeyDirection || !currentProps.workspace.structureAccepted)
+          ? {
+              direction: currentProps.journeyDirection || 'outbound',
+              optionId: currentProps.journeyOption?.id || '',
+              inputKey:
+                currentProps.workspace.journeySelections?.[
+                  currentProps.journeyDirection || 'outbound'
+                ]?.inputKey || '',
+            }
+          : undefined;
+      const draft = studioChatSearchDraft(
+        currentProps.workspace,
+        journey ? { direction: journey.direction, option: currentProps.journeyOption } : undefined,
+      );
       if (
         kind === 'hotels' &&
         requestedStopId &&
         latest.current.workspace.stops.some((stop) => stop.id === requestedStopId)
       )
         draft.stopId = requestedStopId;
-      setDialog({ kind, draft });
+      setDialog({
+        kind,
+        draft,
+        planning: kind === 'flights' && !currentProps.workspace.structureAccepted,
+        journey,
+      });
     }
   }
   useEffect(() => {
@@ -618,7 +673,8 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       current ? { ...current, draft: { ...current.draft, [field]: value } } : null,
     );
   }
-  const batchCurrent = batch && batch.contextKey === contextKey;
+  const batchCurrent =
+    batch && batch.contextKey === studioChatQuoteContextKey(workspace, batch.journey);
   const batchExpired = Boolean(batch && now - batch.loadedAt >= 30 * 60000);
   function quoteExpired(quoteId: string, at = Date.now()) {
     const quotedAt = batch?.quotes.find((quote) => quote.id === quoteId)?.quotedAt;
@@ -629,16 +685,18 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       Boolean(flight && flightExpiry(flight.expiresAt, at).state === 'expired')
     );
   }
-  const disabled = busy || working || !workspace.structureAccepted;
+  const disabled = busy || working || (!workspace.structureAccepted && !batch?.planning);
   async function search(
     kind: StudioChatSearchKind,
     draft: StudioChatSearchDraft,
     offset = 0,
     base = latest.current.workspace,
+    planning = false,
+    journey?: StudioChatJourneyContext,
   ) {
     const operation = ++epoch.current,
-      key = studioChatQuoteContextKey(base);
-    operationContext.current = key;
+      key = studioChatQuoteContextKey(base, journey);
+    operationContext.current = studioChatQuoteContextKey(base);
     controller.current?.abort();
     const requestController = new AbortController();
     controller.current = requestController;
@@ -658,7 +716,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       if (requestController.signal.aborted || operation !== epoch.current) return;
       const saved = latest.current.workspace;
       const current = saved.id === base.id && saved.revision >= base.revision ? saved : base;
-      if (studioChatQuoteContextKey(current) !== key) return;
+      if (studioChatQuoteContextKey(current, journey) !== key) return;
       const body =
         kind === 'hotels'
           ? {
@@ -669,6 +727,9 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
             }
           : {
               revision: current.revision,
+              ...(planning
+                ? { stopId: draft.stopId, direction: journey?.direction || 'outbound' }
+                : {}),
               origin: draft.origin.trim().toUpperCase(),
               destination: draft.destination.trim().toUpperCase(),
               departureDate: draft.departureDate,
@@ -677,13 +738,13 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
               cabinClass: draft.cabin,
             };
       const result = await api<StudioHotelSearchResult | StudioFlightSearchResult>(
-        `/studio/workspaces/${base.id}/${kind}/search`,
+        `/studio/workspaces/${base.id}/${planning ? 'journey/flights' : kind}/search`,
         { method: 'POST', body: JSON.stringify(body), signal: requestController.signal },
       );
       if (
         requestController.signal.aborted ||
         operation !== epoch.current ||
-        key !== studioChatQuoteContextKey(latest.current.workspace)
+        key !== studioChatQuoteContextKey(latest.current.workspace, journey)
       )
         return;
       setBatch((previous) => {
@@ -741,6 +802,8 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
           hotels,
           flights: kind === 'flights' && 'flights' in result ? result : undefined,
           warning: result.warning,
+          planning,
+          journey,
         };
       });
       if (!result.quotes.length)
@@ -762,7 +825,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     event.preventDefault();
     if (!dialog || busy || lock.current) return;
     let current = latest.current.workspace;
-    if (!current.structureAccepted || !current.stops.length) {
+    if ((!current.structureAccepted || !current.stops.length) && !dialog.planning) {
       setError('Approve the route before searching supplier options.');
       return;
     }
@@ -770,6 +833,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       current,
       dialog.draft,
       dialog.kind,
+      dialog.journey,
     );
     if (missing) {
       setError(missing);
@@ -802,7 +866,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
           setError('These trip details were not saved. Try again.');
           return;
         }
-        const remaining = studioChatSearchBriefPatch(saved, draft, dialog.kind);
+        const remaining = studioChatSearchBriefPatch(saved, draft, dialog.kind, dialog.journey);
         if (remaining.error || Object.keys(remaining.patch).length) {
           setError('These trip details were not saved. Try again.');
           return;
@@ -814,7 +878,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       setDialog(null);
       lock.current = false;
       startedSearch = true;
-      await search(dialog.kind, draft, 0, current);
+      await search(dialog.kind, draft, 0, current, Boolean(dialog.planning), dialog.journey);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -829,7 +893,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
       busy ||
       lock.current ||
       !batch ||
-      batch.contextKey !== studioChatQuoteContextKey(latest.current.workspace) ||
+      batch.contextKey !== studioChatQuoteContextKey(latest.current.workspace, batch.journey) ||
       batchExpired ||
       quoteExpired(quoteId)
     )
@@ -837,7 +901,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     const operation = ++epoch.current,
       key = batch.contextKey,
       id = latest.current.workspace.id;
-    operationContext.current = key;
+    operationContext.current = studioChatQuoteContextKey(latest.current.workspace);
     const requestController = new AbortController();
     controller.current = requestController;
     lock.current = true;
@@ -847,13 +911,19 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
     try {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       if (requestController.signal.aborted || operation !== epoch.current) return;
-      let result: { workspace: StudioWorkspace };
+      let result: { workspace: StudioWorkspace; dateResolution?: JourneyDateResolution };
       try {
-        result = await api(`/studio/workspaces/${id}/quotes/${quoteId}`, {
-          method: 'POST',
-          body: JSON.stringify({ revision: latest.current.workspace.revision }),
-          signal: requestController.signal,
-        });
+        result = await api(
+          `/studio/workspaces/${id}/${batch.planning ? 'journey/' : ''}quotes/${quoteId}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              revision: latest.current.workspace.revision,
+              ...(batch.planning ? { direction: batch.journey?.direction || 'outbound' } : {}),
+            }),
+            signal: requestController.signal,
+          },
+        );
       } catch (cause) {
         if (!(cause instanceof ApiError) || cause.status !== 409) throw cause;
         const recovered = await api<{ workspace: StudioWorkspace }>(`/studio/workspaces/${id}`, {
@@ -861,25 +931,46 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
         });
         if (operation !== epoch.current || latest.current.workspace.id !== id) return;
         latest.current.onUpdateWorkspace(recovered.workspace);
-        if (studioChatQuoteContextKey(recovered.workspace) !== key) {
+        if (studioChatQuoteContextKey(recovered.workspace, batch.journey) !== key) {
           setBatch(null);
           throw cause;
         }
-        result = await api(`/studio/workspaces/${id}/quotes/${quoteId}`, {
-          method: 'POST',
-          body: JSON.stringify({ revision: recovered.workspace.revision }),
-          signal: requestController.signal,
-        });
+        result = await api(
+          `/studio/workspaces/${id}/${batch.planning ? 'journey/' : ''}quotes/${quoteId}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              revision: recovered.workspace.revision,
+              ...(batch.planning ? { direction: batch.journey?.direction || 'outbound' } : {}),
+            }),
+            signal: requestController.signal,
+          },
+        );
       }
       if (
         operation !== epoch.current ||
         requestController.signal.aborted ||
         latest.current.workspace.id !== id ||
-        studioChatQuoteContextKey(latest.current.workspace) !== key
+        studioChatQuoteContextKey(latest.current.workspace, batch.journey) !== key
       )
         return;
       latest.current.onUpdateWorkspace(result.workspace);
-      setNotice('Added to the proposal.');
+      noticeContext.current = studioChatQuoteContextKey(result.workspace);
+      const resolution = result.dateResolution;
+      setResolutionNotes(
+        resolution?.notes.length
+          ? { contextKey: noticeContext.current, notes: resolution.notes }
+          : null,
+      );
+      setNotice(
+        batch.planning
+          ? resolution && batch.journey?.direction !== 'return' && !resolution.arrivalDate
+            ? 'Schedule saved; local arrival still needs confirmation.'
+            : resolution && batch.journey?.direction === 'return' && !resolution.returnDepartureDate
+              ? 'Schedule saved; local return departure still needs confirmation.'
+              : 'Schedule saved. Review the supplied travel dates and stay nights before confirming the route.'
+          : 'Added to the proposal.',
+      );
     } catch (cause) {
       if (!requestController.signal.aborted && operation === epoch.current)
         setError((cause as Error).message);
@@ -1004,6 +1095,14 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
           {notice}
         </p>
       )}
+      {resolutionNotes && resolutionNotes.notes.length > 0 && (
+        <details className="studio-chat-offer__details">
+          <summary>Schedule review notes</summary>
+          {resolutionNotes.notes.map((note, index) => (
+            <p key={index}>{note}</p>
+          ))}
+        </details>
+      )}
       {batchCurrent && batch.hotels && (
         <div className="studio-chat-offers__results" aria-label="Hotel options">
           <div className="studio-chat-offers__result-heading">
@@ -1086,7 +1185,14 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
             <button
               type="button"
               disabled={busy || working}
-              onClick={() => setDialog({ kind: 'flights', draft: batch.query })}
+              onClick={() =>
+                setDialog({
+                  kind: 'flights',
+                  draft: batch.query,
+                  planning: batch.planning,
+                  journey: batch.journey,
+                })
+              }
             >
               Change search
             </button>
@@ -1108,6 +1214,8 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
                 }
                 onSelect={() => void select(flight.quoteId)}
                 onDetails={() => setFlightDetails(flight)}
+                selectLabel={batch.planning ? 'Use flight dates' : 'Add to proposal'}
+                direction={batch.journey?.direction}
               />
             ))}
             {!batch.flights?.flights?.length &&
@@ -1131,7 +1239,11 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
                       }
                       onClick={() => void select(quote.id)}
                     >
-                      {selected(quote.id) ? 'Added' : 'Add to proposal'}
+                      {selected(quote.id)
+                        ? 'Added'
+                        : batch.planning
+                          ? 'Use flight dates'
+                          : 'Add to proposal'}
                     </Button>
                   </div>
                 </article>
@@ -1217,7 +1329,7 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
         >
           <form onSubmit={(event) => void submit(event)} className="studio-chat-offers__search">
             <fieldset disabled={busy || working}>
-              {!workspace.structureAccepted || !workspace.stops.length ? (
+              {(!workspace.structureAccepted || !workspace.stops.length) && !dialog.planning ? (
                 <>
                   <p>Approve the destinations and dates before comparing supplier options.</p>
                   <Button
@@ -1232,6 +1344,13 @@ export default function StudioChatOffers(props: StudioChatOffersProps) {
                 </>
               ) : (
                 <>
+                  {dialog.planning && (
+                    <p className="studio-chat-offer__muted">
+                      Compare {dialog.journey?.direction === 'return' ? 'return' : 'outward'}{' '}
+                      supplier flight schedules. Choosing a quote fills travel dates; confirm stay
+                      nights separately.
+                    </p>
+                  )}
                   <p className="studio-chat-offer__muted">
                     {b.adults === null ? 'Adults to confirm' : `${b.adults} adults`}
                     {b.children === null

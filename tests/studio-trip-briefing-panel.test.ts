@@ -108,7 +108,7 @@ test('missing passport keeps sourced seasonal weather visible and leaves visa ch
   assert.ok(view.rows.every((stop) => /passport nationality/.test(stop.entryError)));
 });
 
-test('unresolved dates suppress both cached checks until the agent confirms the stay', () => {
+test('unresolved dates suppress cached full checks while allowing a fresh preliminary briefing', () => {
   const workspace = checkedWorkspace();
   workspace.clarification = {
     kind: 'stay_dates',
@@ -119,7 +119,8 @@ test('unresolved dates suppress both cached checks until the agent confirms the 
     proposedNights: 4,
   };
   const view = studioTripBriefingDisplay(workspace);
-  assert.equal(view.ready, false);
+  assert.equal(view.ready, true);
+  assert.equal(view.fresh, false);
   assert.ok(view.rows.every((stop) => !stop.entryRequirements && !stop.weather));
 });
 

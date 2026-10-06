@@ -60,6 +60,8 @@ import { StudioClientDesk } from '../components/StudioClientDesk';
 import { StudioGuidedBrief } from '../components/StudioGuidedBrief';
 import { StudioTripBriefingPanel } from '../components/StudioTripBriefingPanel';
 import { useStudioTripBriefing } from '../components/useStudioTripBriefing';
+import { studioTripBriefingReady } from '../../shared/studio-trip-briefing';
+import { studioCanvasTravelStatus } from '../components/studioCanvasTravelStatus';
 import './Studio.css';
 import { StudioCruiseImport } from '../components/StudioCruiseImport';
 import type { StudioCruiseDraft } from '../../shared/studio-cruise';
@@ -71,6 +73,9 @@ import { AuroraBackground } from '../components/AuroraBackground';
 import { StudioTripCanvas, type StudioCanvasTool } from '../components/StudioTripCanvas';
 import { StudioDayEditorDialog } from '../components/StudioDayEditorDialog';
 import { StudioChatActions } from '../components/StudioChatActions';
+import StudioJourneyPlanner from '../components/StudioJourneyPlanner';
+import type { StudioJourneyDirection, StudioJourneyOption } from '../../shared/studio-journey';
+import { studioFlightsArrangedExternally } from '../../shared/studio-assistant';
 import { StudioChatIdeas } from '../components/StudioChatIdeas';
 import { StudioClientInspiration } from '../components/StudioClientInspiration';
 import { useStudioClientInspiration } from '../components/useStudioClientInspiration';
@@ -105,6 +110,8 @@ type WorkspacePatch = {
   pricing?: StudioWorkspace['pricing'];
   itinerary?: StudioWorkspace['itinerary'];
 };
+const knownJourneyMode = (value: string | undefined): 'flight' | 'cruise' | undefined =>
+  value === 'flight' || value === 'cruise' ? value : undefined;
 const tabLabels: Record<string, string> = {
   client: 'Client & trip',
   structure: 'Route',
@@ -312,6 +319,11 @@ export default function Studio() {
   const [dayEditing, setDayEditing] = useState<number | null>(null);
   const [offerKind, setOfferKind] = useState<StudioChatOfferAction | null>(null);
   const [offerStopId, setOfferStopId] = useState<string | undefined>();
+  const [journeyDirection, setJourneyDirection] = useState<StudioJourneyDirection>('outbound');
+  const [journeyMode, setJourneyMode] = useState<'flight' | 'cruise' | undefined>();
+  const [journeyOpen, setJourneyOpen] = useState(false);
+  const [journeyOption, setJourneyOption] = useState<StudioJourneyOption | undefined>();
+  const [inlineBriefingOpen, setInlineBriefingOpen] = useState(false);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const supplierBusyRef = useRef(false);
   const [actionNotice, setActionNotice] = useState('');
@@ -354,6 +366,11 @@ export default function Studio() {
     setDayEditing(null);
     setOfferKind(null);
     setOfferStopId(undefined);
+    setJourneyDirection('outbound');
+    setJourneyMode(undefined);
+    setJourneyOpen(false);
+    setJourneyOption(undefined);
+    setInlineBriefingOpen(false);
     setActionNotice('');
     setSupplierBusy(false);
     supplierBusyRef.current = false;
@@ -466,7 +483,8 @@ export default function Studio() {
     const currentEpoch = epoch.current;
     const result = await api<{
       workspace: StudioWorkspace;
-      nextAction?: 'structure' | 'itinerary' | 'services' | 'recommendations' | 'proposal';
+      nextAction?:
+        'structure' | 'itinerary' | 'services' | 'recommendations' | 'proposal' | 'journey';
     }>(`/studio/workspaces/${current.id}${action}`, {
       method: action ? 'POST' : 'PATCH',
       body: JSON.stringify({ ...body, revision: current.revision }),
@@ -478,7 +496,8 @@ export default function Studio() {
     ) {
       latestWorkspace.current = result.workspace;
       setWorkspace(result.workspace);
-      if (result.nextAction)
+      if (result.nextAction === 'journey') setJourneyOpen(true);
+      else if (result.nextAction)
         setActiveTab(result.workspace.structureAccepted ? result.nextAction : 'structure');
       return result.workspace;
     }
@@ -522,6 +541,16 @@ export default function Studio() {
     if (submittedEpoch !== epoch.current) return;
     setPendingTurn('');
     if (!sent) setMessage(text);
+    if (
+      sent &&
+      latestWorkspace.current?.stops.length &&
+      !latestWorkspace.current.structureAccepted &&
+      /\b(?:flights?|airfare|fly|flying|cruises?|sailing)\b/i.test(text)
+    ) {
+      setJourneyOpen(true);
+      setJourneyDirection(/\b(?:return|back)\b/i.test(text) ? 'return' : 'outbound');
+      setJourneyMode(/\b(?:cruises?|sailing)\b/i.test(text) ? 'cruise' : 'flight');
+    }
     if (
       sent &&
       latestWorkspace.current?.structureAccepted &&
@@ -748,6 +777,11 @@ export default function Studio() {
         return;
       }
       setAnswerQuestion(action.questionId || '');
+    } else if (action.kind === 'journey') {
+      setJourneyDirection(action.direction || 'outbound');
+      setJourneyMode(action.mode);
+      setJourneyOpen(true);
+      setAnswerQuestion(null);
     } else if (action.kind === 'approve_route') await approveRoute();
     else if (action.kind === 'hotels' || action.kind === 'flights' || action.kind === 'cruises') {
       setOfferStopId(action.stopId);
@@ -1011,16 +1045,107 @@ export default function Studio() {
                 workspace={workspace}
                 busy={!!busy || supplierBusy || routeDirty}
                 onAction={(action) => void handleChatAction(action)}
+                onChoice={(message) => void sendToTara(message)}
                 notice={actionNotice}
               />
+              {(workspace.stops.length > 0 ||
+                workspace.brief.preferredDestination ||
+                journeyOpen) &&
+                (journeyOpen ||
+                  (!workspace.structureAccepted &&
+                    !studioFlightsArrangedExternally(workspace))) && (
+                  <StudioJourneyPlanner
+                    key={`journey:${workspace.id}`}
+                    workspace={workspace}
+                    busy={!!busy || routeDirty || supplierBusy}
+                    researchEnabled={integrations.ai}
+                    direction={journeyDirection}
+                    mode={
+                      journeyMode ||
+                      knownJourneyMode(
+                        journeyDirection === 'outbound'
+                          ? workspace.brief.outboundTransport
+                          : workspace.brief.returnTransport,
+                      )
+                    }
+                    onDirectionChange={(direction) => {
+                      setJourneyDirection(direction);
+                      setJourneyMode(undefined);
+                    }}
+                    onSaveBrief={async (brief) => {
+                      const current = latestWorkspace.current;
+                      if (!current) return false;
+                      await patch({ brief });
+                      return latestWorkspace.current || undefined;
+                    }}
+                    onUpdateWorkspace={receivedWorkspace}
+                    onBusyChange={(active) => {
+                      supplierBusyRef.current = active;
+                      setSupplierBusy(active);
+                    }}
+                    onUseSupplier={(option, direction) => {
+                      setJourneyOption(option);
+                      setJourneyDirection(direction);
+                      setOfferStopId(
+                        (direction === 'outbound' ? workspace.stops[0] : workspace.stops.at(-1))
+                          ?.id,
+                      );
+                      setOfferKind('flights');
+                    }}
+                    onOpenFlightSearch={(direction) => {
+                      setJourneyOption(undefined);
+                      setJourneyDirection(direction);
+                      setJourneyOpen(true);
+                      setOfferStopId(
+                        (direction === 'outbound' ? workspace.stops[0] : workspace.stops.at(-1))
+                          ?.id,
+                      );
+                      setOfferKind('flights');
+                    }}
+                    onOpenCruise={() => {
+                      setSelectedCruise('');
+                      openTool('structure');
+                    }}
+                    onEditRoute={() => openTool('structure')}
+                    onClose={workspace.structureAccepted ? () => setJourneyOpen(false) : undefined}
+                  />
+                )}
+              {studioTripBriefingReady(workspace) && (
+                <details
+                  className="studio-agent-briefing"
+                  open={inlineBriefingOpen}
+                  onToggle={(event) => setInlineBriefingOpen(event.currentTarget.open)}
+                >
+                  <summary>
+                    Entry & weather{' '}
+                    {tripBriefing.loading
+                      ? '· checking automatically'
+                      : `· ${studioCanvasTravelStatus(workspace).entryLabel} · ${studioCanvasTravelStatus(workspace).weatherLabel}`}
+                  </summary>
+                  {inlineBriefingOpen && !toolsOpen && (
+                    <StudioTripBriefingPanel
+                      workspace={workspace}
+                      loading={tripBriefing.loading}
+                      error={tripBriefing.error}
+                      onRefresh={tripBriefing.refresh}
+                    />
+                  )}
+                </details>
+              )}
               <StudioChatOffers
                 key={`offers:${workspace.id}`}
                 workspace={workspace}
-                busy={!!busy || routeDirty}
+                busy={!!busy || routeDirty || supplierBusy}
                 hotelsEnabled={integrations.hotels}
                 flightsEnabled={integrations.flights}
                 selectedKind={offerKind}
                 selectedStopId={offerStopId}
+                journeyDirection={
+                  journeyOption || journeyOpen || !workspace.structureAccepted
+                    ? journeyDirection
+                    : undefined
+                }
+                journeyOption={journeyOption}
                 showActions={!workspace.structureAccepted}
                 onKindChange={setOfferKind}
                 onBusyChange={(active) => {

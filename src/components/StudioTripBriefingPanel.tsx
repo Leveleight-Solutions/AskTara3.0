@@ -100,6 +100,9 @@ export function StudioTripBriefingPanel({
       workspace.tripBriefing?.checkedAt,
       ...(workspace.entryRequirements?.map((entry) => entry.checkedAt) || []),
       ...(workspace.tripBriefing?.stops.map((stop) => stop.weather.checkedAt) || []),
+      ...(workspace.tripBriefing?.stops.map(
+        (stop) => stop.preliminaryEntryRequirements?.checkedAt,
+      ) || []),
     ]
       .filter(Boolean)
       .map((value) => Date.parse(value!))
@@ -122,10 +125,10 @@ export function StudioTripBriefingPanel({
   const changed =
     oldBriefing && workspace.tripBriefing!.inputKey !== studioTripBriefingInputKey(workspace);
   const missingDetails = workspace.clarification
-    ? 'Confirm the outstanding stay dates to check this itinerary.'
+    ? 'Trip dates need confirmation. Preliminary destination checks can continue.'
     : !rows.length
-      ? 'Choose a destination and dates to see its entry and weather briefing.'
-      : 'Confirm the country and arrival/departure dates for every stop to check this itinerary.';
+      ? 'Choose a destination and its country to start automatic entry and climate checks.'
+      : 'Confirm the destination country to start its checks. Dates can be added afterwards.';
   return (
     <section
       className="studio-trip-briefing"
@@ -180,34 +183,33 @@ export function StudioTripBriefingPanel({
       )}
       <div className="studio-trip-briefing__destinations">
         {rows.map((stop) => {
-          const entry = stop.entryRequirements;
+          const entry = stop.entryRequirements || stop.preliminaryEntryRequirements;
+          const preliminary = !stop.entryRequirements && Boolean(stop.preliminaryEntryRequirements);
           const weather = stop.weather;
           const entryPending = !passport
             ? 'Passport needed'
-            : purposeMissing
-              ? 'Purpose needed'
-              : loading && ready
-                ? 'Checking'
-                : 'Not checked';
+            : loading && ready
+              ? 'Checking'
+              : 'Not checked';
           const entryGuidance = !passport
             ? 'Add the passport nationality used for this trip.'
-            : purposeMissing
-              ? 'Declare the travel purpose to check the right entry rules.'
-              : stop.entryError ||
-                (!ready
-                  ? 'Confirm this destination’s country and dates.'
-                  : 'Entry rules have not been verified for this trip.');
+            : stop.entryError ||
+              (!ready
+                ? 'Confirm this destination’s country.'
+                : 'Preliminary passport guidance is checked automatically; dates and purpose will refine it.');
           const weatherAvailable = weather && weather.kind !== 'unavailable';
           const weatherLabel =
             weather?.kind === 'forecast'
               ? 'Forecast'
               : weather?.kind === 'seasonal_outlook'
                 ? 'Seasonal outlook'
-                : weather?.kind === 'unavailable'
-                  ? 'Not available'
-                  : loading && ready
-                    ? 'Checking'
-                    : 'Not checked';
+                : weather?.kind === 'climate_overview'
+                  ? 'Destination climate'
+                  : weather?.kind === 'unavailable'
+                    ? 'Not available'
+                    : loading && ready
+                      ? 'Checking'
+                      : 'Not checked';
           const dateRange = [dateLabel(stop.startDate), dateLabel(stop.endDate)]
             .filter(Boolean)
             .join(' – ');
@@ -242,11 +244,13 @@ export function StudioTripBriefingPanel({
                   </span>
                   {entry && (
                     <span className="studio-trip-briefing__evidence-status">
-                      {entry.status === 'corroborated'
-                        ? 'Official sources checked'
-                        : entry.status === 'conflicting'
-                          ? 'Conflicting sources'
-                          : 'Unverified'}
+                      {preliminary && entry.status === 'preliminary'
+                        ? 'Conditional preliminary guidance'
+                        : entry.status === 'corroborated'
+                          ? 'Official sources checked'
+                          : entry.status === 'conflicting'
+                            ? 'Conflicting sources'
+                            : 'Unverified'}
                     </span>
                   )}
                   <p className="studio-trip-briefing__summary">
@@ -254,7 +258,9 @@ export function StudioTripBriefingPanel({
                   </p>
                   {entry && (
                     <p className="studio-trip-briefing__context">
-                      For {entry.passportCountry} passport · {workspace.brief.tripPurpose}
+                      For {entry.passportCountry} passport ·{' '}
+                      {purposeMissing ? 'purpose not confirmed' : workspace.brief.tripPurpose}
+                      {preliminary ? ' · preliminary, not eligibility confirmation' : ''}
                     </p>
                   )}
                 </div>
@@ -272,13 +278,18 @@ export function StudioTripBriefingPanel({
                     {concise(
                       weather?.summary ||
                         (!ready
-                          ? 'Confirm the travel dates for a useful weather outlook.'
+                          ? 'Confirm the destination country for climate guidance.'
                           : 'Weather guidance has not been checked yet.'),
                     )}
                   </p>
                   {weather?.kind === 'seasonal_outlook' && (
                     <p className="studio-trip-briefing__context">
                       Usual patterns, not a forecast for these dates.
+                    </p>
+                  )}
+                  {weather?.kind === 'climate_overview' && (
+                    <p className="studio-trip-briefing__context">
+                      General destination climate. Travel dates are not confirmed.
                     </p>
                   )}
                 </div>
@@ -302,7 +313,12 @@ export function StudioTripBriefingPanel({
                           ))}
                         </ul>
                       )}
-                      {entry.observations.length > 0 && (
+                      {'missingFacts' in entry && entry.missingFacts.length > 0 && (
+                        <p>
+                          <strong>Still needed:</strong> {entry.missingFacts.join(', ')}.
+                        </p>
+                      )}
+                      {'observations' in entry && entry.observations.length > 0 && (
                         <ul>
                           {entry.observations.map((observation, index) => (
                             <li key={index}>
@@ -334,7 +350,9 @@ export function StudioTripBriefingPanel({
                       <h5>
                         {weather!.kind === 'forecast'
                           ? 'Weather forecast'
-                          : 'Seasonal weather guidance'}
+                          : weather!.kind === 'climate_overview'
+                            ? 'Destination climate guidance'
+                            : 'Seasonal weather guidance'}
                       </h5>
                       <p>{weather!.summary}</p>
                       {weather!.kind === 'forecast' && weather!.days.length > 0 && (

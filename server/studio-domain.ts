@@ -57,6 +57,8 @@ export const studioBriefSchema = z
     departureDate: studioDate
       .describe('Departure from the origin. Arrival at the first destination uses startDate.')
       .optional(),
+    tripDays: z.number().int().min(1).max(366).nullable().optional(),
+    returnDepartureDate: studioDate.optional(),
     startDate: studioDate,
     endDate: studioDate,
     datesFlexible: z.boolean(),
@@ -304,7 +306,7 @@ export function qualifyStudio(
   else
     ask(
       'outboundTransport',
-      'Will the client reach the destination by flight or cruise?',
+      'How would you like to travel there: Flight or Cruise?',
       'Arrival arrangements may affect entry and port requirements.',
     );
   if (b.returnTransport && b.returnTransport !== 'undecided')
@@ -316,20 +318,29 @@ export function qualifyStudio(
       'The return can use a different transport mode.',
     );
   if (b.departureDate) fact('departureDate', 'Departure from origin', b.departureDate);
+  else if (stops.length && !b.datesFlexible)
+    ask(
+      'departureDate',
+      'When would you like to depart, or are dates flexible?',
+      'Journey options use departure from your origin; arrival comes from the selected schedule.',
+    );
+  if (b.tripDays) fact('tripDays', 'Requested trip days', String(b.tripDays));
+  if (b.returnDepartureDate) fact('returnDepartureDate', 'Return departure', b.returnDepartureDate);
+  if (b.origin) fact('origin', 'Starting from', b.origin);
+  else if (stops.length)
+    ask(
+      'origin',
+      'Where will you start this journey?',
+      'Use the starting city to compare flight or cruise routes.',
+    );
   if (b.tripPurpose && b.tripPurpose !== 'undecided')
     fact('tripPurpose', 'Travel purpose', b.tripPurpose);
   if (b.startDate) fact('startDate', 'Arrival date', b.startDate);
   else if (b.datesFlexible) fact('dates', 'Travel dates', 'Flexible');
-  else
-    ask(
-      'startDate',
-      'What is the arrival date, or are dates flexible?',
-      'Dates can stay tentative while you shape the route.',
-    );
   if (b.endDate) fact('endDate', 'Trip end', b.endDate);
   else if (stops.length && stops.every((s) => s.nights !== null))
     fact('nights', 'Stay length', `${stops.reduce((sum, s) => sum + (s.nights || 0), 0)} nights`);
-  else
+  else if (!b.tripDays)
     ask(
       'nights',
       'How many nights in each destination, or what is the end date?',
@@ -407,6 +418,8 @@ export function applyStudioPatch(
     JSON.stringify({
       origin: value.brief.origin,
       departureDate: value.brief.departureDate || '',
+      returnDepartureDate: value.brief.returnDepartureDate || '',
+      tripDays: value.brief.tripDays ?? null,
       outbound: value.brief.outboundTransport || 'undecided',
       returning: value.brief.returnTransport || 'undecided',
     });
