@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
-import { defaultStudioAgency, type StudioItem } from '../shared/studio';
+import { defaultStudioAgency, type StudioItem, type StudioWorkspace } from '../shared/studio';
 import type { StudioHotelQuote, StudioHotelSearchResult } from '../shared/studio-hotels';
 import type { StudioFlightQuote, StudioFlightSearchResult } from '../shared/studio-flights';
 import { newStudioWorkspace } from '../server/studio-store';
@@ -33,6 +33,7 @@ async function setup(
     unknownLocalArrival?: boolean;
     basic?: boolean;
     missingOrigin?: boolean;
+    signedIn?: boolean;
   } = {},
 ) {
   const workspace = newStudioWorkspace(),
@@ -373,7 +374,16 @@ async function setup(
     const path = new URL(route.request().url()).pathname,
       method = route.request().method();
     const json = (value: unknown, status = 200) => route.fulfill({ json: value, status });
-    if (path === '/api/session') return json({ user: null });
+    if (path === '/api/session')
+      return json({
+        user: options.signedIn
+          ? {
+              id: '82000000-0000-4000-8000-000000000001',
+              name: 'Synthetic supplier agent',
+              email: 'supplier-agent@example.test',
+            }
+          : null,
+      });
     if (path === '/api/config') return json({});
     if (path === '/api/catalog') return json(catalog);
     if (path === '/api/profile') return json({ profile: defaultTravelProfile });
@@ -396,6 +406,15 @@ async function setup(
     if (await fulfilSyntheticTripBriefing(route, workspace)) return;
     const body = route.request().postDataJSON() || {};
     writes.push({ path, body });
+    if (
+      options.signedIn &&
+      path === `/api/studio/workspaces/${workspace.id}/pin` &&
+      method === 'PUT'
+    ) {
+      // The real pin endpoint updates only sidebar metadata, not the workspace revision.
+      workspace.pinnedAt = body.pinned ? new Date().toISOString() : null;
+      return json({ workspace });
+    }
     if (options.missingOrigin && path === `/api/studio/workspaces/${workspace.id}/review`) {
       if (body.revision !== workspace.revision)
         return json({ error: 'Synthetic short-answer revision changed.' }, 409);
@@ -593,18 +612,24 @@ async function searchFlight(page: Page, offers: ReturnType<Page['getByRole']>) {
   await popup.getByLabel('Destination airport code', { exact: true }).fill('LHR');
   await popup.getByRole('button', { name: 'Search available flights', exact: true }).click();
 }
-async function announce(page: Page, workspace: unknown) {
-  await page.evaluate(async (value) => {
-    const path = '/src/studioEvents.ts';
-    const module = await import(path);
-    module.emitStudioWorkspaceEvent({ type: 'updated', workspace: value });
-  }, workspace);
+async function announce(page: Page, workspace: StudioWorkspace) {
+  // Refresh through the app's real sidebar event path; this also works in a compiled build.
+  const row = page.locator(`a[href="/studio/${workspace.id}"]`).locator('..');
+  await row.getByRole('button', { name: /^More options for / }).click();
+  const response = page.waitForResponse(
+    (result) =>
+      new URL(result.url()).pathname === `/api/studio/workspaces/${workspace.id}/pin` &&
+      result.request().method() === 'PUT' &&
+      result.status() === 200,
+  );
+  await page.getByRole('menuitem', { name: /^(Pin|Unpin)$/, exact: true }).click();
+  await response;
 }
 
 test('desktop chat shows real supplied hotel and mapped room photos, family stay price, and current-revision one-click inclusion after metadata changes', async ({
   page,
 }) => {
-  const state = await setup(page, { family: true });
+  const state = await setup(page, { family: true, signedIn: true });
   await page
     .getByRole('region', { name: 'Tara planning actions', exact: true })
     .getByRole('button', { name: 'Hotels in London', exact: true })
@@ -757,7 +782,7 @@ test('changed actual trip criteria abort pending supplier work and a late respon
   const heldSearch = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const state = await setup(page, { heldSearch });
+  const state = await setup(page, { heldSearch, signedIn: true });
   try {
     await searchHotel(page, state.offers);
     await expect
