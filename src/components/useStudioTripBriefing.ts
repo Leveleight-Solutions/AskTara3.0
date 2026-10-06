@@ -61,6 +61,7 @@ export function useStudioTripBriefing({
       pending.current
     )
       return;
+    if (!force && studioTripBriefingFresh(current)) return;
     const requestKey = `${current.id}:${studioTripBriefingInputKey(current)}`;
     attempted.current.add(requestKey);
     const operation = { key: requestKey, controller: new AbortController() };

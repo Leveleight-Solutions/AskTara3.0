@@ -92,20 +92,26 @@ export function StudioTripBriefingPanel({
   const [clock, setClock] = useState(Date.now);
   const now = Math.max(clock, Date.now());
   const { ready, fresh, rows } = studioTripBriefingDisplay(workspace, now);
-  // Expire an open snapshot even when no other workspace update causes a render.
+  // Recheck a small server/browser clock gap, then expire idle snapshots on time.
+  // The strict evidence guards still reject future data until its time is reached.
   useEffect(() => {
-    const expiries = [
+    const current = Date.now();
+    const checkedTimes = [
       workspace.tripBriefing?.checkedAt,
       ...(workspace.entryRequirements?.map((entry) => entry.checkedAt) || []),
       ...(workspace.tripBriefing?.stops.map((stop) => stop.weather.checkedAt) || []),
     ]
       .filter(Boolean)
-      .map((value) => Date.parse(value!) + STUDIO_TRIP_BRIEFING_FRESH_MS)
-      .filter((expiry) => Number.isFinite(expiry) && expiry > Date.now());
-    if (!expiries.length) return;
+      .map((value) => Date.parse(value!))
+      .filter(Number.isFinite);
+    const transitions = [
+      ...checkedTimes.filter((time) => time > current && time - current <= 5000),
+      ...checkedTimes.map((time) => time + STUDIO_TRIP_BRIEFING_FRESH_MS),
+    ].filter((time) => time > current);
+    if (!transitions.length) return;
     const timer = window.setTimeout(
       () => setClock(Date.now()),
-      Math.min(...expiries) - Date.now() + 1,
+      Math.min(...transitions) - current + 20,
     );
     return () => window.clearTimeout(timer);
   }, [workspace.tripBriefing, workspace.entryRequirements, clock]);

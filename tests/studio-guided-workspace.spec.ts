@@ -6,7 +6,7 @@ import { studioTripBriefingInputKey } from '../shared/studio-trip-briefing';
 import { newStudioWorkspace } from '../server/studio-store';
 import { applyStudioPatch, qualifyStudio } from '../server/studio-domain';
 import { buildStudioClientProposal } from '../server/studio-proposals';
-import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
+import { fulfilSyntheticTripBriefing, syntheticTripBriefing } from './studio-trip-briefing-fixture';
 import { choose, openStudioClientDesk as openDesk } from './ui-helpers';
 
 const agency = defaultStudioAgency();
@@ -267,13 +267,13 @@ test('dated destinations load sourced entry and seasonal weather automatically, 
   const workspace = fixture(true);
   const mocked = await mockWorkspace(page, workspace);
   await expect.poll(() => mocked.briefingWrites().length).toBe(1);
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Tokyo',
   );
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Kyoto',
   );
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic entry advice for Australia passport in Tokyo',
   );
   const tokyo = page.getByRole('article', { name: 'Tokyo travel briefing', exact: true });
@@ -303,7 +303,7 @@ test('dated destinations load sourced entry and seasonal weather automatically, 
     ),
   ).toBe(true);
   await page.reload();
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic entry advice for Pakistan passport in Tokyo',
   );
   expect(mocked.briefingWrites()).toHaveLength(2);
@@ -319,14 +319,61 @@ test('automatic weather still appears when passport information is missing', asy
   workspace.qualification = qualifyStudio(workspace, agency);
   const mocked = await mockWorkspace(page, workspace);
   await expect.poll(() => mocked.briefingWrites().length).toBe(1);
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Add the passport nationality',
   );
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Tokyo',
   );
   expect(workspace.tripBriefing?.status).toBe('partial');
   expect(workspace.tripBriefing?.stops.every((stop) => stop.entryRequirements === null)).toBe(true);
+  expect(mocked.unexpected).toEqual([]);
+});
+
+test('a near-future briefing becomes visible when the browser clock catches up without reload or duplicate research', async ({
+  page,
+}) => {
+  const now = Date.parse('2026-10-06T12:00:00Z');
+  // A paused test clock reproduces the measured production +74ms server timestamp reliably.
+  await page.clock.install({ time: new Date(now - 1000) });
+  await page.clock.pauseAt(new Date(now));
+  const workspace = fixture(true);
+  const checkedAt = new Date(now + 75).toISOString();
+  workspace.tripBriefing = syntheticTripBriefing(workspace);
+  workspace.tripBriefing.checkedAt = checkedAt;
+  for (const stop of workspace.tripBriefing.stops) {
+    stop.weather.checkedAt = checkedAt;
+    for (const source of stop.weather.sources) source.checkedAt = checkedAt;
+    if (stop.entryRequirements) {
+      stop.entryRequirements.checkedAt = checkedAt;
+      for (const source of stop.entryRequirements.sources) source.checkedAt = checkedAt;
+    }
+  }
+  workspace.entryRequirements = workspace.tripBriefing.stops.flatMap((stop) =>
+    stop.entryRequirements ? [stop.entryRequirements] : [],
+  );
+  let mainNavigations = 0;
+  page.on('request', (request) => {
+    if (request.isNavigationRequest() && request.resourceType() === 'document') mainNavigations++;
+  });
+  const mocked = await mockWorkspace(page, workspace);
+  const panel = page.getByRole('region', { name: 'Travel briefing', exact: true });
+  await expect(panel).toContainText('This briefing needs a refresh.');
+  await expect(panel).not.toContainText('Synthetic seasonal outlook for Tokyo');
+  await expect(panel).not.toContainText('Synthetic entry advice for Australia passport in Tokyo');
+  await page.clock.runFor(74);
+  await expect(panel).toContainText('This briefing needs a refresh.');
+  // Let the catch-up timer's small scheduling cushion pass as well.
+  await page.clock.runFor(22);
+  await expect(panel).toContainText('Synthetic seasonal outlook for Tokyo');
+  await expect(panel).toContainText('Synthetic entry advice for Australia passport in Tokyo');
+  await expect(panel).not.toContainText('This briefing needs a refresh.');
+  // The hook must recheck freshness at dispatch instead of refetching from its earlier render.
+  await page.clock.runFor(1300);
+  expect(mocked.briefingWrites()).toEqual([]);
+  expect(mocked.writes).toEqual([]);
+  expect(workspace.revision).toBe(1);
+  expect(mainNavigations).toBe(1);
   expect(mocked.unexpected).toEqual([]);
 });
 
@@ -347,7 +394,7 @@ test('a briefing finishing during route edits preserves the draft and saves with
       page.getByRole('button', { name: 'Save route changes', exact: true }),
     ).toBeVisible();
     release();
-    await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+    await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
       'Synthetic seasonal outlook for Tokyo',
     );
     await expect(notes).toHaveValue('Keep this unsaved route note.');
@@ -373,7 +420,7 @@ test('one revision conflict retries the automatic briefing against the refreshed
   const workspace = fixture(true);
   const mocked = await mockWorkspace(page, workspace, { firstBriefingConflict: true });
   await expect.poll(() => mocked.briefingWrites().length).toBe(2);
-  await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+  await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Tokyo',
   );
   expect(mocked.briefingWrites().map(({ body }) => body.revision)).toEqual([1, 2]);
@@ -491,7 +538,7 @@ test('a foreground review cancels pending research and automatic checks resume o
     expect((await reviewResponse).status()).toBe(200);
     await expect(page.getByRole('log')).toContainText('Foreground review saved the planning note.');
     await expect.poll(() => mocked.briefingWrites().length).toBe(2);
-    await expect(page.getByTestId('studio-travel-briefing')).toContainText(
+    await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
       'Synthetic seasonal outlook for Tokyo',
     );
     expect(mocked.briefingWrites().map(({ body }) => body.revision)).toEqual([1, 2]);
