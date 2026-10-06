@@ -72,7 +72,10 @@ export function resolveStudioClarification(
     /^(?:yes|yep|yeah|sure|ok(?:ay)?|correct|agreed|please do|go ahead|use (?:those|the) dates)(?:[,!\s]+(?:please|thanks|that['’]s right))?[.!\s]*$/i.test(
       answer,
     );
-  const confirmsNights = /^(?:keep|use|make it)\s+(?:the\s+)?(\d+)\s+nights?[.!\s]*$/i.exec(answer);
+  const durationAnswer = answer.replace(/^(?:keep|use|make it)\s+(?:the\s+)?/i, '');
+  const confirmsNights = /^\s*(?:\d+|[a-z]+(?:[ -][a-z]+)*)\s+nights?[.!\s]*$/i.test(durationAnswer)
+    ? requestedStudioNights(durationAnswer, stop.name, stop.nights, true)
+    : undefined;
   if (
     confirmsDates &&
     workspace.messages.findLast((entry) => entry.role === 'assistant')?.content !==
@@ -91,8 +94,9 @@ export function resolveStudioClarification(
     [pending.statedNights, pending.proposedNights].includes(explicitNights);
   const nights = confirmsDates
     ? pending.proposedNights
-    : confirmsNights && [pending.statedNights, pending.proposedNights].includes(+confirmsNights[1])
-      ? +confirmsNights[1]
+    : confirmsNights !== undefined &&
+        [pending.statedNights, pending.proposedNights].includes(confirmsNights)
+      ? confirmsNights
       : explicitChoice
         ? explicitNights
         : undefined;

@@ -1,3 +1,4 @@
+import { fulfilSyntheticCandidateEntries } from './studio-candidate-entry-fixture';
 import { expect, test, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
@@ -145,12 +146,13 @@ async function mock(
     writes.push({ path, body });
     if (path.endsWith('/trip-briefing') && options.briefingGate) await options.briefingGate;
     if (await fulfilSyntheticTripBriefing(route, workspace)) return;
+    if (await fulfilSyntheticCandidateEntries(route, workspace)) return;
     if (path.endsWith('/destinations/research')) {
       workspace.destinationResearch = {
-        generatedAt: new Date().toISOString(),
+        checkedAt: new Date().toISOString(),
         inputKey: 'synthetic-inspiration',
-        passportNationality: 'AU',
-        warnings: [],
+        historyUsed: true,
+        notes: [],
         candidates: [
           {
             destination: 'Lisbon',
@@ -158,11 +160,13 @@ async function mock(
             countryCode: 'PT',
             reason: 'Gardens and vegetarian food fit the supplied preferences.',
             suggestedDays: 5,
-            status: 'caution',
+            status: 'checked',
             recommendable: true,
             sources: [],
-            seasonalNotes: '',
-            travelAdvice: '',
+            thingsToDo: [],
+            conditions: '',
+            seasonalGuidance: '',
+            advisory: '',
           },
         ],
       } as any;
@@ -396,10 +400,10 @@ test('unverified history-based ideas remain visible for review and cannot be cho
 }) => {
   const workspace = fixture(false);
   workspace.destinationResearch = {
-    generatedAt: new Date().toISOString(),
+    checkedAt: new Date().toISOString(),
     inputKey: 'unverified-inspiration',
-    passportNationality: 'AU',
-    warnings: [],
+    historyUsed: true,
+    notes: [],
     candidates: [
       {
         destination: 'Coimbra',
@@ -407,11 +411,13 @@ test('unverified history-based ideas remain visible for review and cannot be cho
         countryCode: 'PT',
         reason: 'Quiet gardens fit the supplied travel feedback.',
         suggestedDays: 5,
-        status: 'unverified',
+        status: 'unknown',
         recommendable: false,
         sources: [],
-        seasonalNotes: '',
-        travelAdvice: '',
+        thingsToDo: [],
+        conditions: '',
+        seasonalGuidance: '',
+        advisory: '',
       },
     ],
   } as any;

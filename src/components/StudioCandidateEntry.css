@@ -1,0 +1,53 @@
+.studio-destination-idea {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gray-a5);
+  border-radius: 10px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--color-panel-solid);
+}
+.studio-destination-ideas .studio-destination-idea > button {
+  border: 0;
+  border-radius: 0;
+  flex: 1;
+  width: 100%;
+  background: transparent;
+}
+.studio-destination-idea.studio-destination-needs-review > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+}
+.studio-destination-idea.studio-destination-needs-review > button {
+  font-size: 10px;
+  color: var(--accent-11);
+}
+.studio-candidate-entry {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.studio-destination-idea > .studio-candidate-entry {
+  border-top: 1px solid var(--gray-a4);
+  padding: 9px 12px;
+}
+.studio-candidate-entry > summary {
+  cursor: pointer;
+  color: var(--amber-11);
+  font-weight: 500;
+}
+.studio-candidate-entry[data-entry-state='preliminary'] > summary {
+  color: var(--accent-11);
+}
+.studio-candidate-entry > div {
+  color: var(--gray-11);
+  overflow-wrap: anywhere;
+}
+.studio-candidate-entry p {
+  margin: 8px 0;
+}
+.studio-candidate-entry ul {
+  margin: 8px 0;
+  padding-left: 17px;
+}

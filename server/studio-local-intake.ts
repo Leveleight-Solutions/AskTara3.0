@@ -7,6 +7,8 @@ import {
   assertStudioRouteGrounding,
   groundedStudioDates,
   requestedStudioNights,
+  studioAnsweringField,
+  studioCountryRouteRefinement,
 } from './studio-grounding.ts';
 import {
   prepareStudioStayClarification,
@@ -39,8 +41,15 @@ function nextQuestion(workspace: StudioWorkspace, agency: StudioAgency) {
     'hotelStandard',
   ];
   const question = priority.map((id) => questions.find((entry) => entry.id === id)).find(Boolean);
-  if (question?.id === 'nights' && workspace.stops.length === 1)
-    return { ...question, label: `How many nights would you like in ${workspace.stops[0].name}?` };
+  if (question?.id === 'nights') {
+    const stop = workspace.stops.find((entry) => entry.nights === null);
+    if (stop)
+      return {
+        ...question,
+        label: `How many nights would you like in ${stop.name}?`,
+        stopId: stop.id,
+      };
+  }
   return question || questions[0];
 }
 
@@ -79,6 +88,8 @@ function changedDetails(before: StudioWorkspace, after: StudioWorkspace) {
     facts.push(
       `${normalizeStudioCountry(b.passportNationality)?.name || b.passportNationality} passport`,
     );
+  if (a.tripPurpose !== b.tripPurpose && b.tripPurpose !== 'undecided')
+    facts.push(`travel purpose: ${b.tripPurpose}`);
   if (a.tripType !== b.tripType && b.tripType !== 'undecided')
     facts.push(b.tripType === 'single' ? 'single destination' : 'multiple destinations');
   if (a.outboundTransport !== b.outboundTransport && b.outboundTransport !== 'undecided')
@@ -270,7 +281,7 @@ function readBrief(
   include('children', /\b(?:child(?:ren)?|kids?|infants?|adults only|all adults|only adults)\b/i);
   include(
     'tripPurpose',
-    /\b(?:business|bussiness|tourism|holiday|vacation|leisure|study|studying|employment|paid work|conference)\b/i,
+    /\b(?:business|bussiness|tourism|holiday|vacation|honeymoon|leisure|study|studying|employment|paid work|conference)\b/i,
   );
   include('childAges', /\b(?:ages?|aged)\b/i);
   if (
@@ -379,7 +390,13 @@ export function localStudioReview(
   const before = structuredClone(workspace);
   const pending = nextQuestion(workspace, agency);
   const lastReply = workspace.messages.findLast((entry) => entry.role === 'assistant')?.content;
-  const answering = pending && lastReply?.endsWith(pending.label) ? pending.id : undefined;
+  const answering =
+    pending &&
+    (lastReply?.endsWith(pending.label) ||
+      (['adults', 'children', 'childAges', 'budget', 'startDate'].includes(pending.id) &&
+        studioAnsweringField({ messages: workspace.messages, brief: workspace.brief }, pending.id)))
+      ? pending.id
+      : undefined;
   const useImports =
     (!workspace.brief.request && !workspace.stops.length) ||
     /\b(?:review|read|use|update|build|plan)\b.{0,60}\b(?:import(?:ed)?|source|document|client information)\b/i.test(
@@ -394,6 +411,24 @@ export function localStudioReview(
   for (const { text, answering: context } of sources) {
     brief = readBrief(brief, text, context, context ? workspace.messages : []);
     const mentions = readMentions(text, stops);
+    if (
+      !mentions.length &&
+      stops.length === 1 &&
+      normalizeStudioCountry(stops[0].name) &&
+      /\bthen\b|→|->/i.test(text)
+    ) {
+      const sequence = text.split(/\s+(?:then|and)\s+|\s*(?:→|->)\s*/i).map(contextualPlace);
+      if (sequence.length > 1 && sequence.every(Boolean))
+        mentions.push(...sequence.map((place, index) => ({ ...place!, index, end: index + 1 })));
+    }
+    if (
+      studioCountryRouteRefinement(
+        stops,
+        mentions.map((entry) => ({ ...entry, nights: entry.nights ?? null })),
+        text,
+      )
+    )
+      stops = [];
     if (!mentions.length && !stops.length && context === 'route') {
       const place = contextualPlace(text);
       if (place) mentions.push({ ...place, index: 0, end: text.length });
@@ -436,10 +471,21 @@ export function localStudioReview(
       const shortNights = text.match(/^\s*(\d{1,3})\s+nights?\s*(?:please)?[.!]?\s*$/i);
       if (stops.length === 1 && shortNights && +shortNights[1] <= 120)
         stops[0].nights = +shortNights[1];
-      const contextualNights =
-        context === 'nights' && text.match(/^\s*(\d{1,3})\s*(?:please)?[.!]?\s*$/i);
-      if (stops.length === 1 && contextualNights && +contextualNights[1] <= 120)
-        stops[0].nights = +contextualNights[1];
+      const targetedStop =
+        context === 'nights' && pending && 'stopId' in pending
+          ? stops.find((entry) => entry.id === pending.stopId)
+          : undefined;
+      if (targetedStop && /^\s*(?:[\p{L}\s-]+|\d{1,3})(?:\s+nights?)?[.!]?\s*$/iu.test(text)) {
+        const nights = requestedStudioNights(
+          text,
+          targetedStop.name,
+          targetedStop.nights,
+          true,
+          true,
+        );
+        if (nights !== undefined && Number.isInteger(nights) && nights >= 0 && nights <= 120)
+          targetedStop.nights = nights;
+      }
       // Combined replies can supply duration together with passport, dates and transport.
       // Reuse route grounding so another city's nights or a relative adjustment cannot leak in.
       const durations = [...text.matchAll(/\b(\d{1,3})\s+nights?\b/gi)];
@@ -487,6 +533,8 @@ export function localStudioReview(
     nextQuestion(workspace, agency)?.label ||
     'You can review and accept the route to continue to services.';
   if (changes.length) return `Noted: ${changes.slice(0, 4).join('; ')}. ${next}`;
+  if (answering === 'children' && /^\s*(?:yes|yep|yeah)[.!]?\s*$/i.test(message))
+    return 'How many children are travelling? I’ll also need their ages.';
   if (greeting.test(message.trim())) return `Hi! Let’s put together your client’s trip. ${next}`;
   if (thanks.test(message.trim())) return `You’re welcome. ${next}`;
   if (acknowledgement.test(message.trim())) return `All right. ${next}`;

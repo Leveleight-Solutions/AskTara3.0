@@ -32,6 +32,7 @@ import { studioProposalMoney } from '../../shared/studio-proposals';
 import { api } from '../api';
 import { StudioProposalDocument } from '../pages/StudioProposal';
 import { studioProposalPreviewKey, studioProposalPricingKey } from './studioProposalDraft';
+import { readStudioImage } from './readStudioImage';
 
 /** `<fieldset disabled>` is kept for its native disable cascade; this strips the UA chrome. */
 const bareFieldset = { border: 0, margin: 0, padding: 0, minInlineSize: 'auto' as const };
@@ -49,6 +50,7 @@ export function AgencySettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
   useEffect(() => setDraft(agency), [agency]);
   const update = <K extends keyof StudioAgency>(key: K, value: StudioAgency[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -56,6 +58,7 @@ export function AgencySettings({
   };
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (busy || logoBusy) return;
     setBusy(true);
     setError('');
     try {
@@ -81,16 +84,14 @@ export function AgencySettings({
     }
   }
   async function logo(file: File | undefined) {
-    if (!file) return;
+    if (!file || busy || logoBusy) return;
     if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 5 * 1024 * 1024) {
       setError('Choose a PNG or JPEG logo smaller than 5 MB.');
       return;
     }
-    const url = URL.createObjectURL(file);
+    setLogoBusy(true);
     try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
+      const image = await readStudioImage(file);
       const scale = Math.min(1, 600 / image.width, 240 / image.height);
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(image.width * scale));
@@ -107,7 +108,7 @@ export function AgencySettings({
     } catch (cause) {
       setError((cause as Error).message || 'Unable to read this logo.');
     } finally {
-      URL.revokeObjectURL(url);
+      setLogoBusy(false);
     }
   }
   return (
@@ -115,7 +116,7 @@ export function AgencySettings({
       <Flex direction="column" gap="4">
         <Card size="2">
           <Reset>
-            <fieldset disabled={busy} style={bareFieldset}>
+            <fieldset disabled={busy || logoBusy} style={bareFieldset}>
               <Reset>
                 <legend>
                   <Heading as="h3" size="3" mb="3">
@@ -258,7 +259,7 @@ export function AgencySettings({
         </Card>
         <Card size="2">
           <Reset>
-            <fieldset disabled={busy} style={bareFieldset}>
+            <fieldset disabled={busy || logoBusy} style={bareFieldset}>
               <Reset>
                 <legend>
                   <Heading as="h3" size="3" mb="3">
@@ -340,7 +341,7 @@ export function AgencySettings({
           </Callout.Root>
         )}
         <Box>
-          <Button size="3" loading={busy} disabled={busy}>
+          <Button size="3" loading={busy} disabled={busy || logoBusy}>
             <Save size={15} />
             {busy ? 'Saving…' : 'Save agency settings'}
           </Button>

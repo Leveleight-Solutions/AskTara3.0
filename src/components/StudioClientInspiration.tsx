@@ -1,7 +1,11 @@
 import { MapPin, Sparkles, UserRound } from 'lucide-react';
 import type { StudioWorkspace } from '../../shared/studio';
 import type { StudioClientProfile } from '../../shared/studio-clients';
-import type { StudioDestinationCandidate } from '../../shared/studio-travel-research';
+import {
+  studioDestinationResearchFresh,
+  type StudioDestinationCandidate,
+} from '../../shared/studio-travel-research';
+import { StudioCandidateEntry } from './StudioCandidateEntry';
 
 export function StudioClientInspiration({
   workspace,
@@ -23,6 +27,7 @@ export function StudioClientInspiration({
   onReview: () => void;
 }) {
   const candidates = workspace.destinationResearch?.candidates || [];
+  const currentResearch = studioDestinationResearchFresh(workspace.destinationResearch);
   const preferences = [...workspace.brief.interests, ...(workspace.brief.foodPreferences || [])]
     .filter(Boolean)
     .slice(0, 5);
@@ -70,33 +75,40 @@ export function StudioClientInspiration({
           {candidates.length ? (
             <div className="studio-destination-ideas">
               {candidates.slice(0, 3).map((candidate) =>
-                candidate.recommendable && candidate.status !== 'blocked' ? (
-                  <button
+                candidate.recommendable && candidate.status !== 'blocked' && currentResearch ? (
+                  <article
                     key={`${candidate.destination}:${candidate.countryCode}`}
-                    disabled={busy}
-                    onClick={() => onChoose(candidate)}
+                    className="studio-destination-idea"
                   >
-                    <MapPin size={17} />
-                    <strong>{candidate.destination}</strong>
-                    <span>{candidate.reason}</span>
-                    <small>{candidate.suggestedDays} suggested days · Choose</small>
-                  </button>
+                    <button disabled={busy} onClick={() => onChoose(candidate)}>
+                      <MapPin size={17} />
+                      <strong>{candidate.destination}</strong>
+                      <span>{candidate.reason}</span>
+                      <small>{candidate.suggestedDays} suggested days · Choose</small>
+                    </button>
+                    <StudioCandidateEntry workspace={workspace} candidate={candidate} />
+                  </article>
                 ) : (
                   <article
                     key={`${candidate.destination}:${candidate.countryCode}`}
-                    className="studio-destination-needs-review"
+                    className="studio-destination-idea studio-destination-needs-review"
                   >
-                    <MapPin size={17} />
-                    <strong>{candidate.destination}</strong>
-                    <span>{candidate.reason}</span>
-                    <small>
-                      {candidate.status === 'blocked'
-                        ? 'Not recommended · advice warning'
-                        : 'Current advice needs review'}
-                    </small>
+                    <div>
+                      <MapPin size={17} />
+                      <strong>{candidate.destination}</strong>
+                      <span>{candidate.reason}</span>
+                      <small>
+                        {candidate.status === 'blocked'
+                          ? 'Not recommended · advice warning'
+                          : currentResearch
+                            ? 'Current advice needs review'
+                            : 'Travel advice needs refreshing'}
+                      </small>
+                    </div>
                     <button type="button" disabled={busy} onClick={onReview}>
                       Review travel advice
                     </button>
+                    <StudioCandidateEntry workspace={workspace} candidate={candidate} />
                   </article>
                 ),
               )}

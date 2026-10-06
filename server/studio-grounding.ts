@@ -67,28 +67,39 @@ const actualSources = (evidence: string, message: string, documents: string[]) =
   return [message, ...documents].filter((source) => normal(source).includes(literal));
 };
 
+const affirmativeClause = (text: string, index: number) => {
+  const prefix = (
+    text
+      .slice(0, index)
+      .split(/[,;.!?\n]|\bbut\b/i)
+      .at(-1) || ''
+  ).replace(/\b(?:no|without)\s+(?:children|kids|infants)\b/gi, '');
+  return !/\b(?:not|never|no|without|maybe|possibly|might|if|instead of|rather than|considering)\b/i.test(
+    prefix,
+  );
+};
+
 function count(
   source: string,
   field: 'adults' | 'children',
   allowBare: boolean,
 ): number | undefined {
   const text = numeric(source);
-  if (
-    field === 'children' &&
-    /\b(?:no children|no kids|without children|without kids|adults only|all adults|only adults)\b/i.test(
-      text,
-    )
-  )
-    return 0;
-  if (
-    field === 'adults' &&
-    /\b(?:travell?ing solo|solo traveller|just me|one adult)\b/i.test(source)
-  )
-    return 1;
+  const declarations: { index: number; value: number }[] = [];
+  const shorthand =
+    field === 'children'
+      ? /\b(?:no children|no kids|without children|without kids|adults only|all adults|only adults)\b/gi
+      : /\b(?:travell?ing solo|solo traveller|just me)\b/gi;
+  for (const match of text.matchAll(shorthand))
+    if (affirmativeClause(text, match.index))
+      declarations.push({ index: match.index, value: field === 'children' ? 0 : 1 });
   const label = field === 'adults' ? 'adults?' : '(?:child(?:ren)?|kids?|infants?)';
-  const matches = [...text.matchAll(new RegExp(`\\b(\\d{1,3})\\s*${label}\\b`, 'gi'))];
-  const value = matches.length
-    ? Number(matches.at(-1)![1])
+  const matches = [...text.matchAll(new RegExp(`\\b(\\d{1,3})\\s*${label}\\b`, 'gi'))].filter(
+    (match) => affirmativeClause(text, match.index),
+  );
+  declarations.push(...matches.map((match) => ({ index: match.index, value: Number(match[1]) })));
+  const value = declarations.length
+    ? declarations.sort((left, right) => left.index - right.index).at(-1)!.value
     : allowBare && bareNumber(source)
       ? Number(text.match(/\d+/)?.[0])
       : undefined;
@@ -581,6 +592,11 @@ function answersField(fields: Set<string>, field: string) {
   return fields.size === 1;
 }
 
+/** A short answer is actionable only for one unambiguous recent question. */
+export function studioAnsweringField(context: StudioGroundingContext, field: string) {
+  return answersField(questionFields(context, context.brief), field);
+}
+
 /** Apply only source-grounded critical facts. The model chooses fields; it cannot invent their values. */
 export function groundedStudioBrief(
   current: StudioBrief,
@@ -843,7 +859,17 @@ export function groundedStudioBrief(
     }
     if (applicable.size === 1) next[field] = [...applicable][0];
   }
-  for (const fact of valid.filter((entry) => entry.field === 'tripPurpose')) {
+  const purposeFacts = valid.filter((entry) => entry.field === 'tripPurpose');
+  // A one-word purpose is still an explicit declaration when the model only
+  // places it in prose/context. It must not leave entry research with no purpose.
+  if (
+    /^(?:honeymoon|tourism|holiday|vacation|business trip|study trip|employment)[.!\s]*$/i.test(
+      message.trim(),
+    ) &&
+    !purposeFacts.some((fact) => fact.sources[0] === message)
+  )
+    purposeFacts.push({ field: 'tripPurpose', evidence: message, sources: [message] });
+  for (const fact of purposeFacts) {
     const source = fact.sources[0];
     const candidates = new Set<NonNullable<StudioBrief['tripPurpose']>>();
     for (const clause of source.split(/[.,;\n]|\b(?:and|but)\b/i)) {
@@ -902,7 +928,8 @@ export function groundedStudioBrief(
     const source = fact.sources[0];
     const allowBare = bareNumber(message) && contextual(source, fact.field);
     const value =
-      count(fact.evidence, fact.field, allowBare) ??
+      // The verbatim excerpt may omit "not" or "maybe" immediately before it.
+      // Confirm counts from their complete source clause, never a clipped excerpt.
       count(source, fact.field, allowBare) ??
       (fact.field === 'children' &&
       contextual(source, 'children') &&
@@ -1025,13 +1052,15 @@ export function groundedStudioBrief(
 type GroundingStop = Pick<StudioStop, 'name' | 'country' | 'nights'> & Partial<StudioStop>;
 const placeNormal = (name: string) => normal(name).replace(/[.,]/g, '').replace(/\s+/g, ' ');
 const countryNormal = (value: string) =>
-  ({
+  normalizeStudioCountry(value)?.code ||
+  {
     uk: 'united kingdom',
     'u k': 'united kingdom',
     usa: 'united states',
     us: 'united states',
     'united states of america': 'united states',
-  })[placeNormal(value)] || placeNormal(value);
+  }[placeNormal(value)] ||
+  placeNormal(value);
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function containsPlace(text: string, name: string) {
   const locality = (value: string) =>
@@ -1040,6 +1069,31 @@ function containsPlace(text: string, name: string) {
     `(?:^|[^\\p{L}\\p{N}])${escape(locality(name))}(?=$|[^\\p{L}\\p{N}])`,
     'iu',
   ).test(locality(text));
+}
+
+/** A country-only idea may be refined to literal cities, never model-chosen cities. */
+export function studioCountryRouteRefinement(
+  current: GroundingStop[],
+  proposed: GroundingStop[],
+  message: string,
+) {
+  if (current.length !== 1 || current[0].nights !== null || !proposed.length) return false;
+  const country = normalizeStudioCountry(current[0].name);
+  if (
+    !country ||
+    (current[0].country && normalizeStudioCountry(current[0].country)?.code !== country.code)
+  )
+    return false;
+  if (
+    proposed.some(
+      (stop) =>
+        normalizeStudioCountry(stop.name) ||
+        (stop.country && normalizeStudioCountry(stop.country)?.code !== country.code),
+    )
+  )
+    return false;
+  const names = proposed.map((stop) => escape(stop.name)).join('\\s*(?:then|and|→|->|,)\\s*');
+  return new RegExp(`^\\s*(?:visit\\s+|to\\s+)?${names}[.!]?\\s*$`, 'iu').test(message);
 }
 function sameRoute(current: GroundingStop[], proposed: GroundingStop[]) {
   return (
@@ -1133,12 +1187,27 @@ export function requestedStudioNights(
       ),
     ) ||
     text.match(new RegExp(`\\badd\\s+(\\d+)\\s+nights?\\s+(?:to|in)\\s+${place}\\b`, 'i')) ||
-    text.match(new RegExp(`${place}\\s+(?:for\\s+)?(\\d+)\\s+more\\s+nights?\\b`, 'i'));
+    text.match(new RegExp(`${place}\\s+(?:for\\s+)?(\\d+)\\s+more\\s+nights?\\b`, 'i')) ||
+    (singleStop
+      ? text.match(
+          /^\s*(?:add\s+)?(\d+)\s+(?:more|extra|additional)\s+nights?\s*(?:please)?[.!]?\s*$/i,
+        ) ||
+        text.match(
+          /^\s*(?:add|extend|lengthen)(?:\s+(?:it|the stay))?\s+(?:by\s+)?(\d+)\s+nights?\s*(?:please)?[.!]?\s*$/i,
+        )
+      : null);
   if (add && current !== null) return current + Number(add[1]);
   const subtract =
     text.match(
       new RegExp(`\\bshorten\\b[^.;\\n]{0,35}${place}\\s+by\\s+(\\d+)\\s+nights?\\b`, 'i'),
-    ) || text.match(new RegExp(`\\bremove\\s+(\\d+)\\s+nights?\\s+from\\s+${place}\\b`, 'i'));
+    ) ||
+    text.match(new RegExp(`\\bremove\\s+(\\d+)\\s+nights?\\s+from\\s+${place}\\b`, 'i')) ||
+    (singleStop
+      ? text.match(/^\s*(\d+)\s+(?:less|fewer)\s+nights?\s*(?:please)?[.!]?\s*$/i) ||
+        text.match(
+          /^\s*(?:remove|shorten)(?:\s+(?:it|the stay))?\s+(?:by\s+)?(\d+)\s+nights?\s*(?:please)?[.!]?\s*$/i,
+        )
+      : null);
   if (subtract && current !== null) return current - Number(subtract[1]);
   const absolute =
     text.match(
@@ -1203,10 +1272,18 @@ export function assertStudioRouteGrounding(
     [...asked].every((field) =>
       ['nights', 'startDate', 'endDate', 'datesFlexible'].includes(field),
     );
+  const lastQuestion =
+    (
+      messages.findLast((entry) => entry.role === 'assistant')?.content.match(/[^.!?]+\?/g) || []
+    ).at(-1) || '';
+  const questionStops = current.filter((stop) => containsPlace(lastQuestion, stop.name));
+  const targetedNightsStop =
+    answeringNights && questionStops.length === 1 ? questionStops[0] : undefined;
   const ideas =
     /\b(?:suggest|recommend|choose|pick|design)\b.{0,65}\b(?:route|destinations?|cities|places|itinerary)\b|\b(?:route ideas|where should (?:we|they|i) go|surprise me)\b/i.test(
       message,
     );
+  const countryRefinement = studioCountryRouteRefinement(current, proposed, message);
   const change =
     /\b(?:change|replace|swap|move|reorder|reverse|add|remove|drop|skip|extend|shorten|stay|nights?|arriv(?:e|al)|depart|train|rail|fly|flight|neighbourhood|neighborhood)\b/i.test(
       message,
@@ -1220,6 +1297,7 @@ export function assertStudioRouteGrounding(
     !change &&
     !ideas &&
     !sourceChange &&
+    !countryRefinement &&
     !readDates(message, context).length &&
     !(answeringNights && bareNumber(message))
   )
@@ -1243,13 +1321,14 @@ export function assertStudioRouteGrounding(
     const old = current.find((previous) => placeNormal(previous.name) === placeNormal(entry.name));
     if (!ideas && (old ? old.nights !== entry.nights : entry.nights !== null)) {
       const singleStop = proposed.length === 1 && current.length <= 1;
+      const targetedAnswer = Boolean(targetedNightsStop && old?.id === targetedNightsStop.id);
       const expected =
         requestedStudioNights(
           source,
           entry.name,
           old?.nights ?? null,
-          singleStop,
-          answeringNights,
+          singleStop || targetedAnswer,
+          answeringNights && (singleStop || targetedAnswer),
         ) ??
         // A single stay's explicitly supplied arrival/return dates establish its
         // length. Never use stale dates during an unrelated turn, or override an
@@ -1311,7 +1390,7 @@ export function assertStudioRouteGrounding(
       )
         fail();
     const relativeNights =
-      /\b(?:extend|lengthen|shorten)\b[^.;\n]{0,60}\bby\s+\w+\s+nights?\b|\b(?:add|remove)\s+\w+\s+nights?\s+(?:to|in|from)\b|\bmore nights?\b/i.test(
+      /\b(?:extend|lengthen|shorten)\b[^.;\n]{0,60}\bby\s+\w+\s+nights?\b|\b(?:add|remove)\s+\w+\s+nights?\b|\b(?:more|extra|additional|less|fewer) nights?\b/i.test(
         source,
       );
     const explicit = relativeNights ? [] : routeEntries(source);
@@ -1405,7 +1484,7 @@ export function assertStudioRouteGrounding(
         )
       )
         fail();
-      if (current.length && !/\b(?:change|new|start over)\b/i.test(message)) {
+      if (current.length && !countryRefinement && !/\b(?:change|new|start over)\b/i.test(message)) {
         const retained = current.filter((old) =>
           proposed.some((entry) => placeNormal(entry.name) === placeNormal(old.name)),
         );

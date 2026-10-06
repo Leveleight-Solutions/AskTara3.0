@@ -30,6 +30,8 @@ import {
   researchStudioDestinations,
   checkStudioEntryRequirements,
   studioDestinationResearchInputKey,
+  studioCandidateEntryResearchInputKey,
+  researchStudioCandidateEntryRequirements,
 } from './studio-travel-research.ts';
 import { buildStudioAssistantActions } from '../shared/studio-assistant.ts';
 import { evidenceUrl } from './agents/openai.ts';
@@ -46,6 +48,7 @@ import {
   studioTripBriefingInputKey,
   type StudioTripBriefing,
 } from '../shared/studio-trip-briefing.ts';
+import { studioDestinationResearchFresh } from '../shared/studio-travel-research.ts';
 
 type Session = { id: string; owner_id: string; user_id: string | null };
 type Dependencies = {
@@ -100,6 +103,14 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       promise: ReturnType<typeof researchStudioTripBriefing>;
     }
   >();
+  const candidateEntryJobs = new Map<
+    string,
+    {
+      controller: AbortController;
+      consumers: number;
+      promise: ReturnType<typeof researchStudioCandidateEntryRequirements>;
+    }
+  >();
   // A prior process cannot safely complete a model operation after a restart.
   db.prepare("UPDATE studio_requests SET status='failed' WHERE status='pending'").run();
   const controls = {
@@ -125,6 +136,23 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
               'STUDIO_BRIEFING_STALE',
             ),
           );
+      const candidateKey = workspace.destinationResearch
+        ? studioCandidateEntryResearchInputKey(workspace, workspace.destinationResearch)
+        : '';
+      for (const run of active.values())
+        if (
+          run.ownerId === ownerId &&
+          run.workspaceId === workspace.id &&
+          run.kind === 'candidate-entry-requirements' &&
+          run.briefingInputKey !== candidateKey
+        )
+          run.controller.abort(
+            new StudioError(
+              409,
+              'The passport, trip details or suggestions changed while entry checks were running.',
+              'STUDIO_RESEARCH_STALE',
+            ),
+          );
     },
     async shutdown() {
       for (const run of active.values()) run.controller.abort();
@@ -136,7 +164,16 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     limit: 15,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
+    keyGenerator: (_req, res) => session(res).owner_id,
     message: { error: 'Please wait a moment before starting another research or import request.' },
+  });
+  const conversationLimiter = rateLimit({
+    windowMs: 60000,
+    limit: 20,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: (_req, res) => session(res).owner_id,
+    message: { error: 'Please wait a moment before sending another message to Tara.' },
   });
   const owned = (req: Request, res: Response, expected?: number) =>
     store.require(session(res).owner_id, String(req.params.id), expected);
@@ -299,7 +336,12 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       ownerId: current.owner_id,
       workspaceId,
       kind,
-      briefingInputKey: kind === 'trip-briefing' ? studioTripBriefingInputKey(workspace) : '',
+      briefingInputKey:
+        kind === 'trip-briefing'
+          ? studioTripBriefingInputKey(workspace)
+          : kind === 'candidate-entry-requirements' && workspace.destinationResearch
+            ? studioCandidateEntryResearchInputKey(workspace, workspace.destinationResearch)
+            : '',
       controller,
       promise,
     });
@@ -429,7 +471,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     }
     res.json({ clients: [...groups.values()] });
   });
-  app.post('/api/studio/workspaces/:id/review', limiter, async (req, res) => {
+  app.post('/api/studio/workspaces/:id/review', conversationLimiter, async (req, res) => {
     const body = actionSchema
       .extend({ message: z.string().trim().min(1).max(16000) })
       .parse(req.body);
@@ -677,6 +719,107 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
       },
     );
   });
+  app.post(
+    '/api/studio/workspaces/:id/destinations/entry-requirements',
+    limiter,
+    async (req, res) => {
+      const body = actionSchema.parse(req.body);
+      const researchContext = (workspace: StudioWorkspace) => {
+        const history = studioClientTravelHistory(
+          db,
+          store,
+          session(res).owner_id,
+          workspace.brief.clientId || '',
+          workspace.id,
+        );
+        const profile = workspace.brief.clientId
+          ? getStudioClientProfile(db, session(res).owner_id, workspace.brief.clientId) || undefined
+          : undefined;
+        const research = workspace.destinationResearch;
+        if (
+          !research ||
+          !studioDestinationResearchFresh(research) ||
+          research.inputKey !== studioDestinationResearchInputKey(workspace, history, profile)
+        )
+          throw new StudioError(
+            409,
+            'The client preferences changed. Refresh suggestions before checking entry requirements.',
+            'STUDIO_RESEARCH_STALE',
+          );
+        return {
+          research,
+          inputKey: studioCandidateEntryResearchInputKey(workspace, research, profile),
+        };
+      };
+      await action(
+        req,
+        res,
+        'candidate-entry-requirements',
+        body,
+        async (workspace, signal) => {
+          const context = researchContext(workspace);
+          const jobKey = JSON.stringify([session(res).owner_id, workspace.id, context.inputKey]);
+          let job = candidateEntryJobs.get(jobKey);
+          if (!job) {
+            const controller = new AbortController();
+            job = {
+              controller,
+              consumers: 0,
+              promise: researchStudioCandidateEntryRequirements(workspace, controller.signal),
+            };
+            candidateEntryJobs.set(jobKey, job);
+            void job.promise
+              .finally(() => {
+                if (candidateEntryJobs.get(jobKey) === job) candidateEntryJobs.delete(jobKey);
+              })
+              .catch(() => {});
+          }
+          const shared = job;
+          shared.consumers++;
+          let released = false;
+          let abort!: () => void;
+          const release = () => {
+            if (released) return;
+            released = true;
+            shared.consumers--;
+            if (!shared.consumers) shared.controller.abort(signal.reason);
+          };
+          const cancelled = new Promise<never>((_resolve, reject) => {
+            abort = () => {
+              release();
+              reject(signal.reason);
+            };
+            if (signal.aborted) abort();
+            else signal.addEventListener('abort', abort, { once: true });
+          });
+          try {
+            const research = await Promise.race([shared.promise, cancelled]);
+            signal.throwIfAborted();
+            return { research, candidateEntryInputKey: context.inputKey };
+          } finally {
+            signal.removeEventListener('abort', abort);
+            release();
+          }
+        },
+        {
+          abortOnDisconnect: true,
+          merge: (current, _researched, result) => {
+            if (result.candidateEntryInputKey !== researchContext(current).inputKey)
+              throw new StudioError(
+                409,
+                'The passport, profile or trip details changed while entry checks were researched.',
+                'STUDIO_RESEARCH_STALE',
+              );
+            const research = result.research as NonNullable<StudioWorkspace['destinationResearch']>;
+            current.destinationResearch = research;
+            return current;
+          },
+          skipSave: (current, result) =>
+            JSON.stringify(current.destinationResearch) === JSON.stringify(result.research),
+        },
+      );
+    },
+  );
   app.post(
     '/api/studio/workspaces/:id/recommendations/:recommendationId/add-to-day',
     (req, res) => {

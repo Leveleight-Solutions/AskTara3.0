@@ -1,4 +1,5 @@
-import type { StudioSource } from './studio';
+import type { StudioSource, StudioWorkspace } from './studio';
+import { studioEntryPurposeDeclarations } from './studio-entry-context';
 
 /** ISO 3166-1 alpha-2 country/territory codes; XK is explicitly included for Kosovo.
  * Display names come from the runtime's Unicode CLDR data, not an AI destination catalogue.
@@ -92,6 +93,87 @@ export interface StudioDestinationCandidate {
   advisory: string;
   recommendable: boolean;
   sources: StudioTravelEvidence[];
+  /** Conditional passport guidance for a suggestion, never approval of the final route. */
+  entryRequirements?: StudioCandidateEntryRequirements;
+}
+export interface StudioCandidateEntryRequirements {
+  scope: 'destination_shortlist';
+  inputKey: string;
+  checkedAt: string;
+  passportCountry: string;
+  passportCountryCode: string;
+  destinationCountryCode: string;
+  status:
+    'pending' | 'missing_passport' | 'preliminary' | 'unverified' | 'conflicting' | 'unavailable';
+  category: StudioVisaCategory;
+  summary: string;
+  conditions: string[];
+  electronicAuthorisation: string;
+  sources: StudioTravelEvidence[];
+  missingFacts: string[];
+  notes: string[];
+}
+export const STUDIO_DESTINATION_RESEARCH_FRESH_MS = 6 * 60 * 60 * 1000;
+export const STUDIO_CANDIDATE_ENTRY_FRESH_MS = STUDIO_DESTINATION_RESEARCH_FRESH_MS;
+const currentTimestamp = (checkedAt: string, now: number, lifetime: number) => {
+  const age = now - Date.parse(checkedAt);
+  return Number.isFinite(age) && age >= 0 && age < lifetime;
+};
+export function studioDestinationResearchFresh(
+  research: StudioDestinationResearch | null | undefined,
+  now = Date.now(),
+): boolean {
+  return Boolean(
+    research && currentTimestamp(research.checkedAt, now, STUDIO_DESTINATION_RESEARCH_FRESH_MS),
+  );
+}
+/** Versioned allowlist: no identities, residence, dates of birth or private profile text. */
+export function studioCandidateEntryInputKey(
+  workspace: StudioWorkspace,
+  candidate: Pick<StudioDestinationCandidate, 'destination' | 'countryCode' | 'suggestedDays'>,
+): string {
+  const brief = workspace.brief;
+  return JSON.stringify({
+    scope: 'destination_shortlist_v1',
+    passportCountryCode: normalizeStudioCountry(brief.passportNationality || '')?.code || '',
+    destination: candidate.destination,
+    destinationCountryCode: normalizeStudioCountry(candidate.countryCode)?.code || '',
+    suggestedDays: candidate.suggestedDays,
+    purpose: brief.tripPurpose || 'undecided',
+    declaredActivities: studioEntryPurposeDeclarations(brief),
+    startDate: brief.startDate,
+    endDate: brief.endDate,
+    datesFlexible: brief.datesFlexible,
+    departureDate: brief.departureDate || '',
+    arrivalTransport: brief.outboundTransport || 'undecided',
+    departureTransport: brief.returnTransport || 'undecided',
+    pendingDateClarification: Boolean(workspace.clarification),
+  });
+}
+export function studioCandidateEntryFresh(
+  workspace: StudioWorkspace,
+  candidate: StudioDestinationCandidate,
+  now = Date.now(),
+): boolean {
+  const entry = candidate.entryRequirements;
+  return Boolean(
+    entry &&
+    entry.scope === 'destination_shortlist' &&
+    entry.status !== 'pending' &&
+    entry.inputKey === studioCandidateEntryInputKey(workspace, candidate) &&
+    currentTimestamp(entry.checkedAt, now, STUDIO_CANDIDATE_ENTRY_FRESH_MS),
+  );
+}
+export function studioCandidateEntryNeedsResearch(
+  workspace: StudioWorkspace,
+  candidate: StudioDestinationCandidate,
+  now = Date.now(),
+): boolean {
+  return Boolean(
+    normalizeStudioCountry(workspace.brief.passportNationality || '') &&
+    normalizeStudioCountry(candidate.countryCode) &&
+    !studioCandidateEntryFresh(workspace, candidate, now),
+  );
 }
 export interface StudioDestinationResearch {
   checkedAt: string;

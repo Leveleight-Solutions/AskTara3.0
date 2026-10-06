@@ -96,7 +96,7 @@ export async function runStudioAssistant(
     workspace.stage = 'itinerary';
     return {
       ...review,
-      reply: `Your ${workspace.itinerary.days.length}-day itinerary is ready, with sources for the suggested activities. Tell me what to change, choose hotel or flight options, or preview the proposal when you’re ready.`,
+      reply: `Your ${workspace.itinerary.days.length}-day itinerary is ready, with sources for the suggested activities. Tell me what to change, review travel arrangements, or preview the proposal when you’re ready.`,
       nextAction: 'itinerary',
     };
   }

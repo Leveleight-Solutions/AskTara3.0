@@ -1,3 +1,4 @@
+import { fulfilSyntheticCandidateEntries } from './studio-candidate-entry-fixture';
 import {
   openStudioClientDesk,
   openStudioClientProfiles,
@@ -56,6 +57,7 @@ async function mockBuilder(page: Page) {
     if (path === `/api/studio/workspaces/${workspace.id}` && method === 'GET')
       return json({ workspace });
     if (await fulfilSyntheticTripBriefing(route, workspace)) return;
+    if (await fulfilSyntheticCandidateEntries(route, workspace)) return;
     const body = route.request().postDataJSON() || {};
     writes.push({ path, body });
     if (path.includes('/workspaces/') && body.revision !== workspace.revision)
@@ -176,7 +178,7 @@ async function mockBuilder(page: Page) {
   return { workspace, writes };
 }
 
-test('returning profile identity and history guide research, with visa check only after choosing a destination', async ({
+test('returning profile identity and history guide research, with automatic preliminary visa guidance before route checks', async ({
   page,
 }) => {
   const { workspace, writes } = await mockBuilder(page);
@@ -202,6 +204,9 @@ test('returning profile identity and history guide research, with visa check onl
   await expect(page.getByText('Based on previous travel', { exact: false })).toBeVisible();
   expect(writes.filter(({ path }) => path.endsWith('/destinations/research'))).toHaveLength(1);
   await expect(
+    detailedResearch.getByText('Visa-free · conditional', { exact: true }).first(),
+  ).toBeVisible();
+  await expect(
     page.getByRole('button', { name: 'Choose with warning', exact: true }),
   ).toBeDisabled();
   await expect(
@@ -221,7 +226,9 @@ test('returning profile identity and history guide research, with visa check onl
     page.getByRole('link', { name: 'Official immigration source', exact: true }),
   ).toBeVisible();
   expect(
-    writes.filter(({ path }) => /destinations\/research|entry-requirements/.test(path)),
+    writes.filter(({ path }) =>
+      /destinations\/research$|(?<!destinations\/)entry-requirements$/.test(path),
+    ),
   ).toHaveLength(2);
   expect(JSON.stringify(writes)).not.toContain('photoDataUrl');
 });

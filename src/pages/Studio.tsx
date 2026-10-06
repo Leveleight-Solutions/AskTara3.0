@@ -79,6 +79,7 @@ import { ClientPickerDialog, CreateProposalDialog } from '../components/ClientPi
 import type { StudioAssistantAction } from '../../shared/studio-assistant';
 import type { StudioDestinationCandidate } from '../../shared/studio-travel-research';
 import '../components/StudioAgentConversation.css';
+import '../components/StudioCandidateEntry.css';
 import { onStudioWorkspaceEvent } from '../studioEvents';
 import { ChatTurn } from '../components/ChatTurn';
 import { PlanningModeNotice } from '../components/PlanningModeNotice';

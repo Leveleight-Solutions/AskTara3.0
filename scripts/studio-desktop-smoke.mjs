@@ -217,6 +217,12 @@ try {
     'One-click selection retains protected room photos and test price metadata',
   );
   await expect(page.getByTestId('studio-trip-board')).toContainText(included.title);
+  await expect(
+    page
+      .getByRole('region', { name: 'Tara planning actions' })
+      .getByRole('button', { name: 'Find flights', exact: true }),
+  ).toHaveCount(0);
+  check(true, 'Next planning actions respect separately arranged flights and family fare limits');
   const otherDays = structuredClone(workspace.itinerary.days.slice(1));
   await page.getByRole('button', { name: 'Edit day 1', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Edit day 1', exact: true });

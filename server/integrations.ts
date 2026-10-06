@@ -272,8 +272,9 @@ async function searchFlightsWithDuffel(
     );
   } catch {
     signal?.throwIfAborted();
-    throw new ProviderError('The flight provider could not be reached. Please try again shortly.');
+    throw flightProviderUnavailable();
   }
+  if (response.status >= 500) throw flightProviderUnavailable();
   if (!response.ok)
     throw new ProviderError(
       response.status === 401 || response.status === 403
@@ -304,6 +305,14 @@ async function searchFlightsWithDuffel(
     roundTrip: Boolean(input.returnDate),
     source: 'duffel' as const,
   };
+}
+
+function flightProviderUnavailable() {
+  return new ProviderError(
+    'The flight provider is temporarily unavailable. Please try again shortly. No flight quotes or bookings were created.',
+    503,
+    'FLIGHTS_PROVIDER_UNAVAILABLE',
+  );
 }
 
 // Contract: https://docs.liteapi.travel/reference/post_flights-rates
@@ -583,8 +592,9 @@ async function searchFlightsWithLite(
     });
   } catch {
     signal?.throwIfAborted();
-    throw new ProviderError('The flight provider could not be reached. Please try again shortly.');
+    throw flightProviderUnavailable();
   }
+  if (response.status >= 500) throw flightProviderUnavailable();
   if (!response.ok)
     throw new ProviderError(
       response.status === 401 || response.status === 403

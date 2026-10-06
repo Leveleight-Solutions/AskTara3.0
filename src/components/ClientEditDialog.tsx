@@ -7,6 +7,7 @@ import { api } from '../api';
 import { Modal } from './ui';
 import { clientListValues, clientProfileDraft } from './studioClientAddressBook';
 import './ClientAddressBook.css';
+import { readStudioImage } from './readStudioImage';
 
 export function ClientEditDialog({
   client,
@@ -57,11 +58,8 @@ export function ClientEditDialog({
     }
     setPhotoBusy(true);
     setError('');
-    const url = URL.createObjectURL(file);
     try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
+      const image = await readStudioImage(file);
       const scale = Math.min(1, 384 / Math.max(image.width, image.height));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(image.width * scale));
@@ -77,7 +75,6 @@ export function ClientEditDialog({
     } catch (cause) {
       setError((cause as Error).message || 'This photo could not be opened.');
     } finally {
-      URL.revokeObjectURL(url);
       setPhotoBusy(false);
     }
   }

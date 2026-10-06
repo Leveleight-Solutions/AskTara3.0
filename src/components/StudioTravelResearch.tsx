@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Badge, Box, Button, Callout, Card, Flex, Grid, Text } from '@radix-ui/themes';
 import { CircleAlert, Globe2, ShieldCheck } from 'lucide-react';
+import { StudioCandidateEntry } from './StudioCandidateEntry';
+import { studioEntryRequirementsInputKey } from '../../shared/studio-trip-briefing';
 import type { StudioWorkspace } from '../../shared/studio';
 import {
   normalizeStudioCountry,
+  studioDestinationResearchFresh,
   studioVisaLabels,
   type StudioDestinationCandidate,
   type StudioDestinationResearch,
@@ -34,11 +37,13 @@ function Evidence({ sources }: { sources: StudioTravelEvidence[] }) {
 }
 
 function DestinationCard({
+  workspace,
   candidate,
   disabled,
   stale,
   onChoose,
 }: {
+  workspace: StudioWorkspace;
   candidate: StudioDestinationCandidate;
   disabled: boolean;
   stale: boolean;
@@ -70,6 +75,7 @@ function DestinationCard({
           </Badge>
         </Flex>
         <Text size="2">{candidate.reason}</Text>
+        <StudioCandidateEntry workspace={workspace} candidate={candidate} />
         <Callout.Root
           size="1"
           color={candidate.status === 'blocked' ? 'red' : warning ? 'amber' : 'gray'}
@@ -199,42 +205,28 @@ export function StudioTravelResearch({
   })();
   const stale =
     !!research &&
-    (Date.now() - Date.parse(research.checkedAt) > 86400000 ||
-      savedResearchTrip.startDate !== brief.startDate ||
-      savedResearchTrip.endDate !== brief.endDate ||
-      savedResearchTrip.preferredDestination !== (brief.preferredDestination || '') ||
-      savedResearchTrip.budget !== brief.budget ||
-      savedResearchTrip.currency !== brief.currency ||
-      JSON.stringify(savedResearchTrip.interests) !== JSON.stringify(brief.interests));
+    (!studioDestinationResearchFresh(research) ||
+      (research.inputKey.startsWith('{') &&
+        (savedResearchTrip.startDate !== brief.startDate ||
+          savedResearchTrip.endDate !== brief.endDate ||
+          savedResearchTrip.preferredDestination !== (brief.preferredDestination || '') ||
+          savedResearchTrip.budget !== brief.budget ||
+          savedResearchTrip.currency !== brief.currency ||
+          JSON.stringify(savedResearchTrip.interests) !== JSON.stringify(brief.interests))));
   const checkedStop = entryRequirements?.stopId
     ? workspace.stops.find((stop) => stop.id === entryRequirements.stopId)
     : selectedStop;
   const checkedCountry = normalizeStudioCountry(
     checkedStop?.country || brief.destinationCountry || '',
   );
-  const savedEntryTrip = (() => {
-    try {
-      return JSON.parse(entryRequirements?.inputKey || '{}') as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  })();
-  const arrivalTransport =
-    checkedStop && workspace.stops.indexOf(checkedStop) > 0
-      ? workspace.stops[workspace.stops.indexOf(checkedStop) - 1].onwardTransport
-      : brief.outboundTransport || 'undecided';
-  const entryStale =
-    !!entryRequirements &&
-    (Date.now() - Date.parse(entryRequirements.checkedAt) > 86400000 ||
-      entryRequirements.passportCountryCode !== passport?.code ||
-      entryRequirements.destinationCountryCode !== checkedCountry?.code ||
-      (!!entryRequirements.stopId && !checkedStop) ||
-      entryRequirements.destination !== (checkedStop?.name || brief.preferredDestination) ||
-      savedEntryTrip.startDate !== (checkedStop?.arrivalDate || brief.startDate) ||
-      savedEntryTrip.endDate !== (checkedStop?.departureDate || brief.endDate) ||
-      savedEntryTrip.arrivalTransport !== arrivalTransport ||
-      savedEntryTrip.departureTransport !==
-        (checkedStop?.onwardTransport || brief.returnTransport || 'undecided'));
+  const entryStale = Boolean(
+    entryRequirements &&
+    (!Number.isFinite(Date.parse(entryRequirements.checkedAt)) ||
+      Date.now() - Date.parse(entryRequirements.checkedAt) < 0 ||
+      Date.now() - Date.parse(entryRequirements.checkedAt) >= 86400000 ||
+      entryRequirements.inputKey !==
+        studioEntryRequirementsInputKey(workspace, entryRequirements.stopId)),
+  );
   return (
     <Flex direction="column" gap="4">
       <Box>
@@ -262,13 +254,14 @@ export function StudioTravelResearch({
             </Text>
             {stale && (
               <Text size="2" color="amber">
-                These checks are over 24 hours old or the brief has changed. Refresh before making a
-                recommendation.
+                These checks are over six hours old or the brief has changed. Refresh before making
+                a recommendation.
               </Text>
             )}
             <Grid columns={{ initial: '1', md: '3' }} gap="3">
               {research.candidates.map((candidate, index) => (
                 <DestinationCard
+                  workspace={workspace}
                   key={`${research.checkedAt}-${candidate.countryCode}-${index}`}
                   candidate={candidate}
                   disabled={busy}

@@ -37,7 +37,7 @@ const actionSchema = z
   .strict();
 const revisionDescription =
   'Send the latest workspace.revision. A stale revision returns 409 (STUDIO_REVISION_CONFLICT). Successful workspace edits increment the revision; use the returned workspace for the next request.';
-const actionDescription = `${revisionDescription} requestId is a client-generated UUID scoped to the owner. Repeating an identical completed request replays its result with the current workspace and replayed: true; reusing it for different details returns 409. Failed operations may be retried with the same requestId. Research and import actions share a limit of 15 requests per minute.`;
+const actionDescription = `${revisionDescription} requestId is a client-generated UUID scoped to the owner. Repeating an identical completed request replays its result with the current workspace and replayed: true; reusing it for different details returns 409. Failed operations may be retried with the same requestId. Research and import actions share a limit of 15 requests per minute per session owner. Conversational review has its own allowance of 20 requests per minute per owner; background research cannot consume it. The global API IP rate limit also remains enforced.`;
 const error = (description: string) => jsonResponse(description, ref('Error'));
 const workspaceResponse = object(
   { workspace: ref('StudioWorkspace'), assistantActions: array(ref('StudioAssistantAction')) },
@@ -362,21 +362,68 @@ export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
     historyUsed: { type: 'boolean' },
     notes: array(text),
     candidates: array(
-      object({
-        destination: text,
-        country: text,
-        countryCode: text,
-        reason: text,
-        suggestedDays: { type: 'integer' },
-        thingsToDo: array(text),
-        conditions: text,
-        seasonalGuidance: text,
-        status: { type: 'string', enum: ['checked', 'warning', 'blocked', 'unknown'] },
-        advisory: text,
-        recommendable: { type: 'boolean' },
-        sources: array(ref('StudioTravelEvidence')),
-      }),
+      object(
+        {
+          destination: text,
+          country: text,
+          countryCode: text,
+          reason: text,
+          suggestedDays: { type: 'integer' },
+          thingsToDo: array(text),
+          conditions: text,
+          seasonalGuidance: text,
+          status: { type: 'string', enum: ['checked', 'warning', 'blocked', 'unknown'] },
+          advisory: text,
+          recommendable: { type: 'boolean' },
+          sources: array(ref('StudioTravelEvidence')),
+          entryRequirements: ref('StudioCandidateEntryRequirements'),
+        },
+        [
+          'destination',
+          'country',
+          'countryCode',
+          'reason',
+          'suggestedDays',
+          'thingsToDo',
+          'conditions',
+          'seasonalGuidance',
+          'status',
+          'advisory',
+          'recommendable',
+          'sources',
+        ],
+      ),
     ),
+  }),
+  StudioCandidateEntryRequirements: object({
+    scope: { type: 'string', const: 'destination_shortlist' },
+    inputKey: {
+      type: 'string',
+      description:
+        'Versioned allowlist of declared passport and candidate-specific trip inputs. No profile identity.',
+    },
+    checkedAt: text,
+    passportCountry: text,
+    passportCountryCode: text,
+    destinationCountryCode: text,
+    status: {
+      type: 'string',
+      enum: [
+        'pending',
+        'missing_passport',
+        'preliminary',
+        'unverified',
+        'conflicting',
+        'unavailable',
+      ],
+    },
+    category: visaCategory,
+    summary: text,
+    conditions: array(text),
+    electronicAuthorisation: text,
+    sources: array(ref('StudioTravelEvidence')),
+    missingFacts: array(text),
+    notes: array(text),
   }),
   StudioEntryRequirements: object({
     checkedAt: timestamp,
@@ -901,7 +948,7 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
   '/api/studio/workspaces/{id}/destinations/research': {
     parameters: workspaceParameters,
     post: operation('Studio', 'Research destination suggestions and current conditions', {
-      description: `${actionDescription} Supports cold-start interests and food preferences as well as linked-client history. Model inputs exclude identity, profile photos, birth dates and raw private context. Only destinationResearch merges into the latest workspace if the selected profile/preferences/context/history and route still match; unrelated chat/title edits survive. Changed inputs return STUDIO_RESEARCH_STALE. Disconnect cancels provider work. Researches up to three candidates with current advisory and conditions evidence; blocked or unverifiable destinations are not promoted as safe. Does not select a destination or check visas. Requires OPENAI_API_KEY and accessible evidence.`,
+      description: `${actionDescription} Supports cold-start interests and food preferences as well as linked-client history. Model inputs exclude identity, profile photos, birth dates and raw private context. Only destinationResearch merges into the latest workspace if the selected profile/preferences/context/history and route still match; unrelated chat/title edits survive. Changed inputs return STUDIO_RESEARCH_STALE. Disconnect cancels provider work. Researches up to three candidates with current advisory and conditions evidence; blocked or unverifiable destinations are not promoted as safe. Seeds pending or missing-passport entryRequirements on each card; the desktop automatically calls the separate destination entry-requirements action while suggestions remain visible. Does not select a route. Requires OPENAI_API_KEY and accessible evidence.`,
       requestBody: jsonBody(fromZod(actionSchema)),
       responses: {
         '200': jsonResponse(
@@ -913,6 +960,25 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         '503': error('Research unavailable; no fabricated fallback.'),
       },
     }),
+  },
+  '/api/studio/workspaces/{id}/destinations/entry-requirements': {
+    parameters: workspaceParameters,
+    post: operation(
+      'Studio',
+      'Check passport-specific entry guidance for destination suggestions',
+      {
+        description: `${actionDescription} Automatically enriches the existing fresh, owned destination shortlist, including compatible legacy cards, before route selection. Uses only brief.passportNationality; nationality, residence and a lead client do not establish the whole party’s passports. Purpose and date gaps remain explicit and guidance is always conditional preliminary ordinary-passport information, never approval of entry or transit. Up to two provider checks run concurrently with a 75-second deadline each. Owner/workspace/input-matched callers share a job. Individual unavailable or invalid evidence fails closed on that card; cancellation discards the whole unsaved result. Checks expire after six hours; fresh terminal results are reused without automatic retry loops. Passport/purpose/mode changes invalidate the checks while keeping the preference shortlist. Only candidate research data merges; unrelated chat/title edits survive. Changed profile, passport, trip or shortlist basis returns STUDIO_RESEARCH_STALE. Full selected-route briefing is independent and supersedes shortlist guidance.`,
+        requestBody: jsonBody(fromZod(actionSchema)),
+        responses: {
+          '200': jsonResponse(
+            'Workspace and conditional entry checks for each suggestion.',
+            actionResult({ research: ref('StudioDestinationResearch') }),
+          ),
+          '409': error('Revision conflict, stale research or changed input basis.'),
+          '503': error('Cancelled operation; saved workspace unchanged.'),
+        },
+      },
+    ),
   },
   '/api/studio/workspaces/{id}/recommendations/{recommendationId}/add-to-day': {
     parameters: [

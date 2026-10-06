@@ -861,7 +861,7 @@ test('date-only route answers preserve nights and allow a literal fixed arrival'
   );
 });
 
-test('bare night counts require the prior assistant question and a single unambiguous stop', () => {
+test('bare night counts require the prior assistant question and an unambiguous target stop', () => {
   const current = [stop('London', null)];
   const messages = [
     { role: 'user' as const, content: 'to london' },
@@ -916,7 +916,7 @@ test('bare night counts require the prior assistant question and a single unambi
         '3',
         [],
         '3',
-        { messages },
+        { messages: [{ role: 'assistant', content: 'How many nights in London and Paris?' }] },
       ),
     StudioError,
   );

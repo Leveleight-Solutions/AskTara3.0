@@ -1,3 +1,4 @@
+import { fulfilSyntheticCandidateEntries } from './studio-candidate-entry-fixture';
 import { test, expect, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
@@ -162,6 +163,7 @@ async function mockStudio(
       return json({ error: 'Unexpected legacy or supplier mutation' }, 500);
     }
     if (await fulfilSyntheticTripBriefing(route, workspace)) return;
+    if (await fulfilSyntheticCandidateEntries(route, workspace)) return;
     requests.push({ method, path, body });
     if (path === '/api/studio/agency') {
       if (method === 'PATCH') agency = { ...agency, ...body.agency };

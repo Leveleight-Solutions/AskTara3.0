@@ -2,6 +2,8 @@
 
 Use a fresh proposal for each fictional scenario. Send the numbered messages one at a time. Review and accept the route before sending the final itinerary request. See [the testing guide](TRIP_SCENARIO_TESTING.md) for the scripts, cruise schedules, observed results and limits.
 
+For one-word answers, automatic passport checks on suggestions, passport corrections and short multi-stop conversations, see [automatic entry checks and short prompts](AUTOMATIC_ENTRY_CHECKS.md).
+
 ## Bali honeymoon for two adults
 
 Case: `bali_honeymoon`. Expected final route: **Ubud (5 nights, 2026-11-12–2026-11-17)**.

@@ -30,24 +30,30 @@ beforeEach(() => {
 });
 afterEach(async () => {
   globalThis.fetch = originalFetch;
-  for (const server of servers.filter((value) => value.listening))
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  servers = [];
   for (const app of apps) {
     await app.locals.studioActions.shutdown();
     await app.locals.planningRuns.shutdown();
     app.locals.db.close();
   }
   apps = [];
+  for (const server of servers.filter((value) => value.listening))
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+      server.closeAllConnections();
+    });
+  servers = [];
   for (const name of envNames)
     previous[name] === undefined ? delete process.env[name] : (process.env[name] = previous[name]);
 });
-function setup() {
+async function setup() {
   const app = createApp(':memory:');
   apps.push(app);
-  return { app, client: request.agent(app) };
+  // Own one listener for the whole scenario. Reopening and closing Supertest's
+  // implicit server for every request can leave its close callback unresolved.
+  const server = app.listen(0, '127.0.0.1');
+  servers.push(server);
+  await once(server, 'listening');
+  return { app, server, client: request.agent(server) };
 }
 type Client = ReturnType<typeof request.agent>;
 const create = async (client: Client): Promise<StudioWorkspace> =>
@@ -134,7 +140,7 @@ const deferred = <T>() => {
 };
 
 test('first AI review only extracts the brief and rejects model defaults without literal evidence', async () => {
-  const { client } = setup();
+  const { client } = await setup();
   const workspace = await create(client);
   const message = 'London for 4 nights, for 2 adults.';
   let calls = 0;
@@ -199,7 +205,7 @@ test('first AI review only extracts the brief and rejects model defaults without
 });
 
 test('qualification can be skipped but recommendation and import extraction wait for explicit route acceptance', async () => {
-  const { client } = setup();
+  const { client } = await setup();
   let workspace = await create(client);
   workspace = await patch(client, workspace, { stops: [stop('Paris', null)] });
   const imported = await client
@@ -279,7 +285,7 @@ test('qualification can be skipped but recommendation and import extraction wait
 });
 
 test('researched recommendation inclusion accepts different JSON key order while protecting names and citations', async () => {
-  const { client } = setup();
+  const { client } = await setup();
   let workspace = await create(client);
   workspace = await patch(client, workspace, { stops: [stop('Paris', 3)] });
   workspace = (
@@ -369,7 +375,7 @@ test('researched recommendation inclusion accepts different JSON key order while
 });
 
 test('long routes, reordering, night edits and fixed arrivals recalculate dates and invalidate accepted services', async () => {
-  const { client } = setup();
+  const { client } = await setup();
   let workspace = await create(client);
   const stops = [stop('Paris', 7), stop('London', 7), stop('Rome', 7), stop('Athens', 6)];
   workspace = await patch(client, workspace, {
@@ -433,13 +439,7 @@ test('long routes, reordering, night edits and fixed arrivals recalculate dates 
 });
 
 test('request IDs deduplicate concurrent reviews and stale model results cannot overwrite later edits', async () => {
-  const { app } = setup();
-  // A persistent local listener avoids Supertest closing its implicit server
-  // between concurrent requests; this test exercises real HTTP concurrency.
-  const server = app.listen(0, '127.0.0.1');
-  servers.push(server);
-  await once(server, 'listening');
-  const client = request.agent(server);
+  const { client } = await setup();
   let workspace = await create(client);
   let calls = 0;
   let entered = deferred<void>();
@@ -507,8 +507,8 @@ test('request IDs deduplicate concurrent reviews and stale model results cannot 
 });
 
 test('workspace ownership, guest migration, export and account deletion also protect public proposals', async () => {
-  const { app, client } = setup();
-  const stranger = request.agent(app);
+  const { app, server, client } = await setup();
+  const stranger = request.agent(server);
   let workspace = await create(client);
   workspace = await patch(client, workspace, {
     brief: {
@@ -603,7 +603,7 @@ test('workspace ownership, guest migration, export and account deletion also pro
 });
 
 test('reviewed imported PNR remains private and each source only creates excluded candidates once', async () => {
-  const { client } = setup();
+  const { client } = await setup();
   let workspace = await create(client);
   workspace = await patch(client, workspace, { stops: [stop('London', 4)] });
   const sourceText =
@@ -679,8 +679,8 @@ test('reviewed imported PNR remains private and each source only creates exclude
 });
 
 test('pinning orders the recent list without touching the revision or the stored document', async () => {
-  const { app, client } = setup();
-  const stranger = request.agent(app);
+  const { app, server, client } = await setup();
+  const stranger = request.agent(server);
   const older = await create(client);
   const newer = await create(client);
   const order = async () =>

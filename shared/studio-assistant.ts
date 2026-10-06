@@ -22,9 +22,49 @@ export interface StudioAssistantAction {
   choices?: { label: string; message: string }[];
 }
 
+/** Current-trip arrangements take precedence over generic service suggestions. */
+export function studioFlightsArrangedExternally(workspace: StudioWorkspace): boolean {
+  let external = false;
+  const instructions = [
+    workspace.brief.request,
+    ...workspace.messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content),
+  ];
+  for (const instruction of instructions)
+    for (const clause of instruction.split(/[.;!?\n]|\bbut\b/i)) {
+      if (!/\b(?:flights?|airfare)\b/i.test(clause)) continue;
+      const declined =
+        /\b(?:no|skip|exclude|without|out of scope)\s+(?:(?:any|the|my|our)\s+)?(?:flights?|airfare)\b|\b(?:do not|don't|won't|will not)\s+(?:need|want|include|search(?: for)?|find|arrange)\s+(?:(?:any|the|my|our)\s+)?(?:flights?|airfare)\b/i.test(
+          clause,
+        );
+      const separate =
+        !/\b(?:not|never|haven't|have not|not yet|maybe|possibly|might)\b/i.test(clause) &&
+        (/\b(?:flights?|airfare)\b.{0,80}\b(?:already booked|already arranged|already sorted|booked|arranged|sorted|separately|out of scope|excluded)\b/i.test(
+          clause,
+        ) ||
+          /\b(?:already booked|already arranged|already sorted|arrange (?:my|our|their) own|handle (?:my|our|their) own)\b.{0,45}\b(?:flights?|airfare)\b/i.test(
+            clause,
+          ));
+      if (declined || separate) external = true;
+      else if (
+        !/\b(?:not|no|don't|do not|maybe|possibly|might)\b/i.test(clause) &&
+        /\b(?:find|search(?: for)?|compare|include|need|want)\b.{0,45}\b(?:flights?|airfare)\b/i.test(
+          clause,
+        )
+      )
+        external = false;
+    }
+  return external;
+}
+
 /** Grounded UI controls, not model instructions or authorisation to book/publish. */
 export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioAssistantAction[] {
-  if (workspace.clarification)
+  if (workspace.clarification) {
+    const pending = workspace.clarification;
+    const stop = workspace.stops.find((entry) => entry.id === pending.stopId);
+    const chosenDates = (nights: number) =>
+      `Use arrival ${pending.arrivalDate} and return ${new Date(Date.parse(pending.arrivalDate) + nights * 86400000).toISOString().slice(0, 10)} for ${nights} nights${stop ? ` in ${stop.name}` : ''}.`;
     return [
       {
         id: 'confirm-stay-dates',
@@ -34,11 +74,12 @@ export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioA
         label: 'Confirm stay dates',
         detail: 'Confirm the proposed date range before planning around it.',
         choices: [
-          { label: 'Use these dates', message: 'Yes, use the proposed stay dates.' },
-          { label: 'Keep the nights', message: 'No, keep the stated number of nights.' },
+          { label: 'Use these dates', message: chosenDates(pending.proposedNights) },
+          { label: 'Keep the nights', message: chosenDates(pending.statedNights) },
         ],
       },
     ];
+  }
   const actions: StudioAssistantAction[] = [];
   const addAnswer = (questionId: string, label: string, detail: string, stopId?: string) =>
     actions.push({
@@ -124,7 +165,11 @@ export function buildStudioAssistantActions(workspace: StudioWorkspace): StudioA
         detail:
           'Search supplier rooms and choose a quote for the proposal; selection does not reserve a room.',
       });
-    if (workspace.stops.length)
+    if (
+      workspace.stops.length &&
+      workspace.brief.children === 0 &&
+      !studioFlightsArrangedExternally(workspace)
+    )
       actions.push({
         id: 'flights',
         kind: 'flights',

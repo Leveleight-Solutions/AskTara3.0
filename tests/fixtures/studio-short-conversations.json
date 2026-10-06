@@ -1,0 +1,83 @@
+[
+  {
+    "id": "short-kyoto-honeymoon",
+    "title": "Kyoto honeymoon built from short answers",
+    "turns": [
+      { "prompt": "hi", "expected": { "brief": { "startDate": "", "endDate": "" }, "stops": [] } },
+      { "prompt": "Kyoto" },
+      { "prompt": "honeymoon" },
+      { "prompt": "3 nights" },
+      { "prompt": "2 adults" },
+      { "prompt": "no children" },
+      { "prompt": "arrive 18 November 2026" },
+      { "prompt": "leave 21 November 2026" },
+      { "prompt": "Australian passport" },
+      { "prompt": "AUD 5000 total" },
+      { "prompt": "vegetarian and quiet gardens" },
+      { "prompt": "flights arranged separately" }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 2,
+        "children": 0,
+        "startDate": "2026-11-18",
+        "endDate": "2026-11-21",
+        "budget": 5000,
+        "currency": "AUD",
+        "passportNationality": "AU",
+        "tripPurpose": "tourism"
+      },
+      "stops": [
+        { "name": "Kyoto", "nights": 3, "arrivalDate": "2026-11-18", "departureDate": "2026-11-21" }
+      ],
+      "preferences": ["honeymoon|romantic", "vegetarian", "garden"]
+    },
+    "itineraryPrompt": "Build our complete Kyoto honeymoon itinerary for 18–21 November 2026, using the agreed details. Keep it relaxed with sourced quiet gardens, cultural visits, vegetarian meals and downtime. Flights are arranged separately. Keep travel days flexible; no bookings, invented prices or guaranteed opening times."
+  },
+  {
+    "id": "short-nepal-two-stops",
+    "title": "Nepal five-adult day-hiking route with short stop answers",
+    "turns": [
+      { "prompt": "five friends hiking in Nepal" },
+      { "prompt": "holiday" },
+      { "prompt": "5 adults, no children" },
+      { "prompt": "Kathmandu then Pokhara" },
+      { "prompt": "Kathmandu 1 night" },
+      { "prompt": "Pokhara 4 nights" },
+      { "prompt": "arrive 10 November 2026" },
+      { "prompt": "leave 15 November 2026" },
+      { "prompt": "Australian passports" },
+      { "prompt": "AUD 9000 total" },
+      { "prompt": "day hikes only, no overnight treks" },
+      { "prompt": "vegetarian" }
+    ],
+    "expected": {
+      "brief": {
+        "adults": 5,
+        "children": 0,
+        "startDate": "2026-11-10",
+        "endDate": "2026-11-15",
+        "budget": 9000,
+        "currency": "AUD",
+        "passportNationality": "AU",
+        "tripPurpose": "tourism"
+      },
+      "stops": [
+        {
+          "name": "Kathmandu",
+          "nights": 1,
+          "arrivalDate": "2026-11-10",
+          "departureDate": "2026-11-11"
+        },
+        {
+          "name": "Pokhara",
+          "nights": 4,
+          "arrivalDate": "2026-11-11",
+          "departureDate": "2026-11-15"
+        }
+      ],
+      "preferences": ["vegetarian", "hik", "day"]
+    },
+    "itineraryPrompt": "Build our complete Nepal itinerary for 10–15 November 2026: one night Kathmandu then four nights Pokhara, five adults. Use sourced easy day hikes, scenic visits and vegetarian dining. Allow transfer time and light travel days. No overnight or high-altitude treks, booked guides, arranged permits, bookings or invented prices."
+  }
+]

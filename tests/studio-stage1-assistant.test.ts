@@ -267,7 +267,13 @@ test('unchanged full brief/route patches keep research while relevant nationalit
   const value = newStudioWorkspace();
   value.brief.passportNationality = 'PK';
   const entry = { stopId: '', summary: 'Existing check' } as StudioEntryRequirements;
-  const research = { notes: ['Existing research'] } as StudioDestinationResearch;
+  const research: StudioDestinationResearch = {
+    checkedAt: new Date().toISOString(),
+    inputKey: 'Existing research input',
+    historyUsed: false,
+    candidates: [],
+    notes: ['Existing research'],
+  };
   const seed = () => {
     value.entryRequirements = [entry];
     value.destinationResearch = research;

@@ -1,3 +1,4 @@
+import { seedSyntheticCandidateEntries } from './studio-candidate-entry-fixture';
 import {
   openStudioClientDesk,
   openStudioClientProfiles,
@@ -77,6 +78,7 @@ test('a returning profile preserves private details and structured trip feedback
       notes: [],
     };
     workspace.destinationResearch = research;
+    seedSyntheticCandidateEntries(workspace);
     await route.fulfill({ json: { workspace, research } });
   });
   const createWorkspace = async () => {

@@ -13,7 +13,10 @@ import {
   studioItinerarySchema,
   sanitizeManualStudioItinerary,
 } from '../shared/studio-itinerary.ts';
-import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
+import {
+  normalizeStudioCountry,
+  studioCandidateEntryInputKey,
+} from '../shared/studio-travel-research.ts';
 import { studioEntryPurposeDeclarations } from './studio-entry-context.ts';
 
 export const studioDate = z
@@ -454,6 +457,9 @@ export function applyStudioPatch(
     });
   const previousEntryBasis = entryBasis(workspace);
   const previousResearchBasis = researchBasis(workspace);
+  const previousCandidateEntryBasis = workspace.destinationResearch?.candidates.map((candidate) =>
+    studioCandidateEntryInputKey(workspace, candidate),
+  );
   const itineraryBasis = (value: StudioWorkspace) => {
     const { request: _request, output: _output, clientName: _name, ...preferences } = value.brief;
     return JSON.stringify({
@@ -627,6 +633,13 @@ export function applyStudioPatch(
     workspace.tripBriefing = null;
   }
   if (previousResearchBasis !== researchBasis(workspace)) workspace.destinationResearch = null;
+  else if (workspace.destinationResearch)
+    workspace.destinationResearch.candidates.forEach((candidate, index) => {
+      if (
+        previousCandidateEntryBasis?.[index] !== studioCandidateEntryInputKey(workspace, candidate)
+      )
+        delete candidate.entryRequirements;
+    });
   workspace.qualification = qualifyStudio(workspace, agency);
   return workspace;
 }

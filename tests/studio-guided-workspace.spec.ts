@@ -1,3 +1,4 @@
+import { fulfilSyntheticCandidateEntries } from './studio-candidate-entry-fixture';
 import { test, expect, type Page, type Request } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
@@ -108,6 +109,7 @@ async function mockWorkspace(
       }
     }
     if (await fulfilSyntheticTripBriefing(route, workspace)) return;
+    if (await fulfilSyntheticCandidateEntries(route, workspace)) return;
     if (path === `/api/studio/workspaces/${workspace.id}/review` && options.reviewGate) {
       if (body.revision !== workspace.revision)
         return json({ error: 'Synthetic foreground review revision changed.' }, 409);

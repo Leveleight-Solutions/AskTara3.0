@@ -28,8 +28,13 @@ const initialClient: StudioClientProfile = {
   ],
   updatedAt: new Date().toISOString(),
 };
-async function mockClients(page: Page, initial = [initialClient]) {
+async function mockClients(
+  page: Page,
+  initial = [initialClient],
+  options: { signedIn?: boolean } = {},
+) {
   let clients = structuredClone(initial);
+  let agency = defaultStudioAgency();
   const writes: { path: string; method: string; body: any }[] = [];
   const unexpected: string[] = [];
   let workspace = newStudioWorkspace();
@@ -37,13 +42,22 @@ async function mockClients(page: Page, initial = [initialClient]) {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     const json = (value: unknown, status = 200) => route.fulfill({ json: value, status });
-    if (path === '/api/session') return json({ user: null });
+    if (path === '/api/session')
+      return json({
+        user: options.signedIn
+          ? {
+              id: 'fictional-agency-owner',
+              name: 'Fictional Agency Owner',
+              email: 'fictional@example.test',
+            }
+          : null,
+      });
     if (path === '/api/catalog') return json(catalog);
     if (path === '/api/profile') return json({ profile: defaultTravelProfile });
     if (path === '/api/saved') return json({ items: [] });
     if (path === '/api/integrations')
       return json({ ai: false, hotels: false, flights: false, activities: false, mode: 'local' });
-    if (path === '/api/studio/agency') return json({ agency: defaultStudioAgency() });
+    if (path === '/api/studio/agency' && method === 'GET') return json({ agency });
     if (path === '/api/studio/clients') return json({ clients: [] });
     if (path === '/api/studio/client-profiles' && method === 'GET') return json({ clients });
     const historyClient = clients.find(
@@ -55,6 +69,10 @@ async function mockClients(page: Page, initial = [initialClient]) {
       return json({ workspace });
     const body = route.request().postDataJSON() || {};
     writes.push({ path, method, body });
+    if (path === '/api/studio/agency' && method === 'PATCH') {
+      agency = body.agency;
+      return json({ agency });
+    }
     if (path === '/api/studio/client-profiles' && method === 'POST') {
       const client = {
         ...body,
@@ -118,7 +136,7 @@ test('desktop addressbook saves private identity, preferences and travel feedbac
     name: 'synthetic-client.png',
     mimeType: 'image/png',
     buffer: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6N3VEAAAAASUVORK5CYII=',
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=',
       'base64',
     ),
   });
@@ -157,6 +175,35 @@ test('desktop addressbook saves private identity, preferences and travel feedbac
     'United Kingdom',
   );
   await page.screenshot({ path: '/private/tmp/asktara-addressbook-desktop.png', fullPage: true });
+  expect(mocked.unexpected).toEqual([]);
+});
+
+test('agency branding processes a logo inside production image policy and preserves it after saving and reload', async ({
+  page,
+}) => {
+  const mocked = await mockClients(page, [initialClient], { signedIn: true });
+  await page.goto('/settings/agency');
+  await page
+    .getByRole('textbox', { name: 'Agency name', exact: true })
+    .fill('Fictional Garden Journeys');
+  await page.getByLabel('Agency logo · PNG or JPEG', { exact: true }).setInputFiles({
+    name: 'synthetic-agency-logo.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=',
+      'base64',
+    ),
+  });
+  const preview = page.getByRole('img', { name: 'Agency logo preview', exact: true });
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveAttribute('src', /^data:image\/jpeg;base64,/);
+  await page.getByRole('button', { name: 'Save agency settings', exact: true }).click();
+  await expect(page.getByText('Agency settings saved.', { exact: true })).toBeVisible();
+  const saved = mocked.writes.find((write) => write.path === '/api/studio/agency')!.body.agency;
+  expect(saved.name).toBe('Fictional Garden Journeys');
+  expect(saved.logoDataUrl).toMatch(/^data:image\/jpeg;base64,/);
+  await page.reload();
+  await expect(preview).toHaveAttribute('src', saved.logoDataUrl);
   expect(mocked.unexpected).toEqual([]);
 });
 
@@ -220,9 +267,18 @@ test('home composer retains its typed brief while client selection precedes atom
   const picker = page.getByRole('dialog', { name: 'Who is this proposal for?', exact: true });
   await picker.getByRole('button', { name: /^Fictional Noor/ }).click();
   await picker.getByRole('button', { name: 'Start proposal', exact: true }).click();
-  await expect(page).toHaveURL(/\/studio\/.*\?q=A%20quiet%20garden%20holiday/);
+  await expect(page).toHaveURL(new RegExp(`/studio/${mocked.workspace().id}$`));
+  await expect
+    .poll(() => mocked.writes.filter((write) => write.path.endsWith('/review')).length)
+    .toBe(1);
+  expect(mocked.writes.find((write) => write.path.endsWith('/review'))!.body.message).toBe(
+    'A quiet garden holiday in Japan',
+  );
   expect(mocked.writes.find((write) => write.path === '/api/studio/workspaces')!.body).toEqual({
     clientId: initialClient.id,
   });
   expect(mocked.unexpected).toEqual([]);
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Interactive itinerary' })).toBeVisible();
+  expect(mocked.writes.filter((write) => write.path.endsWith('/review'))).toHaveLength(1);
 });
