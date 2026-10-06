@@ -8,7 +8,7 @@ Open **Existing clients** in the left sidebar. Save or edit identity, a private 
 
 **Create a proposal** first opens a client picker. Select a saved client or create one, then start the proposal. The server creates the proposal and links the owned client atomically. It copies the client’s preferences and relevant context, while leaving dates and the travelling party undecided. Photos and DOB stay out of recommendation-model inputs and client-facing proposals.
 
-The selected client appears above the conversation. With an undecided destination, Tara automatically researches ideas around their preferences and travel feedback. Eligible suggestions can become a draft route with one click; suggested stay lengths are clearly drafts to confirm. Changes to relevant saved preferences/history invalidate old inspiration without overwriting the current trip.
+The selected client appears above the conversation. With an undecided destination, Tara automatically researches ideas around their preferences and travel feedback. Eligible suggestions can become a draft route with one click; suggested stay lengths are clearly drafts to confirm. Ideas with incomplete or adverse travel advice stay visible with a review label and cannot be chosen as checked recommendations. Changes to relevant saved preferences/history invalidate old inspiration without overwriting the current trip.
 
 ## Work in the conversation
 

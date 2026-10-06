@@ -948,6 +948,7 @@ export default function Studio() {
                 onClient={() => setClientPickerOpen(true)}
                 onChoose={(candidate) => void chooseDestination(candidate).catch(() => {})}
                 onResearch={inspiration.refresh}
+                onReview={() => openTool('structure')}
               />
               {inspiration.error && (
                 <Text size="1" color="gray" role="status">

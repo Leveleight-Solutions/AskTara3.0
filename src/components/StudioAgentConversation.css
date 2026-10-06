@@ -313,3 +313,26 @@
     align-self: flex-start;
   }
 }
+
+.studio-destination-needs-review {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--gray-a5);
+  border-radius: 10px;
+  background: var(--gray-a2);
+  color: var(--gray-11);
+  min-width: 0;
+}
+.studio-destination-needs-review > button {
+  font-size: 11px;
+  padding: 6px 8px;
+  margin-top: auto;
+  color: var(--accent-11);
+  background: var(--gray-a2);
+}
+.studio-destination-needs-review > small {
+  color: var(--amber-11);
+}

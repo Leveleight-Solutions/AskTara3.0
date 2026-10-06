@@ -390,3 +390,38 @@ test('changing the declared budget refreshes automatic client inspiration withou
   ).toBe(true);
   expect(mocked.unexpected).toEqual([]);
 });
+
+test('unverified history-based ideas remain visible for review and cannot be chosen as checked recommendations', async ({
+  page,
+}) => {
+  const workspace = fixture(false);
+  workspace.destinationResearch = {
+    generatedAt: new Date().toISOString(),
+    inputKey: 'unverified-inspiration',
+    passportNationality: 'AU',
+    warnings: [],
+    candidates: [
+      {
+        destination: 'Coimbra',
+        country: 'Portugal',
+        countryCode: 'PT',
+        reason: 'Quiet gardens fit the supplied travel feedback.',
+        suggestedDays: 5,
+        status: 'unverified',
+        recommendable: false,
+        sources: [],
+        seasonalNotes: '',
+        travelAdvice: '',
+      },
+    ],
+  } as any;
+  await mock(page, workspace);
+  await page.goto(`/studio/${workspace.id}`);
+  const inspiration = page.getByRole('region', {
+    name: 'Selected client and personalised inspiration',
+  });
+  await expect(inspiration).toContainText('Coimbra');
+  await expect(inspiration).toContainText('Current advice needs review');
+  await expect(inspiration.getByRole('button', { name: /Coimbra.*Choose/ })).toHaveCount(0);
+  expect(workspace.stops).toHaveLength(0);
+});

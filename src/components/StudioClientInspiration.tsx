@@ -11,6 +11,7 @@ export function StudioClientInspiration({
   onClient,
   onChoose,
   onResearch,
+  onReview,
 }: {
   workspace: StudioWorkspace;
   profile?: StudioClientProfile;
@@ -19,11 +20,9 @@ export function StudioClientInspiration({
   onClient: () => void;
   onChoose: (candidate: StudioDestinationCandidate) => void;
   onResearch: () => void;
+  onReview: () => void;
 }) {
-  const candidates =
-    workspace.destinationResearch?.candidates.filter(
-      (candidate) => candidate.recommendable && candidate.status !== 'blocked',
-    ) || [];
+  const candidates = workspace.destinationResearch?.candidates || [];
   const preferences = [...workspace.brief.interests, ...(workspace.brief.foodPreferences || [])]
     .filter(Boolean)
     .slice(0, 5);
@@ -70,26 +69,47 @@ export function StudioClientInspiration({
           </div>
           {candidates.length ? (
             <div className="studio-destination-ideas">
-              {candidates.slice(0, 3).map((candidate) => (
-                <button
-                  key={`${candidate.destination}:${candidate.countryCode}`}
-                  disabled={busy}
-                  onClick={() => onChoose(candidate)}
-                >
-                  <MapPin size={17} />
-                  <strong>{candidate.destination}</strong>
-                  <span>{candidate.reason}</span>
-                  <small>{candidate.suggestedDays} suggested days · Choose</small>
-                </button>
-              ))}
+              {candidates.slice(0, 3).map((candidate) =>
+                candidate.recommendable && candidate.status !== 'blocked' ? (
+                  <button
+                    key={`${candidate.destination}:${candidate.countryCode}`}
+                    disabled={busy}
+                    onClick={() => onChoose(candidate)}
+                  >
+                    <MapPin size={17} />
+                    <strong>{candidate.destination}</strong>
+                    <span>{candidate.reason}</span>
+                    <small>{candidate.suggestedDays} suggested days · Choose</small>
+                  </button>
+                ) : (
+                  <article
+                    key={`${candidate.destination}:${candidate.countryCode}`}
+                    className="studio-destination-needs-review"
+                  >
+                    <MapPin size={17} />
+                    <strong>{candidate.destination}</strong>
+                    <span>{candidate.reason}</span>
+                    <small>
+                      {candidate.status === 'blocked'
+                        ? 'Not recommended · advice warning'
+                        : 'Current advice needs review'}
+                    </small>
+                    <button type="button" disabled={busy} onClick={onReview}>
+                      Review travel advice
+                    </button>
+                  </article>
+                ),
+              )}
             </div>
           ) : (
             <p className="studio-inspiration-placeholder">
               {researching
                 ? 'Tara is checking destination ideas and current advice. You can keep chatting.'
-                : preferences.length
-                  ? 'Tell Tara the occasion and dates, or explore destinations around these preferences.'
-                  : 'Add travel interests or previous-trip feedback to personalise the suggestions.'}
+                : workspace.destinationResearch
+                  ? 'No destination ideas were returned for these details. Try different dates or interests.'
+                  : preferences.length
+                    ? 'Tell Tara the occasion and dates, or explore destinations around these preferences.'
+                    : 'Add travel interests or previous-trip feedback to personalise the suggestions.'}
             </p>
           )}
         </>
