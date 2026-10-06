@@ -523,8 +523,12 @@ function money(source: string): {
     perPerson: affirmativeBasis(
       /\b(?:per person|per traveller|per traveler|each person|pp)\b|\/\s*person\b/,
     ),
-    perDay: affirmativeBasis(/\b(?:per day|a day|daily)\b|\/\s*day\b/),
-    perNight: affirmativeBasis(/\b(?:per night|a night|nightly)\b|\/\s*night\b/),
+    perDay: affirmativeBasis(
+      /\b(?:per day|a day)\b|\/\s*day\b|\bdaily\s+(?:budget|spend|allowance|rate|price|cost)\b/,
+    ),
+    perNight: affirmativeBasis(
+      /\b(?:per night|a night)\b|\/\s*night\b|\bnightly\s+(?:budget|rate|price|cost)\b/,
+    ),
   };
 }
 
@@ -962,14 +966,24 @@ export function groundedStudioBrief(
     valid.find((fact) => fact.field === 'currency');
   if (moneyFact) {
     const source = moneyFact.sources[0];
-    const budgetScope = source.match(/\b(?:budget|spend|total group price)[^;\n]{0,250}/i)?.[0];
+    const budgetSentence = source
+      .split(/(?<=[.!?])\s+|[;\n]/)
+      .find((sentence) => /\b(?:budget|spend|total group price)\b/i.test(sentence));
+    const budgetScope = budgetSentence?.match(
+      /\b(?:budget|spend|total group price)[^;\n]{0,250}/i,
+    )?.[0];
     const detail = money(budgetScope || source);
+    // A labelled daily/nightly allowance may precede its amount, but an unrelated
+    // daily rest break or nightly activity never establishes the budget basis.
+    if (budgetSentence) {
+      if (/\bdaily\s+(?:budget|spend|allowance|rate|price|cost)\b/i.test(budgetSentence))
+        detail.perDay ||= money(budgetSentence).perDay;
+      if (/\bnightly\s+(?:budget|rate|price|cost)\b/i.test(budgetSentence))
+        detail.perNight ||= money(budgetSentence).perNight;
+    }
     if (!detail.currency && budgetScope) {
       // A currency can precede its label ("Use EUR for the budget"). Only
       // borrow currency from that sentence, never an unrelated earlier quote.
-      const budgetSentence = source
-        .split(/(?<=[.!?])\s+|[;\n]/)
-        .find((sentence) => /\b(?:budget|spend|total group price)\b/i.test(sentence));
       detail.currency = money(budgetSentence || budgetScope).currency;
     }
     if (bareNumber(source) && !contextual(source, 'budget')) detail.amount = undefined;
@@ -1058,11 +1072,15 @@ function routeEntries(source: string): { name: string; country: string; nights: 
         /^(?:(?:and|then|visit|plan|stay in|go to|travel to|a trip to|trip to|to|we want|we would like)\s+)+/i,
         '',
       )
+      .replace(
+        /\s+(?:for\s+)?(?:exactly|precisely|roughly|about|around|approximately|just|only)$/i,
+        '',
+      )
       .trim();
     if (
       !name ||
       /\b(?:adults?|children|budget|hotels?|proposal|nights?)\b/i.test(name) ||
-      /^(?:for|about|around|approximately|stay|staying|spend|spending|I|we|they|it|the|a|an)\b/i.test(
+      /^(?:for|exactly|precisely|roughly|about|around|approximately|just|only|stay|staying|spend|spending|I|we|they|it|the|a|an)\b/i.test(
         name,
       )
     )

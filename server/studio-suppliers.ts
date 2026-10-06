@@ -8,6 +8,7 @@ import { studioHotelDestination } from './studio-models.ts';
 import { StudioError, type StudioStore } from './studio-store.ts';
 import { structureFingerprint } from './studio-domain.ts';
 import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
+import { buildStudioFlightQuote } from './studio-flight-planning.ts';
 import { publicHotelQuote, recommendStudioHotels } from './studio-hotels.ts';
 import { studioClientTravelHistory } from './studio-clients.ts';
 
@@ -222,7 +223,7 @@ export function installStudioSupplierRoutes(
       const current = store.require(ownerId, workspace.id, input.revision);
       requireSearchableParty(current, true);
       const now = new Date().toISOString();
-      const quotes = result.offers.map((offer) => ({
+      const quotes: StudioItem[] = result.offers.map((offer) => ({
         ...baseItem('hotel', result.mode, now),
         title: offer.name,
         description: [
@@ -249,6 +250,11 @@ export function installStudioSupplierRoutes(
           validated.childAges || [],
         ),
       );
+      quotes.forEach((quote, index) => {
+        const hotel = hotels[index];
+        quote.imageUrl = hotel.roomPhotos[0]?.url || hotel.photos[0]?.url;
+        quote.presentation = { kind: 'hotel', hotel };
+      });
       const recommendations = input.offset
         ? {
             status: 'unavailable' as const,
@@ -314,18 +320,21 @@ export function installStudioSupplierRoutes(
       const current = store.require(ownerId, workspace.id, revision);
       requireSearchableParty(current);
       const now = new Date().toISOString();
+      const mode = result.mode === 'test' || result.mode === 'live' ? result.mode : 'provider';
       const quotes = remember(
         ownerId,
         current,
-        result.offers.slice(0, 30).map((offer) => ({
-          expiresAt: offer.expiresAt,
-          item: {
+        result.offers.slice(0, 30).map((offer) => {
+          const item: StudioItem = {
             ...baseItem('flight', result.mode, now),
             supplier: result.source === 'duffel' ? 'Duffel' : 'LiteAPI',
             source: result.source === 'duffel' ? ('manual' as const) : ('liteapi' as const),
             title: `${offer.airline} · ${input.origin} to ${input.destination}${input.returnDate ? ' return' : ''}`,
             description: [
-              `${input.adults} adults · ${input.cabinClass.replaceAll('_', ' ')} · price for the complete requested journey.`,
+              offer.priceScope === 'all_passengers_complete_journey' &&
+              offer.passengerCount === input.adults
+                ? `${offer.passengerCount} adults · ${input.cabinClass.replaceAll('_', ' ')} · supplier total for the complete requested journey.`
+                : `Requested ${input.adults} adults · ${input.cabinClass.replaceAll('_', ' ')}. Quoted total; passenger coverage was not supplied and must be confirmed.`,
               ...(offer.journeys?.map(
                 (journey) =>
                   `${journey.origin.code} → ${journey.destination.code}: ${journey.departure} – ${journey.arrival}; ${journey.connections} connections${journey.duration ? `; ${journey.duration}` : ''}`,
@@ -336,11 +345,18 @@ export function installStudioSupplierRoutes(
             endDate: input.returnDate || '',
             price: offer.price,
             currency: offer.currency,
-          },
-        })),
+          };
+          const flight = buildStudioFlightQuote(offer, item.id, current, mode, now);
+          item.imageUrl = flight.airlineLogoUrl;
+          item.presentation = { kind: 'flight', flight };
+          return { expiresAt: offer.expiresAt, item };
+        }),
       );
       res.json({
         quotes,
+        flights: quotes.flatMap((quote) =>
+          quote.presentation?.kind === 'flight' ? [quote.presentation.flight] : [],
+        ),
         mode: result.mode,
         warning: `${result.warning} Selecting a quote only adds it to the proposal. It does not hold a fare, issue a ticket or create a reservation.`,
       });

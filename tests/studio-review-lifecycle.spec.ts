@@ -26,13 +26,21 @@ async function bootstrap(
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     const json = (value: unknown) => route.fulfill({ json: value });
-    if (path === '/api/session') return json({ user: null });
+    if (path === '/api/session')
+      return json({
+        user: {
+          id: 'b6000000-0000-4000-8000-000000000001',
+          name: 'Fictional lifecycle agent',
+          email: 'agent@example.test',
+        },
+      });
     if (path === '/api/catalog') return json(catalog);
     if (path === '/api/profile') return json({ profile: defaultTravelProfile });
     if (path === '/api/saved') return json({ items: [] });
     if (path === '/api/integrations')
       return json({ ai: true, hotels: true, flights: true, activities: false, mode: 'live' });
     if (await studio(route, path, method)) return;
+    if (path === '/api/studio/workspaces' && method === 'GET') return json({ workspaces });
     if (path === '/api/studio/agency') return json({ agency: defaultStudioAgency() });
     if (path === '/api/studio/client-profiles') return json({ clients: [] });
     if (path === '/api/studio/clients')
@@ -68,7 +76,6 @@ function completeReview(current: StudioWorkspace, content: string) {
   return { workspace: current };
 }
 async function openOtherProposal(page: Page, title: string) {
-  await page.getByText('Background', { exact: true }).click();
   await page.getByRole('link', { name: title, exact: true }).click();
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
 }

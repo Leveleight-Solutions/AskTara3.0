@@ -4,12 +4,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
 import type { StudioClient, StudioWorkspace } from '../shared/studio.ts';
-import { StudioStore, StudioError } from './studio-store.ts';
+import { StudioStore, StudioError, newStudioWorkspace } from './studio-store.ts';
 import {
   applyStudioPatch,
   qualifyStudio,
   studioAgencySchema,
   studioPatchSchema,
+  studioBriefSchema,
+  studioStopSchema,
   structureFingerprint,
   replaceStudioRecommendations,
 } from './studio-domain.ts';
@@ -27,7 +29,10 @@ import {
 import {
   researchStudioDestinations,
   checkStudioEntryRequirements,
+  studioDestinationResearchInputKey,
 } from './studio-travel-research.ts';
+import { buildStudioAssistantActions } from '../shared/studio-assistant.ts';
+import { evidenceUrl } from './agents/openai.ts';
 import { extractStudioCruise } from './studio-cruise.ts';
 import {
   studioCruiseDraftSchema,
@@ -174,6 +179,7 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
         return res.json({
           ...cached,
           workspace: latest,
+          assistantActions: buildStudioAssistantActions(latest),
           replayed: true,
         });
       }
@@ -233,7 +239,11 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
           const savedWorkspace = unchanged
             ? latest!
             : store.save(current.owner_id, merged, latest?.revision ?? body.revision);
-          const result = { ...extra, workspace: savedWorkspace };
+          const result = {
+            ...extra,
+            workspace: savedWorkspace,
+            assistantActions: buildStudioAssistantActions(savedWorkspace),
+          };
           db.prepare(
             "UPDATE studio_requests SET status='completed',result=? WHERE owner_id=? AND request_id=?",
           ).run(JSON.stringify(result), current.owner_id, body.requestId);
@@ -311,17 +321,61 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     res.json({ workspaces: store.list(session(res).owner_id) }),
   );
   app.post('/api/studio/workspaces', (req, res) => {
-    z.object({})
+    const body = z
+      .object({
+        clientId: z.string().uuid().optional(),
+        title: z.string().trim().min(1).max(300).optional(),
+        brief: studioBriefSchema.partial().optional(),
+        stops: z.array(studioStopSchema).max(20).optional(),
+      })
       .strict()
       .parse(req.body || {});
     requireActiveSession(res);
-    const workspace = store.create(session(res).owner_id);
-    workspace.qualification = qualifyStudio(workspace, store.getAgency(session(res).owner_id));
-    res
-      .status(201)
-      .json({ workspace: store.save(session(res).owner_id, workspace, workspace.revision) });
+    const ownerId = session(res).owner_id;
+    if (body.clientId && body.brief?.clientId && body.clientId !== body.brief.clientId)
+      throw new StudioError(400, 'Choose one client profile for the new trip.');
+    const clientId = body.clientId || body.brief?.clientId || '';
+    const profile = clientId ? getStudioClientProfile(db, ownerId, clientId) : null;
+    if (clientId && !profile) throw new StudioError(404, 'Client profile not found.');
+    const workspace = newStudioWorkspace();
+    if (profile)
+      Object.assign(workspace.brief, {
+        clientId: profile.id,
+        clientName: profile.name,
+        context: profile.context,
+        passportNationality: profile.passportNationality,
+        interests: profile.interests,
+        foodPreferences: profile.foodPreferences,
+      });
+    applyStudioPatch(
+      workspace,
+      {
+        revision: workspace.revision,
+        ...(body.title
+          ? { title: body.title }
+          : profile
+            ? { title: `${profile.name} — new proposal` }
+            : {}),
+        ...(body.brief ? { brief: body.brief } : {}),
+        ...(body.stops ? { stops: body.stops } : {}),
+      },
+      store.getAgency(ownerId),
+    );
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      store.create(ownerId, workspace);
+      store.save(ownerId, workspace, workspace.revision);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    res.status(201).json({ workspace, assistantActions: buildStudioAssistantActions(workspace) });
   });
-  app.get('/api/studio/workspaces/:id', (req, res) => res.json({ workspace: owned(req, res) }));
+  app.get('/api/studio/workspaces/:id', (req, res) => {
+    const workspace = owned(req, res);
+    res.json({ workspace, assistantActions: buildStudioAssistantActions(workspace) });
+  });
   app.patch('/api/studio/workspaces/:id', (req, res) => {
     const body = studioPatchSchema.parse(req.body),
       workspace = owned(req, res, body.revision);
@@ -337,7 +391,8 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
     )
       throw new StudioError(400, 'Daily plan refers to an unknown cruise.');
     applyStudioPatch(workspace, body, store.getAgency(session(res).owner_id));
-    res.json({ workspace: save(res, workspace, body.revision) });
+    const saved = save(res, workspace, body.revision);
+    res.json({ workspace: saved, assistantActions: buildStudioAssistantActions(saved) });
   });
   app.put('/api/studio/workspaces/:id/pin', (req, res) => {
     const { pinned } = z.object({ pinned: z.boolean() }).strict().parse(req.body);
@@ -563,18 +618,135 @@ export function installStudioRoutes(app: Express, deps: Dependencies) {
   });
   app.post('/api/studio/workspaces/:id/destinations/research', limiter, async (req, res) => {
     const body = actionSchema.parse(req.body);
-    await action(req, res, 'destination-research', body, async (workspace, signal) => {
-      const history = studioClientTravelHistory(
+    const historyFor = (workspace: StudioWorkspace) =>
+      studioClientTravelHistory(
         db,
         store,
         session(res).owner_id,
         workspace.brief.clientId || '',
         workspace.id,
       );
-      workspace.destinationResearch = await researchStudioDestinations(workspace, history, signal);
-      return { research: workspace.destinationResearch };
-    });
+    const profileFor = (workspace: StudioWorkspace) =>
+      workspace.brief.clientId
+        ? getStudioClientProfile(db, session(res).owner_id, workspace.brief.clientId) || undefined
+        : undefined;
+    await action(
+      req,
+      res,
+      'destination-research',
+      body,
+      async (workspace, signal) => {
+        const history = studioClientTravelHistory(
+          db,
+          store,
+          session(res).owner_id,
+          workspace.brief.clientId || '',
+          workspace.id,
+        );
+        const inputKey = studioDestinationResearchInputKey(
+          workspace,
+          history,
+          profileFor(workspace),
+        );
+        workspace.destinationResearch = await researchStudioDestinations(
+          workspace,
+          history,
+          signal,
+        );
+        workspace.destinationResearch.inputKey = inputKey;
+        return { research: workspace.destinationResearch };
+      },
+      {
+        abortOnDisconnect: true,
+        merge: (current, _researched, result) => {
+          const research = result.research as NonNullable<StudioWorkspace['destinationResearch']>;
+          if (
+            research.inputKey !==
+            studioDestinationResearchInputKey(current, historyFor(current), profileFor(current))
+          )
+            throw new StudioError(
+              409,
+              'The client preferences or route changed while suggestions were researched.',
+              'STUDIO_RESEARCH_STALE',
+            );
+          current.destinationResearch = research;
+          return current;
+        },
+        skipSave: (current, result) =>
+          JSON.stringify(current.destinationResearch) === JSON.stringify(result.research),
+      },
+    );
   });
+  app.post(
+    '/api/studio/workspaces/:id/recommendations/:recommendationId/add-to-day',
+    (req, res) => {
+      const body = z
+        .object({
+          revision,
+          day: z.number().int().min(1).max(366),
+          period: z.enum(['morning', 'afternoon', 'evening', 'flexible']),
+        })
+        .strict()
+        .parse(req.body);
+      const current = owned(req, res);
+      if (!current.structureAccepted || !current.itinerary)
+        throw new StudioError(
+          409,
+          'Confirm the route and create a daily itinerary before adding ideas.',
+        );
+      const recommendation = current.recommendations.find(
+        (item) => item.id === String(req.params.recommendationId),
+      );
+      if (!recommendation) throw new StudioError(404, 'Recommendation not found.');
+      const day = current.itinerary.days.find((item) => item.day === body.day);
+      if (!day) throw new StudioError(404, 'Itinerary day not found.');
+      if (recommendation.stopId && !day.stopIds.includes(recommendation.stopId))
+        throw new StudioError(400, 'Choose an itinerary day at this recommendation’s destination.');
+      const copied = {
+        period: body.period,
+        title: recommendation.name.slice(0, 200),
+        description: recommendation.description.slice(0, 1200),
+        sources: recommendation.sources
+          .filter(
+            (source) =>
+              evidenceUrl(source.url) &&
+              Number.isFinite(Date.parse(source.checkedAt)) &&
+              Date.parse(source.checkedAt) <= Date.now() + 60000,
+          )
+          .slice(0, 5)
+          .map((source) => ({
+            label: source.label.slice(0, 200),
+            url: evidenceUrl(source.url)!,
+            checkedAt: source.checkedAt,
+          })),
+      };
+      if (!copied.sources.length)
+        throw new StudioError(
+          409,
+          'This recommendation has no verified stored source. Research it again.',
+        );
+      if (day.activities.some((activity) => JSON.stringify(activity) === JSON.stringify(copied))) {
+        res.json({
+          workspace: current,
+          inserted: false,
+          assistantActions: buildStudioAssistantActions(current),
+        });
+        return;
+      }
+      store.require(session(res).owner_id, current.id, body.revision);
+      if (day.activities.length >= 20)
+        throw new StudioError(400, 'Keep at most 20 activities on this day.');
+      day.activities.push(copied);
+      recommendation.included = true;
+      current.itineraryManual = true;
+      const saved = save(res, current, body.revision);
+      res.json({
+        workspace: saved,
+        inserted: true,
+        assistantActions: buildStudioAssistantActions(saved),
+      });
+    },
+  );
   app.post('/api/studio/workspaces/:id/entry-requirements', limiter, async (req, res) => {
     const body = actionSchema.extend({ stopId: z.string().max(80).optional() }).parse(req.body);
     await action(req, res, 'entry-requirements', body, async (workspace, signal) => {

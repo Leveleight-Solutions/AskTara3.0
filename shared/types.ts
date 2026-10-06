@@ -126,10 +126,13 @@ export interface FlightAirport {
   name?: string;
   city?: string;
   timeZone?: string;
+  /** ISO country code only when the supplier supplied it; never guessed from an airport code. */
+  countryCode?: string;
 }
 export interface FlightCarrier {
   name: string;
   code?: string;
+  logoUrl?: string;
 }
 export interface FlightSegment {
   id: string;
@@ -166,12 +169,23 @@ export interface FlightJourney {
   connections: number;
   stops: number;
   segments: FlightSegment[];
+  /** Explicit supplier connection facts, when provided independently of local segment times. */
+  connectionDetails?: {
+    arrivalAirport: FlightAirport;
+    departureAirport: FlightAirport;
+    arrival: string;
+    departure: string;
+    durationMinutes?: number;
+    airportChange: boolean;
+    overnight: boolean;
+  }[];
 }
 export interface FlightOffer {
   /** Owner-scoped reference for sandbox checkout, issued by the search endpoint. */
   bookingOfferId?: string;
   id: string;
   airline: string;
+  airlineLogoUrl?: string;
   origin: string;
   destination: string;
   departure: string;

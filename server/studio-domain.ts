@@ -106,6 +106,8 @@ export const studioItemSchema = z
     included: z.boolean(),
     needsReview: z.boolean(),
     cost: amount,
+    imageUrl: z.string().url().max(2048).optional(),
+    presentation: z.unknown().optional(),
   })
   .strict();
 export const studioRecommendationSchema = z
@@ -433,6 +435,7 @@ export function applyStudioPatch(
   const researchBasis = (value: StudioWorkspace) =>
     JSON.stringify({
       clientId: value.brief.clientId || '',
+      context: value.brief.context,
       destination: value.brief.preferredDestination || '',
       country: value.brief.destinationCountry || '',
       start: value.brief.startDate,
@@ -494,10 +497,19 @@ export function applyStudioPatch(
     const originals = new Map(workspace.items.map((item) => [item.id, item]));
     workspace.items = patch.items.map((item) => {
       const old = originals.get(item.id);
+      if (
+        (item.imageUrl !== undefined && item.imageUrl !== old?.imageUrl) ||
+        (item.presentation !== undefined &&
+          !isDeepStrictEqual(item.presentation, old?.presentation))
+      )
+        throw new StudioError(
+          400,
+          'Supplier presentation and media can only come from a selected quote.',
+        );
       if (item.source === 'liteapi' && (!old || old.source !== 'liteapi'))
         throw new StudioError(400, 'Select a returned supplier quote before adding it.');
       if (
-        old?.source === 'liteapi' &&
+        (old?.source === 'liteapi' || old?.presentation) &&
         (
           [
             'source',
@@ -533,7 +545,11 @@ export function applyStudioPatch(
         );
       if (item.startDate && item.endDate && item.endDate < item.startDate)
         throw new StudioError(400, 'An item end date precedes its start.');
-      return item;
+      return {
+        ...item,
+        ...(old?.imageUrl ? { imageUrl: old.imageUrl } : {}),
+        presentation: old?.presentation,
+      };
     });
     if (new Set(workspace.items.map((i) => i.id)).size !== workspace.items.length)
       throw new StudioError(400, 'Item identifiers must be unique.');

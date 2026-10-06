@@ -38,12 +38,14 @@ export function StudioGuidedBrief({
   onSave,
   onContinue,
   onAsk,
+  questionId,
 }: {
   workspace: StudioWorkspace;
   disabled: boolean;
   onSave: (answer: Answer) => Promise<void>;
   onContinue: () => void;
   onAsk: (text: string) => void;
+  questionId?: string;
 }) {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [selected, setSelected] = useState('');
@@ -68,8 +70,8 @@ export function StudioGuidedBrief({
     questions.find((q) => q.id === selected) || questions.find((q) => !skipped.includes(q.id));
   useEffect(() => {
     setSkipped([]);
-    setSelected('');
-  }, [workspace.id]);
+    setSelected(questionId || '');
+  }, [workspace.id, questionId]);
   useEffect(() => {
     const brief = workspace.brief;
     setValues({

@@ -7,6 +7,7 @@ import type { StudioTravelHistoryEntry } from '../shared/studio-travel-research.
 import { normalizeStudioCountry } from '../shared/studio-travel-research.ts';
 import { StudioError, type StudioStore } from './studio-store.ts';
 import { redactIdentityAndPayment } from './studio-imports.ts';
+import { studioRecommendationHistory } from './studio-client-context.ts';
 
 const text = (max: number) => z.string().trim().max(max).transform(redactIdentityAndPayment);
 const country = z
@@ -188,12 +189,42 @@ export function installStudioClientRoutes(
     const data = studioClientProfileSchema.parse(req.body);
     const client = { ...data, id: previous.id, updatedAt: new Date().toISOString() };
     requireActiveSession(res);
-    db.prepare('UPDATE studio_clients SET data=?,updated_at=? WHERE id=? AND owner_id=?').run(
-      JSON.stringify(client),
-      client.updatedAt,
-      client.id,
-      session(res).owner_id,
-    );
+    const researchBasis = (profile: StudioClientProfile) =>
+      JSON.stringify({
+        context: profile.context,
+        interests: profile.interests,
+        foodPreferences: profile.foodPreferences,
+        history: studioRecommendationHistory(profile.history),
+      });
+    const ownerId = session(res).owner_id;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('UPDATE studio_clients SET data=?,updated_at=? WHERE id=? AND owner_id=?').run(
+        JSON.stringify(client),
+        client.updatedAt,
+        client.id,
+        ownerId,
+      );
+      if (researchBasis(previous) !== researchBasis(client)) {
+        // Invalidate only cached inspiration. Existing trip facts, manual days and
+        // supplier selections remain explicit choices for that trip.
+        const linked = db
+          .prepare(
+            "SELECT id FROM studio_workspaces WHERE owner_id=? AND json_extract(data,'$.brief.clientId')=?",
+          )
+          .all(ownerId, client.id);
+        for (const row of linked) {
+          const workspace = store.require(ownerId, String(row.id));
+          if (!workspace.destinationResearch) continue;
+          workspace.destinationResearch = null;
+          store.save(ownerId, workspace, workspace.revision);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
     res.json({ client });
   });
   app.delete('/api/studio/client-profiles/:clientId', (req, res) => {
@@ -209,6 +240,7 @@ export function installStudioClientRoutes(
       for (const workspace of store.list(session(res).owner_id))
         if (workspace.brief.clientId === client.id) {
           workspace.brief.clientId = '';
+          workspace.destinationResearch = null;
           store.save(session(res).owner_id, workspace, workspace.revision);
         }
       db.exec('COMMIT');

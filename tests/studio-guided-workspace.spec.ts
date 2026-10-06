@@ -7,7 +7,12 @@ import { newStudioWorkspace } from '../server/studio-store';
 import { applyStudioPatch, qualifyStudio } from '../server/studio-domain';
 import { buildStudioClientProposal } from '../server/studio-proposals';
 import { fulfilSyntheticTripBriefing, syntheticTripBriefing } from './studio-trip-briefing-fixture';
-import { choose, openStudioClientDesk as openDesk } from './ui-helpers';
+import {
+  choose,
+  closeStudioTool,
+  openStudioClientDesk as openDesk,
+  openStudioTool,
+} from './ui-helpers';
 
 const agency = defaultStudioAgency();
 function fixture(withRoute = false): StudioWorkspace {
@@ -149,14 +154,13 @@ async function mockWorkspace(
   };
 }
 
-test('a new mobile workspace opens its intake and one actionable question', async ({ page }) => {
+test('a new mobile workspace exposes one actionable question through its trip editor', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const workspace = fixture();
   const mocked = await mockWorkspace(page, workspace);
-  await expect(page.getByRole('tab', { name: 'Trip workspace', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await openStudioTool(page, 'Client & trip');
   await expect(page.getByRole('tab', { name: 'Client & trip', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -174,10 +178,9 @@ test('a new mobile workspace opens its intake and one actionable question', asyn
     page.getByRole('button', { name: 'Research destinations', exact: true }),
   ).toHaveCount(0);
   expect(mocked.writes).toEqual([]);
-  await expect(page.getByRole('region', { name: 'Proposal canvas', exact: true })).toHaveCSS(
-    'opacity',
-    '1',
-  );
+  await expect(
+    page.getByRole('region', { name: 'Interactive itinerary', exact: true, includeHidden: true }),
+  ).toHaveCSS('opacity', '1');
   await page.screenshot({ path: '/tmp/asktara-guided-mobile.png' });
   await expect(
     page
@@ -198,7 +201,7 @@ test('common party answers save directly by keyboard and advance to the next que
   workspace.brief.children = null;
   workspace.qualification = qualifyStudio(workspace, agency);
   const mocked = await mockWorkspace(page, workspace);
-  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
+  await openStudioTool(page, 'Client & trip');
   const guide = page.getByRole('region', { name: 'Guided brief', exact: true });
   await expect(page.getByTestId('studio-next-question')).toContainText('How many adults');
   const twoAdults = guide.getByRole('button', { name: '2 adults', exact: true });
@@ -217,29 +220,29 @@ test('common party answers save directly by keyboard and advance to the next que
   ]);
   expect(mocked.writes.some(({ path }) => path.endsWith('/review'))).toBe(false);
   await page.reload();
+  await openStudioTool(page, 'Client & trip');
   expect(workspace.brief.adults).toBe(2);
   expect(workspace.brief.children).toBe(0);
   await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
   expect(mocked.unexpected).toEqual([]);
 });
 
-test('mobile pane switching retains desk and chat drafts, and saving persists only explicit details', async ({
+test('mobile editor preserves chat draft and saving persists only explicit customer details', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const workspace = fixture();
   const mocked = await mockWorkspace(page, workspace);
-  const desk = await openDesk(page);
-  await desk.getByRole('textbox', { name: 'Client name', exact: true }).fill('Synthetic Family');
-  await page.getByRole('tab', { name: 'Chat with Tara', exact: true }).click();
   const message = page.getByRole('textbox', {
     name: 'Client request or planning notes',
     exact: true,
   });
   await message.fill('Draft client request');
   await message.press('Shift+Enter');
-  await message.press('Tab');
-  await page.getByRole('tab', { name: 'Trip workspace', exact: true }).click();
+  const desk = await openDesk(page);
+  await desk.getByRole('textbox', { name: 'Client name', exact: true }).fill('Synthetic Family');
+  await desk.getByRole('tab', { name: 'Trip', exact: true }).click();
+  await desk.getByRole('tab', { name: 'Client', exact: true }).click();
   await expect(desk.getByRole('textbox', { name: 'Client name', exact: true })).toHaveValue(
     'Synthetic Family',
   );
@@ -250,6 +253,7 @@ test('mobile pane switching retains desk and chat drafts, and saving persists on
   ]);
   expect(workspace.brief.adults).toBeNull();
   expect(workspace.brief.children).toBeNull();
+  await closeStudioTool(page);
   await page.getByRole('tab', { name: 'Chat with Tara', exact: true }).click();
   await expect(message).toHaveValue('Draft client request\n');
   await page.reload();
@@ -267,6 +271,7 @@ test('dated destinations load sourced entry and seasonal weather automatically, 
   const workspace = fixture(true);
   const mocked = await mockWorkspace(page, workspace);
   await expect.poll(() => mocked.briefingWrites().length).toBe(1);
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Tokyo',
   );
@@ -303,6 +308,7 @@ test('dated destinations load sourced entry and seasonal weather automatically, 
     ),
   ).toBe(true);
   await page.reload();
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic entry advice for Pakistan passport in Tokyo',
   );
@@ -319,6 +325,7 @@ test('automatic weather still appears when passport information is missing', asy
   workspace.qualification = qualifyStudio(workspace, agency);
   const mocked = await mockWorkspace(page, workspace);
   await expect.poll(() => mocked.briefingWrites().length).toBe(1);
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Add the passport nationality',
   );
@@ -357,6 +364,7 @@ test('a near-future briefing becomes visible when the browser clock catches up w
     if (request.isNavigationRequest() && request.resourceType() === 'document') mainNavigations++;
   });
   const mocked = await mockWorkspace(page, workspace);
+  await openStudioTool(page, 'Route');
   const panel = page.getByRole('region', { name: 'Travel briefing', exact: true });
   await expect(panel).toContainText('This briefing needs a refresh.');
   await expect(panel).not.toContainText('Synthetic seasonal outlook for Tokyo');
@@ -388,6 +396,7 @@ test('a briefing finishing during route edits preserves the draft and saves with
   const mocked = await mockWorkspace(page, workspace, { briefingGate });
   try {
     await expect.poll(() => mocked.briefingWrites().length).toBe(1);
+    await openStudioTool(page, 'Route');
     const notes = page.getByRole('textbox', { name: 'Notes for Tokyo', exact: true });
     await notes.fill('Keep this unsaved route note.');
     await expect(
@@ -405,6 +414,7 @@ test('a briefing finishing during route edits preserves the draft and saves with
       0,
     );
     await page.reload();
+    await openStudioTool(page, 'Route');
     await expect(page.getByRole('textbox', { name: 'Notes for Tokyo', exact: true })).toHaveValue(
       'Keep this unsaved route note.',
     );
@@ -420,6 +430,7 @@ test('one revision conflict retries the automatic briefing against the refreshed
   const workspace = fixture(true);
   const mocked = await mockWorkspace(page, workspace, { firstBriefingConflict: true });
   await expect.poll(() => mocked.briefingWrites().length).toBe(2);
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
     'Synthetic seasonal outlook for Tokyo',
   );
@@ -442,7 +453,7 @@ test('a background briefing preserves unsaved package pricing and its save uses 
   const mocked = await mockWorkspace(page, workspace, { briefingGate });
   try {
     await expect.poll(() => mocked.briefingWrites().length).toBe(1);
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await choose(
       page,
       page.getByRole('combobox', { name: 'Proposal format', exact: true }),
@@ -466,7 +477,7 @@ test('a background briefing preserves unsaved package pricing and its save uses 
     await expect.poll(() => workspace.pricing.packagePrice).toBe(7890);
     expect(mocked.briefWrites()[0].body.revision).toBe(2);
     await page.reload();
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await expect(
       page.getByRole('spinbutton', { name: 'Total package price', exact: true }),
     ).toHaveValue('7890');
@@ -490,7 +501,7 @@ test('a background travel briefing retains the reviewed client preview and its p
   const mocked = await mockWorkspace(page, workspace, { briefingGate });
   try {
     await expect.poll(() => mocked.briefingWrites().length).toBe(1);
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await page.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
     const preview = page.getByTestId('client-proposal');
     await expect(preview).toContainText('Synthetic guided workspace');
@@ -538,10 +549,12 @@ test('a foreground review cancels pending research and automatic checks resume o
     expect((await reviewResponse).status()).toBe(200);
     await expect(page.getByRole('log')).toContainText('Foreground review saved the planning note.');
     await expect.poll(() => mocked.briefingWrites().length).toBe(2);
+    await openStudioTool(page, 'Route');
     await expect(page.getByRole('region', { name: 'Travel briefing', exact: true })).toContainText(
       'Synthetic seasonal outlook for Tokyo',
     );
     expect(mocked.briefingWrites().map(({ body }) => body.revision)).toEqual([1, 2]);
+    await closeStudioTool(page);
     await expect(
       page.getByRole('heading', { name: 'Reviewed synthetic route', exact: true }),
     ).toBeVisible();
@@ -577,10 +590,10 @@ test('profile editing drafts survive desk tabs and disclosure while hidden contr
   await expect(profile.getByRole('textbox', { name: 'Profile name', exact: true })).toHaveValue(
     'Synthetic draft traveller',
   );
-  await page.getByRole('tab', { name: 'Route', exact: true }).click();
+  await openStudioTool(page, 'Route');
   await expect(profile).not.toBeVisible();
   await expect(page.getByRole('region', { name: 'Guided brief', exact: true })).not.toBeVisible();
-  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
+  await openStudioTool(page, 'Client & trip');
   await expect(profile.getByRole('textbox', { name: 'Profile name', exact: true })).toHaveValue(
     'Synthetic draft traveller',
   );

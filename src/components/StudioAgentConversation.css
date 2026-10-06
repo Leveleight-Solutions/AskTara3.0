@@ -1,0 +1,315 @@
+.studio-workspace .studio-tara-intro {
+  padding-bottom: 12px;
+}
+.studio-workspace .studio-tara-intro > p {
+  font-size: 12px;
+}
+.studio-conversation-client {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.studio-conversation-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  background: var(--accent-a3);
+  color: var(--accent-11);
+  overflow: hidden;
+}
+.studio-conversation-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.studio-conversation-client > div {
+  flex: 1;
+  min-width: 0;
+}
+.studio-conversation-client small {
+  display: block;
+  font-size: 9px;
+  color: var(--gray-10);
+  letter-spacing: 0.08em;
+}
+.studio-conversation-client strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.studio-conversation-client > button,
+.studio-inspiration-heading > button {
+  border: 0;
+  background: transparent;
+  color: var(--accent-11);
+  font-size: 11px;
+  cursor: pointer;
+}
+.studio-client-inspiration {
+  border: 1px solid var(--gray-a5);
+  border-radius: 13px;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--accent-a2), transparent);
+}
+.studio-client-preferences {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 11px 0 0;
+}
+.studio-client-preferences > span {
+  font-size: 10px;
+  padding: 4px 7px;
+  background: var(--gray-a3);
+  color: var(--gray-11);
+  border-radius: 5px;
+}
+.studio-inspiration-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+.studio-inspiration-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--gray-11);
+}
+.studio-destination-ideas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+.studio-destination-ideas button {
+  border: 1px solid var(--gray-a5);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 6px;
+  color: var(--gray-11);
+  background: var(--color-panel-solid);
+  text-align: left;
+  cursor: pointer;
+}
+.studio-destination-ideas strong {
+  font-size: 12px;
+  color: var(--gray-12);
+}
+.studio-destination-ideas span {
+  font-size: 10px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.studio-destination-ideas small {
+  font-size: 9px;
+  color: var(--accent-11);
+}
+.studio-inspiration-placeholder {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gray-10);
+  margin: 9px 0 0;
+}
+.studio-chat-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.studio-next-action {
+  background: var(--accent-a2);
+  border: 1px solid var(--accent-a4);
+  border-radius: 12px;
+  padding: 15px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+}
+.studio-next-action > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-11);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  grid-column: 1/-1;
+}
+.studio-next-action > strong {
+  font-size: 14px;
+  margin-top: 7px;
+}
+.studio-next-action > p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gray-10);
+  margin: 5px 0 0;
+  grid-column: 1;
+}
+.studio-next-action > button {
+  grid-column: 2;
+  grid-row: 2/4;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent-9);
+  color: var(--accent-contrast);
+  font-size: 11px;
+  cursor: pointer;
+}
+.studio-chat-action-chips {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.studio-chat-action-chips > button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid var(--gray-a5);
+  border-radius: 8px;
+  background: var(--color-panel-solid);
+  color: var(--gray-11);
+  font-size: 11px;
+  cursor: pointer;
+}
+.studio-action-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--green-11);
+  margin: 0;
+}
+.studio-chat-section-label {
+  font-size: 10px;
+  color: var(--gray-10);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  margin-bottom: 10px;
+}
+.studio-chat-ideas-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.studio-chat-ideas-grid > article {
+  display: flex;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--gray-a5);
+  border-radius: 12px;
+}
+.studio-chat-ideas-grid > article > div {
+  flex: 1;
+  min-width: 0;
+}
+.studio-idea-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--accent-a3);
+  color: var(--accent-11);
+  flex-shrink: 0;
+}
+.studio-chat-ideas-grid small {
+  font-size: 9px;
+  color: var(--gray-10);
+}
+.studio-chat-ideas-grid h3 {
+  font-size: 12px;
+  margin: 5px 0;
+}
+.studio-chat-ideas-grid p {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--gray-11);
+  margin: 5px 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.studio-idea-sources {
+  display: flex;
+  gap: 8px;
+  margin: 7px 0;
+}
+.studio-idea-sources a {
+  font-size: 9px;
+  color: var(--accent-11);
+  overflow-wrap: anywhere;
+}
+.studio-day-editor-row {
+  padding: 14px;
+  border: 1px solid var(--gray-a5);
+  border-radius: 11px;
+}
+.studio-agent-tool-modal .rt-TabsList {
+  overflow-x: auto;
+}
+.studio-agent-tool-modal .rt-TabsTrigger {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.studio-agent-tool-modal .rt-TabsContent {
+  margin-top: 20px;
+}
+.studio-workspace .studio-timeline-entry p {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.studio-workspace .studio-canvas-minimal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--gray-a4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.studio-workspace .studio-canvas-minimal-header strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.studio-client-inspiration button:focus-visible,
+.studio-chat-actions button:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 3px;
+}
+@media (max-width: 1000px) {
+  .studio-destination-ideas {
+    grid-template-columns: 1fr;
+  }
+  .studio-chat-ideas-grid {
+    grid-template-columns: 1fr;
+  }
+  .studio-next-action {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .studio-next-action > button {
+    align-self: flex-start;
+  }
+}

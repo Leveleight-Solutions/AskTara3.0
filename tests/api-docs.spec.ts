@@ -15,11 +15,17 @@ test('Swagger can execute a Studio request and retain the application session', 
     await page.getByRole('link', { name: 'Studio', exact: true }).click();
     await page
       .getByRole('button', {
-        name: 'POST /api/studio/workspaces Create an empty proposal workspace',
+        name: 'POST /api/studio/workspaces Create a proposal workspace, optionally for a saved client',
         exact: true,
       })
       .click();
     await page.getByRole('button', { name: 'Try it out', exact: true }).click();
+    // This session-only check creates an unlinked draft; saved-client creation is tested separately.
+    await page
+      .getByRole('textbox')
+      .filter({ hasNot: page.locator('[type="search"]') })
+      .last()
+      .fill('{}');
     const createdResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/api/studio/workspaces' &&

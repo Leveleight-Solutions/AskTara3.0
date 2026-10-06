@@ -1,3 +1,4 @@
+import { openStudioTool } from './ui-helpers';
 import { test, expect, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
@@ -132,6 +133,7 @@ for (const choice of [
       await expect(page.getByRole('log')).toContainText(
         `Confirmed ${choice.nights} nights in London.`,
       );
+      await openStudioTool(page, 'Route');
       await expect(page.getByLabel('Nights in London', { exact: true })).toHaveValue(
         String(choice.nights),
       );
@@ -154,8 +156,7 @@ test('origin departure can be edited without changing arrival at the first desti
     throw new Error('Editing the brief must not send a chat message.');
   });
   await page.goto(`/studio/${workspace.id}`);
-  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
-  await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
+  await page.getByRole('button', { name: 'Trip details', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Client brief' });
   await expect(dialog.getByLabel('Departure from origin', { exact: true })).toHaveValue(
     '2026-10-03',
@@ -167,8 +168,7 @@ test('origin departure can be edited without changing arrival at the first desti
   await dialog.getByRole('button', { name: 'Save brief', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
-  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
-  await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
+  await page.getByRole('button', { name: 'Trip details', exact: true }).click();
   await expect(dialog.getByLabel('Departure from origin', { exact: true })).toHaveValue(
     '2026-10-02',
   );

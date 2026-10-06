@@ -25,7 +25,7 @@ export async function runStudioAssistant(
     return {
       ...review,
       reply:
-        'The destination research is ready in Brief & route. Review current conditions and the travel advice before choosing a destination.',
+        'The destination ideas are ready above this conversation. Review their sources and current conditions, then choose a destination to plan.',
       nextAction: 'structure',
     };
   }
@@ -96,7 +96,7 @@ export async function runStudioAssistant(
     workspace.stage = 'itinerary';
     return {
       ...review,
-      reply: `Your ${workspace.itinerary.days.length}-day itinerary is ready, with sources for the suggested activities. Tell me what to change, explore hotel and flight options in Services, or preview the proposal when you’re ready.`,
+      reply: `Your ${workspace.itinerary.days.length}-day itinerary is ready, with sources for the suggested activities. Tell me what to change, choose hotel or flight options, or preview the proposal when you’re ready.`,
       nextAction: 'itinerary',
     };
   }
@@ -125,7 +125,7 @@ export async function runStudioAssistant(
     workspace.stage = 'recommendations';
     return {
       ...review,
-      reply: `I found ${recommendations.length} sourced ${category === 'food' ? 'food' : 'activity'} ideas. Choose the ones you want to include, or ask me to work them into the itinerary.`,
+      reply: `I found ${recommendations.length} sourced ${category === 'food' ? 'food' : 'activity'} ideas. Choose an idea and an itinerary day to add it to your saved plan.`,
       nextAction: 'recommendations',
     };
   }
@@ -142,7 +142,7 @@ export async function runStudioAssistant(
       ...review,
       reply:
         action === 'services'
-          ? 'Services is open for hotel and flight options or arrangements you already have. Search the options there, then ask me to update the itinerary around your selections.'
+          ? 'Choose a hotel or flight search below, or add an arrangement you already have. Selected options will appear beside your itinerary for review.'
           : 'Your proposal is ready to preview, including the saved itinerary and selected services. You can download its PDF or publish a link when you choose.',
       nextAction: action,
     };

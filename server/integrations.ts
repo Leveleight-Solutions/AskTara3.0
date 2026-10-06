@@ -10,6 +10,7 @@ import type {
 import { destinations } from '../shared/catalog.ts';
 import { flightSearchSchema, studioHotelSearchSchema } from './validation.ts';
 import { searchStudioHotelInventory, type HotelProviderResult } from './studio-hotels.ts';
+import { evidenceUrl } from './agents/openai.ts';
 
 type ProviderMode = 'test' | 'live' | 'provider';
 
@@ -54,8 +55,19 @@ const duffelAirport = z.object({
   name: z.string().nullish(),
   city_name: z.string().nullish(),
   time_zone: z.string().nullish(),
+  iata_country_code: z
+    .string()
+    .regex(/^[A-Z]{2}$/)
+    .nullish(),
 });
-const duffelCarrier = z.object({ name: z.string(), iata_code: z.string().nullish() });
+const duffelCarrier = z.object({
+  name: z.string(),
+  iata_code: z.string().nullish(),
+  logo_symbol_url: z.string().nullish(),
+  logo_lockup_url: z.string().nullish(),
+});
+const supplierLogo = (value: string | null | undefined) =>
+  value?.startsWith('https://') ? evidenceUrl(value) : undefined;
 const duffelSegment = z.object({
   id: z.string().optional(),
   departing_at: z.string().min(1),
@@ -120,6 +132,7 @@ function flightAirport(airport: z.infer<typeof duffelAirport>): FlightAirport {
     name: airport.name || undefined,
     city: airport.city_name || undefined,
     timeZone: airport.time_zone || undefined,
+    ...(airport.iata_country_code ? { countryCode: airport.iata_country_code } : {}),
   };
 }
 export function normalizeFlightOffer(
@@ -130,7 +143,15 @@ export function normalizeFlightOffer(
   if (!parsed.success || !Number.isFinite(Number(parsed.data.total_amount))) return null;
   const offer = parsed.data;
   const carrier = (value: z.infer<typeof duffelCarrier> | null | undefined) =>
-    value ? { name: value.name, code: value.iata_code || undefined } : undefined;
+    value
+      ? {
+          name: value.name,
+          code: value.iata_code || undefined,
+          ...(supplierLogo(value.logo_symbol_url || value.logo_lockup_url)
+            ? { logoUrl: supplierLogo(value.logo_symbol_url || value.logo_lockup_url) }
+            : {}),
+        }
+      : undefined;
   const journeys = offer.slices.map((slice, index) => {
     const segments = slice.segments.map((segment, segmentIndex) => ({
       id: segment.id || `${offer.id}-journey-${index}-segment-${segmentIndex}`,
@@ -187,6 +208,14 @@ export function normalizeFlightOffer(
     id: offer.id,
     airline:
       offer.owner?.name || outbound.segments[0].marketingCarrier?.name || 'Airline unavailable',
+    ...(supplierLogo(offer.owner?.logo_symbol_url || offer.owner?.logo_lockup_url) ||
+    outbound.segments[0].marketingCarrier?.logoUrl
+      ? {
+          airlineLogoUrl:
+            supplierLogo(offer.owner?.logo_symbol_url || offer.owner?.logo_lockup_url) ||
+            outbound.segments[0].marketingCarrier?.logoUrl,
+        }
+      : {}),
     origin: outbound.origin.code,
     destination: outbound.destination.code,
     departure: outbound.departure,
@@ -300,6 +329,8 @@ const liteFlightSegment = z.object({
       marketingName: z.string().optional(),
       operatingCode: z.string().optional(),
       operatingName: z.string().optional(),
+      marketingLogo: z.string().optional(),
+      operatingLogo: z.string().optional(),
     })
     .optional(),
   flight: z
@@ -324,6 +355,22 @@ const liteFlightJourney = z.object({
   cheapestOffer: liteFare.optional(),
   offers: z.array(liteFare).optional(),
   segments: z.array(liteFlightSegment).min(1),
+  connections: z
+    .array(
+      z.object({
+        arrivalAirportCode: z.string().regex(/^[A-Z]{3}$/),
+        arrivalAirportName: z.string().optional(),
+        departureAirportCode: z.string().regex(/^[A-Z]{3}$/),
+        departureAirportName: z.string().optional(),
+        arrivalTime: z.string().min(1),
+        departureTime: z.string().min(1),
+        direction: z.enum(['OUTBOUND', 'INBOUND']).optional(),
+        duration: liteDuration.optional(),
+        changeAirport: z.boolean(),
+        overnight: z.boolean(),
+      }),
+    )
+    .optional(),
   legDurations: z
     .array(z.object({ direction: z.enum(['OUTBOUND', 'INBOUND']), duration: liteDuration }))
     .optional(),
@@ -376,10 +423,22 @@ export function normalizeLiteFlightOffer(
           arrival: segment.arrivalTime,
           duration: normalizeLiteDuration(segment.duration),
           marketingCarrier: segment.carrier?.marketingName
-            ? { name: segment.carrier.marketingName, code: segment.carrier.marketingCode }
+            ? {
+                name: segment.carrier.marketingName,
+                code: segment.carrier.marketingCode,
+                ...(supplierLogo(segment.carrier.marketingLogo)
+                  ? { logoUrl: supplierLogo(segment.carrier.marketingLogo) }
+                  : {}),
+              }
             : undefined,
           operatingCarrier: segment.carrier?.operatingName
-            ? { name: segment.carrier.operatingName, code: segment.carrier.operatingCode }
+            ? {
+                name: segment.carrier.operatingName,
+                code: segment.carrier.operatingCode,
+                ...(supplierLogo(segment.carrier.operatingLogo)
+                  ? { logoUrl: supplierLogo(segment.carrier.operatingLogo) }
+                  : {}),
+              }
             : undefined,
           marketingFlightNumber: segment.flight?.marketingNumber,
           operatingFlightNumber: segment.flight?.operatingNumber,
@@ -416,6 +475,29 @@ export function normalizeLiteFlightOffer(
       connections: segments.length - 1,
       stops: segments.length - 1,
       segments,
+      ...(item.connections
+        ? {
+            connectionDetails: item.connections
+              .filter((connection) => (connection.direction || 'OUTBOUND') === direction)
+              .map((connection) => ({
+                arrivalAirport: {
+                  code: connection.arrivalAirportCode,
+                  name: connection.arrivalAirportName,
+                },
+                departureAirport: {
+                  code: connection.departureAirportCode,
+                  name: connection.departureAirportName,
+                },
+                arrival: connection.arrivalTime,
+                departure: connection.departureTime,
+                durationMinutes:
+                  connection.duration?.minutes ??
+                  durationMinutes(connection.duration?.iso8601 || ''),
+                airportChange: connection.changeAirport,
+                overnight: connection.overnight,
+              })),
+          }
+        : {}),
     });
   }
   const outbound = journeys[0];
@@ -431,6 +513,9 @@ export function normalizeLiteFlightOffer(
   return {
     id: fare.offerId,
     airline: airlines.join(' + ') || 'Airline unavailable',
+    ...(outbound.segments[0].marketingCarrier?.logoUrl
+      ? { airlineLogoUrl: outbound.segments[0].marketingCarrier.logoUrl }
+      : {}),
     origin: outbound.origin.code,
     destination: outbound.destination.code,
     departure: outbound.departure,

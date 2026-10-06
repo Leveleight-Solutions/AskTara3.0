@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { choose, chooseSetting } from './ui-helpers';
+import { choose, chooseSetting, openStudioTool, confirmStudioStartClient } from './ui-helpers';
 
 // These journeys use the real local API and persistence, without API route mocks.
 test('home brief reaches Studio, route and services persist, and the proposal exports', async ({
   page,
 }, testInfo) => {
   let workspaceId: string | undefined;
+  let clientId: string | undefined;
   const integrations = await page.request.get('/api/integrations');
   expect(integrations.status()).toBe(200);
   test.skip((await integrations.json()).ai, 'This regression exercises the no-key local planner.');
@@ -19,8 +20,10 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
         'Plan a proposal for a fictional client: 2 adults, no children, arrive Paris on 2027-06-01 for 3 nights. Budget AUD 3000. Prefer 4-star hotels. Start with the route only.',
       );
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
+    clientId = await confirmStudioStartClient(page);
     await expect(page).toHaveURL(/\/studio\/[a-f0-9-]+(?:\?.*)?$/);
     workspaceId = new URL(page.url()).pathname.split('/').at(-1);
+    await openStudioTool(page, 'Route');
     await expect(page.getByLabel('Nights in Paris', { exact: true })).toHaveValue('3');
     await expect(page.getByLabel('Arrival in Paris', { exact: true })).toHaveValue('2027-06-01');
     await page.getByRole('button', { name: 'Increase nights in Paris' }).click();
@@ -29,7 +32,7 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
       .getByRole('button', { name: /^(Build route structure|Skip questions and build structure)$/ })
       .click();
     await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
-    await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
+    await openStudioTool(page, 'Accommodation');
     await page.getByRole('button', { name: 'Add a service', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Add a service to the proposal' });
     await choose(page, dialog.getByRole('combobox', { name: 'Service type' }), 'Insurance');
@@ -38,6 +41,7 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
     await dialog.getByRole('button', { name: 'Save service' }).click();
     await expect(dialog).not.toBeVisible();
     await page.reload();
+    await openStudioTool(page, 'Accommodation');
     await expect(
       page.getByRole('region', { name: 'Proposal services', exact: true }),
     ).toContainText('Fictional integration test estimate');
@@ -54,7 +58,7 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
       title: 'Fictional integration test estimate',
       price: 150,
     });
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await page.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
     await expect(page.getByTestId('client-proposal')).toContainText(
       'Fictional integration test estimate',
@@ -65,6 +69,10 @@ test('home brief reaches Studio, route and services persist, and the proposal ex
     await (await download).saveAs(output);
     expect((await readFile(output)).subarray(0, 5).toString()).toBe('%PDF-');
   } finally {
+    if (clientId)
+      expect((await page.request.delete(`/api/studio/client-profiles/${clientId}`)).status()).toBe(
+        204,
+      );
     if (workspaceId)
       expect((await page.request.delete(`/api/studio/workspaces/${workspaceId}`)).status()).toBe(
         204,
@@ -129,6 +137,7 @@ test('attached client notes are saved and reviewed through the real local backen
   page,
 }) => {
   let workspaceId: string | undefined;
+  let clientId: string | undefined;
   const integrations = await page.request.get('/api/integrations');
   expect(integrations.status()).toBe(200);
   test.skip((await integrations.json()).ai, 'This regression exercises the no-key local planner.');
@@ -143,8 +152,10 @@ test('attached client notes are saved and reviewed through the real local backen
       );
     await page.getByRole('button', { name: 'Add source', exact: true }).click();
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
+    clientId = await confirmStudioStartClient(page);
     await expect(page).toHaveURL(/\/studio\/[a-f0-9-]+(?:\?.*)?$/);
     workspaceId = new URL(page.url()).pathname.split('/').at(-1);
+    await openStudioTool(page, 'Route');
     await expect(page.getByLabel('Nights in Paris', { exact: true })).toHaveValue('3');
     await expect(page.getByLabel('Arrival in Paris', { exact: true })).toHaveValue('2027-07-01');
     const saved = await page.request.get(`/api/studio/workspaces/${workspaceId}`);
@@ -157,6 +168,10 @@ test('attached client notes are saved and reviewed through the real local backen
       currency: 'AUD',
     });
   } finally {
+    if (clientId)
+      expect((await page.request.delete(`/api/studio/client-profiles/${clientId}`)).status()).toBe(
+        204,
+      );
     if (workspaceId)
       expect((await page.request.delete(`/api/studio/workspaces/${workspaceId}`)).status()).toBe(
         204,

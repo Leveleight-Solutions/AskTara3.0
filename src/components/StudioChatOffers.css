@@ -1,0 +1,320 @@
+.studio-chat-offers {
+  min-width: 0;
+  margin-top: 18px;
+}
+.studio-chat-offers__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.studio-chat-offers__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  color: var(--gray-11);
+  font-size: 13px;
+}
+.studio-chat-offers__status button,
+.studio-chat-offers__result-heading button {
+  border: 0;
+  padding: 4px 0;
+  background: none;
+  color: var(--accent-11);
+  cursor: pointer;
+  font: inherit;
+}
+.studio-chat-offers__results {
+  margin-top: 18px;
+}
+.studio-chat-offers__result-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.studio-chat-offers__results h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.studio-chat-offers__cards {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+}
+.studio-chat-offer {
+  min-width: 0;
+  border: 1px solid var(--gray-5);
+  border-radius: 14px;
+  background: var(--color-panel-solid);
+  overflow: hidden;
+}
+.studio-chat-offer__photos {
+  position: relative;
+  background: var(--gray-3);
+}
+.studio-chat-offer__photos img {
+  display: block;
+  width: 100%;
+  height: 185px;
+  object-fit: cover;
+}
+.studio-chat-offer__photo-fallback {
+  height: 185px;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--gray-10);
+  font-size: 12px;
+}
+.studio-chat-offer__photo-controls {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: white;
+  font-size: 12px;
+  text-shadow: 0 1px 3px #000;
+}
+.studio-chat-offer__media-switch {
+  display: flex;
+  border-bottom: 1px solid var(--gray-5);
+}
+.studio-chat-offer__media-switch button {
+  flex: 1;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--gray-11);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.studio-chat-offer__media-switch button[aria-pressed='true'] {
+  color: var(--accent-11);
+  background: var(--accent-3);
+  box-shadow: inset 0 -2px var(--accent-9);
+}
+.studio-chat-offer__body {
+  padding: 15px;
+}
+.studio-chat-offer__body h4 {
+  margin: 6px 0;
+  font-size: 16px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.studio-chat-offer__body p {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.studio-chat-offer__muted {
+  color: var(--gray-11);
+  font-size: 12px;
+}
+.studio-chat-offer__eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--gray-11);
+}
+.studio-chat-offer__reason {
+  color: var(--accent-11);
+}
+.studio-chat-offer__footer {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 14px 0 10px;
+}
+.studio-chat-offer__footer small {
+  display: block;
+  color: var(--gray-11);
+  font-size: 11px;
+  margin-top: 3px;
+}
+.studio-chat-offer__price {
+  display: block;
+  font-size: 20px;
+  line-height: 1.3;
+}
+.studio-chat-offer__price small {
+  display: inline;
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 5px;
+}
+.studio-chat-offer__details {
+  margin-top: 10px;
+  border-top: 1px solid var(--gray-4);
+  padding-top: 10px;
+  font-size: 12px;
+  color: var(--gray-11);
+}
+.studio-chat-offer__details summary {
+  cursor: pointer;
+  color: var(--gray-12);
+  font-weight: 500;
+}
+.studio-chat-offer__details p {
+  font-size: 12px;
+}
+.studio-chat-offer__flight-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.studio-chat-offer__flight-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+.studio-chat-offer__flight-heading h4 {
+  margin: 0 0 3px;
+}
+.studio-chat-offer__flight-heading > div > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--gray-11);
+  font-size: 12px;
+}
+.studio-chat-offer__carrier {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--gray-3);
+  color: var(--gray-11);
+  font-size: 13px;
+  font-weight: 600;
+}
+.studio-chat-offer__carrier img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+.studio-chat-offer__journey {
+  border-top: 1px solid var(--gray-4);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.studio-chat-offer__leg {
+  display: grid;
+  grid-template-columns: 1fr 68px 1fr;
+  gap: 8px;
+  margin: 10px 0;
+  align-items: center;
+}
+.studio-chat-offer__leg > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.studio-chat-offer__leg > div:last-child {
+  text-align: right;
+}
+.studio-chat-offer__leg strong {
+  font-size: 20px;
+}
+.studio-chat-offer__leg span {
+  font-size: 12px;
+}
+.studio-chat-offer__leg small {
+  font-size: 10px;
+  color: var(--gray-11);
+}
+.studio-chat-offer__leg-line {
+  align-items: center;
+  color: var(--gray-10);
+}
+.studio-chat-offer__connection {
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: var(--amber-3);
+  color: var(--amber-11);
+}
+.studio-chat-offer__text-button {
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  color: var(--accent-11);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.studio-chat-offers__search fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.studio-chat-offers__search-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.studio-chat-offers__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.studio-chat-offers__field > span {
+  font-weight: 500;
+}
+.studio-chat-offers__field select {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--gray-7);
+  border-radius: 5px;
+  background: var(--color-panel-solid);
+  padding: 7px;
+  color: var(--gray-12);
+  font: inherit;
+}
+.studio-chat-offers__field--wide {
+  grid-column: 1/-1;
+}
+.studio-chat-offers__search-footer {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.studio-chat-offers__error {
+  margin: 12px 0;
+  color: var(--red-11);
+  font-size: 13px;
+}
+@media (max-width: 480px) {
+  .studio-chat-offers__search-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .studio-chat-offer__body {
+    padding: 13px;
+  }
+  .studio-chat-offer__flight-heading {
+    flex-wrap: wrap;
+  }
+}

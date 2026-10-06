@@ -11,6 +11,7 @@ import {
   Plus,
   Square,
   X,
+  UserRound,
 } from 'lucide-react';
 import {
   Box,
@@ -35,6 +36,8 @@ import {
 import type { StudioImport, StudioWorkspace } from '../../shared/studio';
 import type { StudioImportInput } from '../../shared/studio-imports';
 import { STUDIO_IMPORT_MAX_TEXT } from '../../shared/studio-imports';
+import type { StudioClientProfile } from '../../shared/studio-clients';
+import { ClientPickerDialog } from './ClientPicker';
 
 /** A source the agent has attached but not yet committed to a workspace. Held in memory only:
     extraction runs against the workspace-free preview endpoint, and the text is written to a
@@ -95,6 +98,9 @@ export function StartComposer({
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<StudioClientProfile | null>(null);
+  const [pickingClient, setPickingClient] = useState(false);
+  const [startAfterPick, setStartAfterPick] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
@@ -214,6 +220,15 @@ export function StartComposer({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
+    if (!message.trim() && !held.current.length) return;
+    if (!selectedClient && !created.current) {
+      setStartAfterPick(true);
+      setPickingClient(true);
+      return;
+    }
+    await start(selectedClient);
+  }
+  async function start(client: StudioClientProfile | null) {
     const typed = message.trim();
     if (!typed && !held.current.length) return;
     setBusy(true);
@@ -233,7 +248,7 @@ export function StartComposer({
         (
           await api<{ workspace: StudioWorkspace }>('/studio/workspaces', {
             method: 'POST',
-            body: '{}',
+            body: JSON.stringify({ ...(client ? { clientId: client.id } : {}) }),
           })
         ).workspace;
       created.current = workspace;
@@ -573,6 +588,34 @@ export function StartComposer({
           </Callout.Icon>
           <Callout.Text>{error}</Callout.Text>
         </Callout.Root>
+      )}
+      {!created.current && (
+        <Button
+          type="button"
+          variant="soft"
+          color="gray"
+          disabled={busy}
+          onClick={() => {
+            setStartAfterPick(false);
+            setPickingClient(true);
+          }}
+          style={{ alignSelf: 'center' }}
+        >
+          <UserRound size={14} />
+          {selectedClient ? `Client: ${selectedClient.name}` : 'Choose a client'}
+        </Button>
+      )}
+      {pickingClient && (
+        <ClientPickerDialog
+          onClose={() => setPickingClient(false)}
+          initialClient={selectedClient || undefined}
+          confirmLabel={startAfterPick ? 'Start proposal' : 'Choose client'}
+          onSelect={async (client) => {
+            setSelectedClient(client);
+            setPickingClient(false);
+            if (startAfterPick) await start(client);
+          }}
+        />
       )}
       {shown && (
         <Modal title={shown.name || shown.label} onClose={() => setViewing(null)}>

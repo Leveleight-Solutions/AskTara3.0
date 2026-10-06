@@ -2,6 +2,7 @@ import type { StudioItinerary } from './studio-itinerary';
 import type { StudioCruiseDraft } from './studio-cruise';
 import type { StudioDestinationResearch, StudioEntryRequirements } from './studio-travel-research';
 import type { StudioTripBriefing } from './studio-trip-briefing';
+import type { StudioServicePresentation } from './studio-services';
 
 /** Travel-agent workspace: route, daily planning, services and client proposal. */
 export type StudioStage =
@@ -88,6 +89,9 @@ export interface StudioItem {
   needsReview: boolean;
   /** Agent-only acquisition cost; excluded from all client output. */
   cost: number | null;
+  /** Supplier-provided media retained with a selected quote; protected during manual edits. */
+  imageUrl?: string;
+  presentation?: StudioServicePresentation;
 }
 export interface StudioRecommendation {
   id: string;

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { StudioWorkspace } from '../shared/studio';
-import { choose } from './ui-helpers';
+import { choose, openStudioTool } from './ui-helpers';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/integrations', (route) =>
@@ -122,7 +122,7 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
     });
     expect(agency.status()).toBe(200);
     await page.goto(`/studio/${workspace.id}`);
-    await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
+    await openStudioTool(page, 'Accommodation');
     for (const title of ['A quiet Bloomsbury hotel', 'Arrival transfer']) {
       await page
         .getByRole('article')
@@ -131,9 +131,11 @@ test('agent reviews, publishes, updates and revokes a branded client proposal wi
         .click();
       await page.getByLabel('I have reviewed these service details').check();
       await page.getByRole('button', { name: 'Save service', exact: true }).click();
-      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await expect(
+        page.getByRole('dialog', { name: 'Edit service', exact: true }),
+      ).not.toBeVisible();
     }
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await page.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
     await expect(
       page.getByText('Private preview · Publish only when the client-facing details are ready.'),

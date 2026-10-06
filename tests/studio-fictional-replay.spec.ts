@@ -1,4 +1,10 @@
-import { openStudioClientDesk, openStudioClientProfiles } from './ui-helpers';
+import {
+  confirmStudioStartClient,
+  closeStudioTool,
+  openStudioClientDesk,
+  openStudioClientProfiles,
+  openStudioTool,
+} from './ui-helpers';
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import type { StudioWorkspace } from '../shared/studio';
@@ -147,6 +153,7 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
       forbiddenRequests.push(`${request.method()} ${path}`);
   });
 
+  let initialClientId: string | undefined;
   try {
     await page.goto('/');
     const integrations = await page.request.get('/api/integrations');
@@ -159,10 +166,12 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
         const created = responseFor(page, '/api/studio/workspaces');
         await page.getByRole('textbox', { name: 'Tell Tara about your trip' }).fill(prompt);
         await page.getByRole('button', { name: 'Start planning your trip' }).click();
+        initialClientId = await confirmStudioStartClient(page, 'Demo Traveller');
         const createdResponse = await created;
         expect(createdResponse.status()).toBe(201);
         workspace = (await createdResponse.json()).workspace;
       } else {
+        await closeStudioTool(page);
         await page.getByRole('textbox', { name: 'Reply or refine the route' }).fill(prompt);
         await page.getByRole('button', { name: 'Send to Tara', exact: true }).click();
       }
@@ -343,7 +352,7 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
       fullPage: true,
     });
 
-    await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
+    await openStudioTool(page, 'Accommodation');
     await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
     await page.getByLabel('Guest nationality · two-letter code').fill('NZ');
     let start = Date.now();
@@ -507,7 +516,7 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
     await record();
     await page.screenshot({ path: `${artifactDirectory}/03-flight-quote.png`, fullPage: true });
 
-    await page.getByRole('tab', { name: 'Optional ideas', exact: true }).click();
+    await openStudioTool(page, 'Optional ideas');
     await page.getByRole('combobox', { name: 'Recommendation type' }).click();
     await page.getByRole('option', { name: 'Places to eat', exact: true }).click();
     const foodQuery =
@@ -550,6 +559,7 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
       'Update the complete day-by-day itinerary to include my selected hotel and return flight quotes and my included vegetarian restaurant recommendation. Keep the London stay 3–8 November 2026, Wednesday to Friday 9 am to 5 pm free for business meetings, gentle sightseeing in the evenings and on Saturday, and flexible arrival and departure days. These are sandbox quotes, not bookings; use only sourced places and do not reserve anything.';
     start = Date.now();
     const regeneratedResponse = responseFor(page, '/review');
+    await closeStudioTool(page);
     await page.getByRole('textbox', { name: 'Reply or refine the route' }).fill(regenerationPrompt);
     await page.getByRole('button', { name: 'Send to Tara', exact: true }).click();
     const regeneratedHttp = await regeneratedResponse;
@@ -588,7 +598,7 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
     expect(
       workspace!.recommendations.find((item) => item.id === firstRecommendation.id)?.included,
     ).toBe(true);
-    await page.getByRole('tab', { name: 'Proposal', exact: true }).click();
+    await openStudioTool(page, 'Proposal');
     await page.getByRole('button', { name: 'Preview client proposal', exact: true }).click();
     const proposal = page.getByTestId('client-proposal');
     await expect(proposal).toBeVisible();
@@ -628,6 +638,10 @@ test('fictional traveller completes real chat, hotel quote, itinerary and privat
     completed = true;
     await record();
   } finally {
+    if (initialClientId)
+      expect(
+        (await page.request.delete(`/api/studio/client-profiles/${initialClientId}`)).status(),
+      ).toBe(204);
     if (workspace?.id) {
       const deleted = await page.request.delete(`/api/studio/workspaces/${workspace.id}`);
       removed = deleted.status() === 204;

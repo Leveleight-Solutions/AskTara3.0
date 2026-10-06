@@ -39,7 +39,10 @@ const revisionDescription =
   'Send the latest workspace.revision. A stale revision returns 409 (STUDIO_REVISION_CONFLICT). Successful workspace edits increment the revision; use the returned workspace for the next request.';
 const actionDescription = `${revisionDescription} requestId is a client-generated UUID scoped to the owner. Repeating an identical completed request replays its result with the current workspace and replayed: true; reusing it for different details returns 409. Failed operations may be retried with the same requestId. Research and import actions share a limit of 15 requests per minute.`;
 const error = (description: string) => jsonResponse(description, ref('Error'));
-const workspaceResponse = object({ workspace: ref('StudioWorkspace') });
+const workspaceResponse = object(
+  { workspace: ref('StudioWorkspace'), assistantActions: array(ref('StudioAssistantAction')) },
+  ['workspace'],
+);
 const proposalResponse = object({ proposal: ref('StudioClientProposal') });
 const workspaceParameters: OpenAPIV3_1.ParameterObject[] = [
   {
@@ -79,10 +82,18 @@ const pdfResponse = (filename: string): OpenAPIV3_1.ResponseObject => ({
   content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
 });
 const actionResult = (extra: Record<string, Schema>) =>
-  object({ workspace: ref('StudioWorkspace'), ...extra, replayed: { type: 'boolean' } }, [
-    'workspace',
-    ...Object.keys(extra).filter((name) => name !== 'model' && name !== 'nextAction'),
-  ]);
+  object(
+    {
+      workspace: ref('StudioWorkspace'),
+      assistantActions: array(ref('StudioAssistantAction')),
+      ...extra,
+      replayed: { type: 'boolean' },
+    },
+    [
+      'workspace',
+      ...Object.keys(extra).filter((name) => name !== 'model' && name !== 'nextAction'),
+    ],
+  );
 const visaCategory: Schema = {
   type: 'string',
   enum: ['visa_free', 'visa_on_arrival', 'e_visa', 'visa_required', 'unknown'],
@@ -96,10 +107,239 @@ const hotelMode: Schema = { type: 'string', enum: ['test', 'live', 'provider'] }
 const clientProfileInput = fromZod(studioClientProfileSchema);
 
 export const studioSchemas: Record<string, OpenAPIV3_1.SchemaObject> = {
+  StudioFlightAirport: object(
+    {
+      code: text,
+      name: text,
+      city: text,
+      timeZone: text,
+      countryCode: {
+        type: 'string',
+        pattern: '^[A-Z]{2}$',
+        description: 'Only the supplier-supplied country code; missing countries remain unknown.',
+      },
+    },
+    ['code'],
+  ),
+  StudioFlightCarrier: object(
+    {
+      name: text,
+      code: text,
+      logoUrl: {
+        type: 'string',
+        format: 'uri',
+        description: 'Only an actual supplied public HTTPS asset URL.',
+      },
+    },
+    ['name'],
+  ),
+  StudioFlightSegment: object(
+    {
+      id: text,
+      origin: ref('StudioFlightAirport'),
+      destination: ref('StudioFlightAirport'),
+      departure: text,
+      arrival: text,
+      duration: text,
+      originTerminal: text,
+      destinationTerminal: text,
+      marketingCarrier: ref('StudioFlightCarrier'),
+      operatingCarrier: ref('StudioFlightCarrier'),
+      marketingFlightNumber: text,
+      operatingFlightNumber: text,
+      passengers: array(
+        object(
+          {
+            passengerId: text,
+            cabin: text,
+            baggages: array(object({ type: text, quantity: { type: 'integer' } })),
+          },
+          ['passengerId'],
+        ),
+      ),
+      stops: array(
+        object(
+          { airport: ref('StudioFlightAirport'), arrival: text, departure: text, duration: text },
+          ['airport'],
+        ),
+      ),
+    },
+    ['id', 'origin', 'destination', 'departure', 'arrival'],
+  ),
+  StudioFlightJourney: object(
+    {
+      id: text,
+      origin: ref('StudioFlightAirport'),
+      destination: ref('StudioFlightAirport'),
+      departure: text,
+      arrival: text,
+      duration: text,
+      connections: { type: 'integer' },
+      stops: { type: 'integer' },
+      segments: array(ref('StudioFlightSegment')),
+      connectionDetails: array(
+        object(
+          {
+            arrivalAirport: ref('StudioFlightAirport'),
+            departureAirport: ref('StudioFlightAirport'),
+            arrival: text,
+            departure: text,
+            durationMinutes: { type: 'number' },
+            airportChange: { type: 'boolean' },
+            overnight: { type: 'boolean' },
+          },
+          [
+            'arrivalAirport',
+            'departureAirport',
+            'arrival',
+            'departure',
+            'airportChange',
+            'overnight',
+          ],
+        ),
+      ),
+    },
+    ['id', 'origin', 'destination', 'departure', 'arrival', 'connections', 'stops', 'segments'],
+  ),
+  StudioAssistantAction: object(
+    {
+      id: text,
+      label: text,
+      detail: text,
+      kind: {
+        type: 'string',
+        enum: [
+          'answer',
+          'approve_route',
+          'hotels',
+          'flights',
+          'cruises',
+          'activities',
+          'food',
+          'generate_itinerary',
+          'preview',
+          'destinations',
+        ],
+      },
+      questionId: text,
+      stopId: text,
+      disabledReason: text,
+      choices: array(object({ label: text, message: text })),
+    },
+    ['id', 'label', 'detail', 'kind'],
+  ),
+  StudioFlightQuote: object(
+    {
+      id: { type: 'string', format: 'uuid' },
+      quoteId: { type: 'string', format: 'uuid' },
+      quotedAt: timestamp,
+      mode: hotelMode,
+      airline: text,
+      airlineLogoUrl: { type: 'string', format: 'uri' },
+      origin: text,
+      destination: text,
+      departure: text,
+      arrival: text,
+      duration: text,
+      stops: { type: 'integer' },
+      price: { type: 'number' },
+      currency: text,
+      passengerCount: { type: 'integer' },
+      requestedJourneyCount: { type: 'integer' },
+      priceScope: { type: 'string', enum: ['all_passengers_complete_journey'] },
+      journeys: array(ref('StudioFlightJourney')),
+      expiresAt: timestamp,
+      liveMode: { type: 'boolean' },
+      connections: array(
+        object(
+          {
+            journeyId: text,
+            arrivalAirport: ref('StudioFlightAirport'),
+            departureAirport: ref('StudioFlightAirport'),
+            arrival: text,
+            departure: text,
+            durationMinutes: { type: ['number', 'null'] },
+            airportChange: { type: 'boolean' },
+            overnight: { type: 'boolean' },
+            transitCountryCode: text,
+            kind: { type: 'string', enum: ['connection', 'technical_stop'] },
+          },
+          [
+            'journeyId',
+            'arrivalAirport',
+            'departureAirport',
+            'arrival',
+            'departure',
+            'durationMinutes',
+            'airportChange',
+            'overnight',
+            'kind',
+          ],
+        ),
+      ),
+      advisories: array(
+        object(
+          {
+            kind: {
+              type: 'string',
+              enum: ['connection', 'transit', 'hotel_timing', 'gap', 'verification'],
+            },
+            summary: text,
+            basis: { type: 'string', enum: ['supplier_schedule', 'trip_dates'] },
+            stopId: text,
+          },
+          ['kind', 'summary', 'basis'],
+        ),
+      ),
+    },
+    [
+      'id',
+      'quoteId',
+      'quotedAt',
+      'mode',
+      'airline',
+      'origin',
+      'destination',
+      'departure',
+      'arrival',
+      'duration',
+      'stops',
+      'price',
+      'currency',
+      'connections',
+      'advisories',
+    ],
+  ),
   StudioAgency: fromZod(studioAgencySchema),
   StudioBrief: fromZod(studioBriefSchema),
   StudioStop: fromZod(studioStopSchema),
-  StudioItem: fromZod(studioItemSchema),
+  StudioItem: {
+    ...fromZod(studioItemSchema),
+    properties: {
+      ...fromZod(studioItemSchema).properties,
+      imageUrl: {
+        type: 'string',
+        format: 'uri',
+        readOnly: true,
+        description: 'Actual supplier photo or airline logo retained on quote selection.',
+      },
+      presentation: {
+        readOnly: true,
+        description:
+          'Immutable server-owned quote details; omission in an edit preserves the current value.',
+        oneOf: [
+          object({ kind: { type: 'string', const: 'hotel' }, hotel: ref('StudioHotelQuote') }),
+          object({ kind: { type: 'string', const: 'flight' }, flight: ref('StudioFlightQuote') }),
+        ],
+      },
+    },
+  },
+  StudioFlightSearchResult: object({
+    quotes: array(ref('StudioItem')),
+    flights: array(ref('StudioFlightQuote')),
+    mode: hotelMode,
+    warning: text,
+  }),
   StudioRecommendation: fromZod(studioRecommendationSchema),
   StudioItinerary: fromZod(studioItinerarySchema),
   StudioPricing: fromZod(studioPricingSchema),
@@ -477,11 +717,31 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         ),
       },
     }),
-    post: operation('Studio', 'Create an empty proposal workspace', {
+    post: operation('Studio', 'Create a proposal workspace, optionally for a saved client', {
       description:
-        'Creates a workspace in the brief stage. The response includes the revision needed for later edits.',
-      requestBody: { ...jsonBody(fromZod(z.object({}).strict()), {}), required: false },
-      responses: { '201': jsonResponse('Workspace created.', workspaceResponse) },
+        'Creates a workspace in the brief stage. clientId must belong to the session; known name, private context, declared passport country, interests and food preferences are copied atomically. Past travelling parties, dates, budgets, birth dates, profile photos and residence/citizenship are never inferred. Explicit brief/stops may initialise this trip. The response includes the revision and grounded chat actions.',
+      requestBody: {
+        ...jsonBody(
+          fromZod(
+            z
+              .object({
+                clientId: z.string().uuid().optional(),
+                title: z.string().trim().min(1).max(300).optional(),
+                brief: studioBriefSchema.partial().optional(),
+                stops: z.array(studioStopSchema).max(20).optional(),
+              })
+              .strict(),
+          ),
+          {},
+        ),
+        required: false,
+      },
+      responses: {
+        '201': jsonResponse('Workspace created.', workspaceResponse),
+        '404': error(
+          'Selected client profile is not owned by the session; no workspace is created.',
+        ),
+      },
     }),
   },
   '/api/studio/workspaces/{id}': {
@@ -580,7 +840,7 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
     ],
     patch: operation('Studio', 'Replace editable client profile fields', {
       description:
-        'Submit the complete editable profile body, excluding id and updatedAt; omitted optional fields reset to their defaults. Profile identity is retained. No workspace revision is required.',
+        'Submit the complete editable profile body, excluding id and updatedAt; omitted optional fields reset to their defaults. Profile identity is retained. No workspace revision is required. Changes to context, interests, food preferences or travel feedback atomically clear cached destination inspiration only in owned linked workspaces; their revisions increment, while current party, dates, itinerary and services are preserved. Identity-only edits do not invalidate inspiration.',
       requestBody: jsonBody(clientProfileInput),
       responses: {
         '200': jsonResponse('Updated profile.', object({ client: ref('StudioClientProfile') })),
@@ -641,7 +901,7 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
   '/api/studio/workspaces/{id}/destinations/research': {
     parameters: workspaceParameters,
     post: operation('Studio', 'Research destination suggestions and current conditions', {
-      description: `${actionDescription} Uses declared preferences and the linked client's travel history, excluding profile photos and identity details. Researches a small set of candidates with current advisory and conditions evidence. Blocked or unverifiable destinations are not promoted as safe recommendations. Supports country inputs independently of the inspiration catalogue. This action does not select a destination or check visas. Requires OPENAI_API_KEY and accessible evidence.`,
+      description: `${actionDescription} Supports cold-start interests and food preferences as well as linked-client history. Model inputs exclude identity, profile photos, birth dates and raw private context. Only destinationResearch merges into the latest workspace if the selected profile/preferences/context/history and route still match; unrelated chat/title edits survive. Changed inputs return STUDIO_RESEARCH_STALE. Disconnect cancels provider work. Researches up to three candidates with current advisory and conditions evidence; blocked or unverifiable destinations are not promoted as safe. Does not select a destination or check visas. Requires OPENAI_API_KEY and accessible evidence.`,
       requestBody: jsonBody(fromZod(actionSchema)),
       responses: {
         '200': jsonResponse(
@@ -651,6 +911,41 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         '409': error('Revision or requestId conflict.'),
         '502': error('Research failed evidence validation.'),
         '503': error('Research unavailable; no fabricated fallback.'),
+      },
+    }),
+  },
+  '/api/studio/workspaces/{id}/recommendations/{recommendationId}/add-to-day': {
+    parameters: [
+      ...workspaceParameters,
+      { name: 'recommendationId', in: 'path', required: true, schema: { type: 'string' } },
+    ],
+    post: operation('Studio', 'Add a researched recommendation to a saved itinerary day', {
+      description: `${revisionDescription} Requires the approved route and a saved day at the recommendation’s destination. Copies only stored, verified recommendation text and sources; browser citations are never accepted. Preserves other days and cruise linkage, marks itineraryManual=true, and caps a day at 20 activities. Repeating an already inserted identical recommendation/day/period is idempotent even with the previous revision.`,
+      requestBody: jsonBody(
+        fromZod(
+          z
+            .object({
+              revision: positiveRevision,
+              day: z.number().int().min(1).max(366),
+              period: z.enum(['morning', 'afternoon', 'evening', 'flexible']),
+            })
+            .strict(),
+        ),
+      ),
+      responses: {
+        '200': jsonResponse(
+          'Updated saved itinerary.',
+          object({
+            workspace: ref('StudioWorkspace'),
+            inserted: { type: 'boolean' },
+            assistantActions: array(ref('StudioAssistantAction')),
+          }),
+        ),
+        '400': error('Wrong destination/day, unsupported browser data or activity limit.'),
+        '404': error('Owned workspace, recommendation or day not found.'),
+        '409': error(
+          'Revision conflict, unapproved route, absent itinerary or no verified stored source.',
+        ),
       },
     }),
   },
@@ -971,7 +1266,10 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         cabinClass: 'economy',
       }),
       responses: {
-        '200': jsonResponse('Flight quote suggestions and provider warning.', quoteResult),
+        '200': jsonResponse(
+          'Flight quotes and safe supplier journey details.',
+          ref('StudioFlightSearchResult'),
+        ),
         '404': error('Workspace not found.'),
         '409': error('Revision conflict, including edits made while searching.'),
         '502': error('Flight provider failed or returned invalid offers.'),

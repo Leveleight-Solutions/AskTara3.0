@@ -1,3 +1,4 @@
+import { confirmStudioStartClient, closeStudioTool, openStudioTool } from './ui-helpers';
 import { test, expect, type Page } from '@playwright/test';
 import type { StudioWorkspace } from '../shared/studio';
 
@@ -16,6 +17,7 @@ test('a greeting starts a contextual conversation and short answers update the s
   expect(integrations.status()).toBe(200);
   test.skip((await integrations.json()).ai, 'This regression exercises basic planning without AI.');
   let workspaceId: string | undefined;
+  let clientId: string | undefined;
   try {
     await page.goto('/');
     await expect(page.getByRole('note', { name: 'Basic planning mode' })).toContainText(
@@ -29,6 +31,7 @@ test('a greeting starts a contextual conversation and short answers update the s
     );
     const greeted = reviewResponse(page);
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
+    clientId = await confirmStudioStartClient(page);
     const creation = await created;
     expect(creation.status()).toBe(201);
     workspaceId = ((await creation.json()).workspace as StudioWorkspace).id;
@@ -47,11 +50,12 @@ test('a greeting starts a contextual conversation and short answers update the s
     await expect(page.getByRole('note', { name: 'Basic planning mode' })).toBeVisible();
     const conversation = page.getByRole('log');
     await expect(conversation).toContainText(firstReply);
-    await page.getByRole('tab', { name: 'Route', exact: true }).click();
+    await openStudioTool(page, 'Route');
     await expect(page.getByRole('region', { name: 'Route structure' })).toContainText(
       'Your route will appear here.',
     );
 
+    await closeStudioTool(page);
     const message = page.getByRole('textbox', { name: 'Reply or refine the route' });
     await message.fill('Paris');
     const destinationReview = reviewResponse(page);
@@ -66,7 +70,9 @@ test('a greeting starts a contextual conversation and short answers update the s
     expect(second.stops).toHaveLength(1);
     expect(second.stops[0]).toMatchObject({ name: 'Paris', nights: null });
     await expect(conversation).toContainText(secondReply);
+    await openStudioTool(page, 'Route');
     await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Paris');
+    await closeStudioTool(page);
 
     await message.fill('3 nights');
     const lengthReview = reviewResponse(page);
@@ -80,10 +86,12 @@ test('a greeting starts a contextual conversation and short answers update the s
     expect(thirdReply).not.toBe(secondReply);
     expect(third.stops[0]).toMatchObject({ id: second.stops[0].id, name: 'Paris', nights: 3 });
     await expect(conversation).toContainText(thirdReply);
+    await openStudioTool(page, 'Route');
     await expect(page.getByLabel('Nights in Paris', { exact: true })).toHaveValue('3');
 
     await page.reload();
     await expect(conversation).toContainText(thirdReply);
+    await openStudioTool(page, 'Route');
     await expect(page.getByLabel('Nights in Paris', { exact: true })).toHaveValue('3');
     const stored = await page.request.get(`/api/studio/workspaces/${workspaceId}`);
     expect(stored.status()).toBe(200);
@@ -99,6 +107,10 @@ test('a greeting starts a contextual conversation and short answers update the s
     expect(saved.stops).toHaveLength(1);
     expect(saved.stops[0]).toMatchObject({ name: 'Paris', nights: 3 });
   } finally {
+    if (clientId)
+      expect((await page.request.delete(`/api/studio/client-profiles/${clientId}`)).status()).toBe(
+        204,
+      );
     if (workspaceId)
       expect((await page.request.delete(`/api/studio/workspaces/${workspaceId}`)).status()).toBe(
         204,

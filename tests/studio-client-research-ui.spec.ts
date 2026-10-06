@@ -185,10 +185,10 @@ test('returning profile identity and history guide research, with visa check onl
   await page
     .getByRole('combobox', { name: 'Saved client', exact: true })
     .selectOption('client-kyoto');
-  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await expect.poll(() => workspace.brief.clientId).toBe('client-kyoto');
+  await expect
+    .poll(() => writes.filter(({ path }) => path.endsWith('/destinations/research')).length)
+    .toBe(1);
   await openStudioClientDesk(page);
   await openStudioClientProfiles(page, 'Client profiles · John Example');
   await expect(page.getByRole('img', { name: 'John Example profile' })).toBeVisible();
@@ -248,10 +248,10 @@ test('new client profile keeps the optional photo in the profile and links the t
   });
   await expect(page.getByRole('img', { name: 'Client photo preview', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Save client profile', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await expect.poll(() => workspace.brief.clientId).toBe('new-profile');
+  await expect
+    .poll(() => writes.filter(({ path }) => path.endsWith('/destinations/research')).length)
+    .toBe(1);
   await openStudioClientDesk(page);
   await openStudioClientProfiles(page, 'Client profiles · Alex Example');
   await expect(page.getByRole('combobox', { name: 'Saved client', exact: true })).toHaveValue(

@@ -5,7 +5,7 @@ import { defaultStudioAgency, type StudioWorkspace } from '../shared/studio';
 import { cruiseDraftToItinerary, type StudioCruiseDraft } from '../shared/studio-cruise';
 import { sanitizeManualStudioItinerary } from '../shared/studio-itinerary';
 import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
-import { openStudioCruiseImport } from './ui-helpers';
+import { openStudioCruiseImport, openStudioTool } from './ui-helpers';
 import { newStudioWorkspace } from '../server/studio-store';
 
 const now = '2026-10-01T12:00:00.000Z';
@@ -104,6 +104,7 @@ test('manual daily plan can add edit delete and reorder content without AI', asy
   const workspace = fixture();
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
+  await openStudioTool(page, 'Daily activities');
   await expect(
     page.getByRole('button', { name: 'Build day-by-day itinerary', exact: true }),
   ).toBeDisabled();
@@ -175,6 +176,7 @@ test('changing a researched activity removes its source claim when manually save
   };
   await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
+  await openStudioTool(page, 'Daily activities');
   await page.getByRole('button', { name: 'Edit daily plan', exact: true }).click();
   const editor = page.getByRole('form', { name: 'Edit daily itinerary' });
   await editor

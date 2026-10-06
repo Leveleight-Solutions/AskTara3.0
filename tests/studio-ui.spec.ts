@@ -8,7 +8,13 @@ import {
   type StudioStop,
   type StudioWorkspace,
 } from '../shared/studio';
-import { choose, openStudioClientDesk, openStudioClientProfiles } from './ui-helpers';
+import {
+  choose,
+  closeStudioTool,
+  openStudioClientDesk,
+  openStudioClientProfiles,
+  openStudioTool,
+} from './ui-helpers';
 import type { StudioClientProfile } from '../shared/studio-clients';
 import { fulfilSyntheticTripBriefing } from './studio-trip-briefing-fixture';
 
@@ -103,6 +109,8 @@ async function mockStudio(
     failPatch?: boolean;
     clients?: StudioClient[];
     profiles?: StudioClientProfile[];
+    workspaces?: StudioWorkspace[];
+    signedIn?: boolean;
   } = {},
 ) {
   const requests: { method: string; path: string; body: Record<string, unknown> }[] = [];
@@ -134,7 +142,16 @@ async function mockStudio(
       method = route.request().method();
     const body = method === 'GET' ? {} : route.request().postDataJSON() || {};
     const json = (value: unknown, status = 200) => route.fulfill({ status, json: value });
-    if (path === '/api/session') return json({ user: null });
+    if (path === '/api/session')
+      return json({
+        user: options.signedIn
+          ? {
+              id: '60000000-0000-4000-8000-000000000099',
+              name: 'Fictional Agent',
+              email: 'agent@example.test',
+            }
+          : null,
+      });
     if (path === '/api/catalog') return json(catalog);
     if (path === '/api/profile') return json({ profile: defaultTravelProfile });
     if (path === '/api/saved') return json({ items: [] });
@@ -157,7 +174,9 @@ async function mockStudio(
     );
     if (method === 'GET' && historyProfile) return json({ history: historyProfile.history });
     if (path === '/api/studio/workspaces')
-      return method === 'POST' ? json({ workspace }, 201) : json({ workspaces: [workspace] });
+      return method === 'POST'
+        ? json({ workspace }, 201)
+        : json({ workspaces: options.workspaces || [workspace] });
     if (path === `/api/studio/workspaces/${workspaceId}`) {
       if (method === 'GET') return json({ workspace });
       if (method === 'PATCH') {
@@ -255,15 +274,34 @@ test('Studio starts with brief review and explicit structure acceptance before s
   page,
 }) => {
   const workspace = fixtureWorkspace();
-  const mocked = await mockStudio(page, workspace);
+  const mocked = await mockStudio(page, workspace, {
+    profiles: [
+      {
+        id: '60000000-0000-4000-8000-000000000040',
+        name: 'Henderson',
+        context: '',
+        passportNationality: '',
+        photoDataUrl: '',
+        interests: [],
+        foodPreferences: [],
+        history: [],
+        updatedAt: now,
+      },
+    ],
+  });
   // The composer that starts a workspace is the home hero now, not a /studio landing form.
   await page.goto('/');
   await page
     .getByRole('textbox', { name: 'Tell Tara about your trip' })
     .fill('Plan a simple Paris and Amsterdam route for the Hendersons.');
   await page.getByRole('button', { name: 'Start planning your trip' }).click();
+  await page
+    .getByRole('group', { name: 'Choose a client' })
+    .getByRole('button', { name: /Henderson/ })
+    .click();
+  await page.getByRole('button', { name: 'Start proposal', exact: true }).click();
   await expect(page).toHaveURL(`/studio/${workspaceId}`);
-  await page.getByRole('tab', { name: 'Client & trip', exact: true }).click();
+  await openStudioTool(page, 'Client & trip');
   const guide = page.getByRole('region', { name: 'Guided brief', exact: true });
   await guide.getByText(/^Choose another detail/).click();
   await guide.getByRole('button', { name: 'Return', exact: true }).click();
@@ -271,20 +309,19 @@ test('Studio starts with brief review and explicit structure acceptance before s
   await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
   expect(mocked.requests.filter((r) => r.path.endsWith('/review'))).toHaveLength(1);
   expect(mocked.requests.some((r) => /structure|search|recommendations/.test(r.path))).toBe(false);
-  await page.getByRole('tab', { name: 'Route', exact: true }).click();
+  await openStudioTool(page, 'Route');
   await page.getByRole('button', { name: 'Skip questions and build structure' }).click();
   await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Paris');
   await page.getByRole('button', { name: 'Increase nights in Paris' }).click();
   await expect(page.getByLabel('Arrival in Amsterdam', { exact: true })).toHaveValue('2027-06-05');
   await expect(page.getByRole('button', { name: 'Accept structure', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Send to Tara' })).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Send to Tara', includeHidden: true }),
+  ).toBeDisabled();
   await page.getByRole('button', { name: 'Save route changes' }).click();
   await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
-  await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeEnabled();
+  await openStudioTool(page, 'Accommodation');
   await expect(page.getByRole('heading', { name: 'What would you like help with?' })).toBeVisible();
   expect(workspace.structureAccepted).toBe(true);
   expect(
@@ -292,7 +329,7 @@ test('Studio starts with brief review and explicit structure acceptance before s
   ).toBe(true);
   expect(mocked.requests.some((r) => /search|recommendations/.test(r.path))).toBe(false);
   await page.reload();
-  await page.getByRole('tab', { name: 'Route', exact: true }).click();
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('spinbutton', { name: 'Nights in Paris', exact: true })).toHaveValue(
     '4',
   );
@@ -311,7 +348,7 @@ test('route reorder adjusts dates while explicitly fixed arrivals remain pinned 
   await page.goto(`/studio/${workspaceId}`);
   // Below the md breakpoint the workspace keeps conversation and task controls in separate panes.
   await expect(page.getByRole('tab', { name: 'Chat with Tara' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Trip workspace' }).click();
+  await openStudioTool(page, 'Route');
   await page.getByRole('button', { name: 'Move Amsterdam up' }).click();
   await expect(page.getByLabel('Destination 1', { exact: true })).toHaveValue('Amsterdam');
   await expect(page.getByLabel('Arrival in Amsterdam', { exact: true })).toHaveValue('2027-06-01');
@@ -335,6 +372,7 @@ test('manual insurance estimate is reviewed and added without a booking request'
   const workspace = fixtureWorkspace(true);
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
+  await openStudioTool(page, 'Accommodation');
   await page.getByRole('button', { name: 'Add a service', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a service to the proposal' });
   await choose(page, dialog.getByRole('combobox', { name: 'Service type' }), 'Insurance');
@@ -369,6 +407,7 @@ test('hotel quote search asks nationality and adds an explicit quote without res
   const workspace = fixtureWorkspace(true);
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
+  await openStudioTool(page, 'Accommodation');
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   const nationality = page.getByLabel('Guest nationality · two-letter code');
   await expect(nationality).toHaveValue('');
@@ -412,6 +451,8 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
     },
   ];
   const mocked = await mockStudio(page, workspace, {
+    workspaces: [workspace, next],
+    signedIn: true,
     clients: [
       {
         id: workspace.brief.clientId,
@@ -436,20 +477,19 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
   });
 
   await page.goto(`/studio/${workspaceId}`);
+  await openStudioTool(page, 'Accommodation');
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   await page.getByLabel('Guest nationality · two-letter code').fill('AU');
   await page.getByRole('button', { name: 'Search hotels quotes' }).click();
   await expect(page.getByRole('button', { name: 'Add quote to proposal' })).toBeVisible();
-  await page.getByText('Background', { exact: true }).click();
-  await page.getByRole('link', { name: next.title }).click();
+  await closeStudioTool(page);
+  await page.getByRole('link', { name: next.title, exact: true }).click();
   await requestStarted;
   try {
     await expect(page.locator('[inert][aria-busy="true"]')).toBeVisible();
-    // The outgoing quote remains painted, but a click cannot add it while the next proposal loads.
+    // The outgoing workspace is inert while the next proposal loads.
     await expect(
-      page
-        .getByRole('button', { name: 'Add quote to proposal', includeHidden: true })
-        .click({ timeout: 500 }),
+      page.getByRole('button', { name: 'Edit trip', includeHidden: true }).click({ timeout: 500 }),
     ).rejects.toThrow();
     expect(mocked.requests.some((request) => request.path.includes('/quotes/'))).toBe(false);
   } finally {
@@ -458,6 +498,7 @@ test('switching proposals blocks outgoing edits and resets supplier inputs at th
 
   await expect(page).toHaveURL(`/studio/${next.id}`);
   await expect(page.getByRole('heading', { name: next.title, exact: true })).toBeVisible();
+  await openStudioTool(page, 'Accommodation');
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Destination for hotel quotes' })).toHaveText(
     'London',
@@ -486,6 +527,7 @@ test('family hotel quotes support confirmed child ages while family flights requ
   workspace.brief.childAges = [6, 10];
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
+  await openStudioTool(page, 'Accommodation');
   await page.getByText('Find hotel or flight suggestions', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Search hotels quotes' })).toBeEnabled();
   await choose(page, page.getByRole('combobox', { name: 'Search for', exact: true }), 'Flights');
@@ -501,16 +543,15 @@ test('recommendations are opt-in for selected destinations and never impose a da
   const workspace = fixtureWorkspace(true);
   const mocked = await mockStudio(page, workspace);
   await page.goto(`/studio/${workspaceId}`);
-  await page.getByRole('tab', { name: 'Optional ideas', exact: true }).click();
+  await openStudioTool(page, 'Optional ideas');
   expect(mocked.requests.some((r) => r.path.endsWith('/recommendations'))).toBe(false);
   await page.getByRole('checkbox', { name: 'Amsterdam', exact: true }).uncheck();
   await choose(page, page.getByRole('combobox', { name: 'Recommendation type' }), 'Places to eat');
   await page.getByLabel('What would suit this client?').fill('Vegetarian, quiet, local food');
   await page.getByRole('button', { name: 'Research recommendations' }).click();
-  await expect(page.getByRole('link', { name: 'Official café website' })).toHaveAttribute(
-    'href',
-    'https://example.com/cafe',
-  );
+  await expect(
+    page.getByRole('link', { name: 'Official café website', exact: true }),
+  ).toHaveAttribute('href', 'https://example.com/cafe');
   expect(mocked.requests.find((r) => r.path.endsWith('/recommendations'))?.body).toMatchObject({
     category: 'food',
     stopIds: [stops()[0].id],
@@ -565,19 +606,22 @@ test('client context reuse stays explicit and never restores a past travelling p
     .getByLabel('Saved client', { exact: true })
     .selectOption('60000000-0000-4000-8000-000000000020');
   await expect.poll(() => workspace.brief.clientId).toBe('60000000-0000-4000-8000-000000000020');
-  await page.getByRole('button', { name: 'Edit brief', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Client brief' });
-  await expect(dialog.getByLabel('Adults', { exact: true })).toHaveValue('');
-  await expect(dialog.getByLabel('Children', { exact: true })).toHaveValue('');
-  await expect(dialog.getByRole('textbox', { name: 'Client context', exact: true })).toHaveValue(
+  const desk = page.getByRole('region', { name: 'Client desk', exact: true });
+  await desk.getByText('Background for this trip', { exact: true }).click();
+  await expect(desk.getByRole('textbox', { name: 'Client context', exact: true })).toHaveValue(
     'Past clients prefer architecture and small hotels.',
   );
-  await expect(dialog.getByLabel('Adults', { exact: true })).toHaveValue('');
-  await dialog.getByLabel('Adults', { exact: true }).fill('2');
-  await dialog.getByLabel('Children', { exact: true }).fill('2');
-  await dialog.getByLabel('Children’s ages · comma separated').fill('6, 10');
-  await dialog.getByRole('button', { name: 'Save brief' }).click();
-  await expect(dialog).not.toBeVisible();
+  await desk.getByRole('tab', { name: 'Travellers', exact: true }).click();
+  await expect(desk.getByLabel('Adults', { exact: true })).toHaveValue('');
+  await expect(desk.getByLabel('Children', { exact: true })).toHaveValue('');
+  await desk.getByLabel('Adults', { exact: true }).fill('2');
+  await desk.getByLabel('Children', { exact: true }).fill('2');
+  await desk.getByRole('textbox', { name: /^Children’s ages/ }).fill('6, 10');
+  await desk.getByRole('button', { name: 'Save details', exact: true }).click();
+  await expect(desk.getByRole('button', { name: /^Customer desk/ })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
   expect(workspace.brief).toMatchObject({
     adults: 2,
     children: 2,
@@ -591,6 +635,7 @@ test('failed service save keeps the entered details available for retry', async 
   const workspace = fixtureWorkspace(true);
   await mockStudio(page, workspace, { failPatch: true });
   await page.goto(`/studio/${workspaceId}`);
+  await openStudioTool(page, 'Accommodation');
   await page.getByRole('button', { name: 'Add a service', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Add a service to the proposal' });
   await dialog.getByLabel('Service name').fill('Keep this draft hotel');

@@ -1,3 +1,4 @@
+import { confirmStudioStartClient, openStudioTool } from './ui-helpers';
 import { test, expect } from '@playwright/test';
 import type { StudioWorkspace } from '../shared/studio';
 
@@ -13,6 +14,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
 }, testInfo) => {
   test.setTimeout(300_000);
   let workspaceId: string | undefined;
+  let clientId: string | undefined;
   const unwanted: string[] = [];
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -41,6 +43,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
       { timeout: 225_000 },
     );
     await page.getByRole('button', { name: 'Start planning your trip' }).click();
+    clientId = await confirmStudioStartClient(page);
     const created = await createdPromise;
     expect(created.status()).toBe(201);
     workspaceId = ((await created.json()) as { workspace: StudioWorkspace }).workspace.id;
@@ -102,13 +105,14 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
     expect(
       workspace.messages.filter((message) => message.role === 'assistant').at(-1)!.content.length,
     ).toBeLessThanOrEqual(600);
+    await openStudioTool(page, 'Route');
     await expect(page.getByRole('tab', { name: 'Accommodation', exact: true })).toBeDisabled();
-    await page.getByRole('tab', { name: 'Route', exact: true }).click();
     await page
       .getByRole('button', { name: /Skip questions and build structure|Build route structure/ })
       .click();
     await expect(page.getByRole('button', { name: 'Accept structure', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Accept structure', exact: true }).click();
+    await openStudioTool(page, 'Accommodation');
     await expect(
       page.getByRole('heading', { name: 'What would you like help with?' }),
     ).toBeVisible();
@@ -118,7 +122,7 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
     expect(workspace.structureAccepted).toBe(true);
     verify(workspace);
     await page.reload();
-    await page.getByRole('tab', { name: 'Route', exact: true }).click();
+    await openStudioTool(page, 'Route');
     await expect(
       page.getByRole('spinbutton', { name: 'Nights in Paris', exact: true }),
     ).toHaveValue('9');
@@ -146,6 +150,10 @@ test('real Studio intake preserves a 28-day route and waits for explicit accepta
       }),
     );
   } finally {
+    if (clientId)
+      expect((await page.request.delete(`/api/studio/client-profiles/${clientId}`)).status()).toBe(
+        204,
+      );
     if (workspaceId) {
       const removed = await page.request.delete(`/api/studio/workspaces/${workspaceId}`);
       expect(removed.status()).toBe(204);

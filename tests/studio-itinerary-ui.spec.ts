@@ -1,3 +1,4 @@
+import { openStudioTool } from './ui-helpers';
 import { test, expect, type Page } from '@playwright/test';
 import { catalog } from '../shared/catalog';
 import { defaultTravelProfile } from '../shared/account';
@@ -120,10 +121,7 @@ test('accepted route generates daily activities and chat refinements return to t
   const workspace = fixture();
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
-  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await openStudioTool(page, 'Daily activities');
   await page
     .getByLabel('Itinerary instructions · optional')
     .fill('A relaxed pace with time to rest.');
@@ -131,11 +129,8 @@ test('accepted route generates daily activities and chat refinements return to t
   const plan = page.getByRole('region', { name: 'Day-by-day itinerary', exact: true });
   await expect(plan.getByRole('heading', { name: 'London day 1', exact: true })).toBeInViewport();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('tab', { name: 'Trip workspace', exact: true }).click();
   await expect(plan.getByRole('heading', { name: 'London day 1', exact: true })).toBeInViewport();
-  await expect(page.getByRole('button', { name: 'Preview proposal', exact: true })).toBeInViewport({
-    ratio: 1,
-  });
+  await expect(page.getByRole('button', { name: 'Review proposal', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(plan.getByRole('heading', { name: 'London day 4', exact: true })).toBeVisible();
   await expect(plan.getByRole('link', { name: 'Official visitor guide' })).toHaveCount(4);
@@ -162,13 +157,10 @@ test('accepted route generates daily activities and chat refinements return to t
     .getByRole('region', { name: 'Import client information' })
     .getByRole('textbox');
   await expect(composer).toHaveValue('Refine the day-by-day itinerary: ');
-  await page.getByRole('tab', { name: 'Accommodation', exact: true }).click();
   await composer.fill('Make day 2 quieter with more rest.');
   await page.getByRole('button', { name: 'Review brief', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await expect.poll(() => workspace.itinerary?.days[1].title).toBe('A quieter second day');
+  await openStudioTool(page, 'Daily activities');
   await expect(
     plan.getByRole('heading', { name: 'A quieter second day', exact: true }),
   ).toBeVisible();
@@ -189,6 +181,7 @@ test('the daily plan waits for each destination stay length', async ({ page }) =
   workspace.stops[0].nights = null;
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
+  await openStudioTool(page, 'Daily activities');
   await expect(
     page.getByRole('button', { name: 'Build day-by-day itinerary', exact: true }),
   ).toBeDisabled();
@@ -212,6 +205,7 @@ test('fixed arrival gaps count toward the daily itinerary limit', async ({ page 
   });
   const writes = await mockWorkspace(page, workspace);
   await page.goto(`/studio/${workspace.id}`);
+  await openStudioTool(page, 'Daily activities');
   await expect(
     page.getByRole('button', { name: 'Build day-by-day itinerary', exact: true }),
   ).toBeDisabled();
@@ -226,19 +220,17 @@ test('a chat route change returns an open itinerary to structure approval', asyn
   workspace.itinerary = itinerary();
   await mockWorkspace(page, workspace, 'change-route');
   await page.goto(`/studio/${workspace.id}`);
-  await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await expect(
+    page.getByRole('region', { name: 'Interactive itinerary', exact: true }),
+  ).toContainText('London');
   const composer = page
     .getByRole('region', { name: 'Import client information' })
     .getByRole('textbox');
   await composer.fill('Make London four nights.');
   await page.getByRole('button', { name: 'Review brief', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  await expect.poll(() => workspace.structureAccepted).toBe(false);
+  expect(workspace.itinerary).toBeNull();
+  await openStudioTool(page, 'Route');
   await expect(page.getByRole('tab', { name: 'Daily activities', exact: true })).toBeDisabled();
   await expect(page.getByRole('region', { name: 'Day-by-day itinerary' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Accept structure', exact: true })).toBeVisible();

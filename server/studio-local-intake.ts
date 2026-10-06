@@ -6,6 +6,7 @@ import {
   groundedStudioBrief,
   assertStudioRouteGrounding,
   groundedStudioDates,
+  requestedStudioNights,
 } from './studio-grounding.ts';
 import {
   prepareStudioStayClarification,
@@ -115,13 +116,18 @@ function cleanPlace(value: string) {
       /^(?:(?:plan\s+)?(?:a\s+)?trip\s+to|plan|visit|stay\s+in|arrive(?:\s+in)?|then|to)\s+/i,
       '',
     )
+    .replace(
+      /\s+(?:for\s+)?(?:exactly|precisely|roughly|about|around|approximately|just|only)$/i,
+      '',
+    )
     .trim();
   // Keep a literal place name, not the surrounding planning instructions or preferences.
   if (
     !name ||
     /\b(?:adults?|children|kids?|travell?ers?|budget|nights?|days?|hotels?|proposal|client|please|prefer|with|for|from|starting|we|want|need|add|more|remove|extend|shorten|the|a|an|somewhere|anywhere)\b/i.test(
       name,
-    )
+    ) ||
+    /^(?:exactly|precisely|roughly|about|around|approximately|just|only)$/i.test(name)
   )
     return;
   return name;
@@ -261,7 +267,7 @@ function readBrief(
     if (pattern.test(text)) facts.push({ field, evidence: text });
   };
   include('adults', /\badults?\b|\b(?:travell?ing solo|solo traveller|just me)\b/i);
-  include('children', /\b(?:children|kids?|infants?|adults only|all adults|only adults)\b/i);
+  include('children', /\b(?:child(?:ren)?|kids?|infants?|adults only|all adults|only adults)\b/i);
   include(
     'tripPurpose',
     /\b(?:business|bussiness|tourism|holiday|vacation|leisure|study|studying|employment|paid work|conference)\b/i,
@@ -269,7 +275,7 @@ function readBrief(
   include('childAges', /\b(?:ages?|aged)\b/i);
   if (
     answering === 'passportNationality' ||
-    /\b(?:passport|nationality|citizenship|citizen|client|i am|i['’]m)\b/i.test(text)
+    /\b(?:passports?|nationality|citizenship|citizen|client|i am|i['’]m)\b/i.test(text)
   )
     facts.push({ field: 'passportNationality', evidence: text });
   include(
@@ -451,6 +457,11 @@ export function localStudioReview(
       }
     }
     readDates(text, brief, stops);
+    if (stops.length === 1) {
+      const nights = requestedStudioNights(text, stops[0].name, stops[0].nights, true);
+      if (nights !== undefined && Number.isInteger(nights) && nights >= 0 && nights <= 120)
+        stops[0].nights = nights;
+    }
     if (stops.length <= 1)
       Object.assign(
         brief,

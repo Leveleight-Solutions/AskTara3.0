@@ -20,6 +20,7 @@ import {
   SlidersHorizontal,
   Building2,
   TicketCheck,
+  Users,
 } from 'lucide-react';
 import {
   Avatar,
@@ -53,6 +54,8 @@ import { RecentProposalList, useRecentProposals } from './components/RecentPropo
 import { NAV_ITEM_HEIGHT, SidebarNavItem, rowFill, useRowHover } from './components/SidebarNavItem';
 import Studio from './pages/Studio';
 import StudioProposal from './pages/StudioProposal';
+import Clients from './pages/Clients';
+import { CreateProposalDialog } from './components/ClientPicker';
 
 function AuthDialog({
   onClose,
@@ -197,6 +200,7 @@ function ConnectedApp() {
     mode: 'local',
   });
   const [auth, setAuth] = useState(false);
+  const [creatingProposal, setCreatingProposal] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsedPreference);
   const [toastMessage, setToast] = useState('');
@@ -309,7 +313,7 @@ function ConnectedApp() {
     location.pathname.startsWith('/chat') || location.pathname.startsWith('/studio');
   /* Home is a single full-screen hero, like Gemini's start page; a footer under it would only add
      a scroll to a page that has nothing below the fold. */
-  const showFooter = !isPlanner && location.pathname !== '/';
+  const showFooter = !isPlanner && location.pathname !== '/' && location.pathname !== '/clients';
   return (
     <AppContext.Provider
       value={{
@@ -344,6 +348,7 @@ function ConnectedApp() {
           onAgencySettings={() => navigate('/settings/agency')}
           onSignIn={() => setAuth(true)}
           onSignOut={() => void logout()}
+          onCreateProposal={() => setCreatingProposal(true)}
         />
         <Flex direction="column" flexGrow="1" minWidth="0">
           {/* Below `md` the panel is off-canvas: this bar is the only chrome above the content,
@@ -393,7 +398,6 @@ function ConnectedApp() {
               <nav aria-label="Mobile navigation">
                 <Flex direction="column" gap="2">
                   <Button
-                    asChild
                     size="3"
                     variant={user ? 'solid' : 'soft'}
                     color={user ? undefined : 'gray'}
@@ -402,11 +406,13 @@ function ConnectedApp() {
                       justifyContent: 'flex-start',
                       fontSize: 'var(--font-size-2)',
                     }}
+                    onClick={() => {
+                      setMobile(false);
+                      setCreatingProposal(true);
+                    }}
                   >
-                    <Link to="/">
-                      <Plus size={16} />
-                      Create a proposal
-                    </Link>
+                    <Plus size={16} />
+                    Create a proposal
                   </Button>
                   {/* Same rhythm as the panel: the five nav rows stack with no gap between
                       them, while the buttons around them keep their 8px. */}
@@ -415,6 +421,11 @@ function ConnectedApp() {
                       to="/studio"
                       icon={<MessageCircle size={18} />}
                       label="Agent Studio"
+                    />
+                    <MobileNavItem
+                      to="/clients"
+                      icon={<Users size={18} />}
+                      label="Existing clients"
                     />
                     <MobileNavItem to="/explore" icon={<Compass size={18} />} label="Discover" />
                     <MobileNavItem to="/trips" icon={<Luggage size={18} />} label="My trips" />
@@ -507,6 +518,7 @@ function ConnectedApp() {
                   <Route path="/" element={<Home />} />
                   <Route path="/studio" element={<Studio />} />
                   <Route path="/studio/:id" element={<Studio />} />
+                  <Route path="/clients" element={<Clients key={ownerVersion} />} />
                   <Route path="/explore" element={<Explore />} />
                   <Route path="/destinations/:id" element={<DestinationDetail />} />
                   <Route path="/stays" element={<Collection kind="stays" />} />
@@ -598,6 +610,16 @@ function ConnectedApp() {
         </Flex>
       </Flex>
       <TopLoadingBar />
+      {creatingProposal && (
+        <CreateProposalDialog
+          key={ownerVersion}
+          onClose={() => setCreatingProposal(false)}
+          onCreated={(workspace) => {
+            setCreatingProposal(false);
+            navigate(`/studio/${workspace.id}`);
+          }}
+        />
+      )}
       {toastMessage && (
         <Box
           position="fixed"
@@ -784,6 +806,7 @@ function Sidebar({
   onAgencySettings,
   onSignIn,
   onSignOut,
+  onCreateProposal,
 }: {
   user: User | null;
   savedCount: number;
@@ -796,6 +819,7 @@ function Sidebar({
   onAgencySettings: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
+  onCreateProposal: () => void;
 }) {
   const recent = useRecentProposals(!!user, ownerVersion);
   /* The two places that read differently signed in and signed out — the primary action's weight
@@ -918,21 +942,18 @@ function Sidebar({
           ) : collapsed ? (
             <Flex justify="center" flexShrink="0">
               <IconButton
-                asChild
                 size="3"
                 variant={user ? 'solid' : 'soft'}
                 color={user ? undefined : 'gray'}
                 aria-label="Create a proposal"
                 title="Create a proposal"
+                onClick={onCreateProposal}
               >
-                <Link to="/">
-                  <Plus size={18} />
-                </Link>
+                <Plus size={18} />
               </IconButton>
             </Flex>
           ) : (
             <Button
-              asChild
               size="3"
               variant={user ? 'solid' : 'soft'}
               color={user ? undefined : 'gray'}
@@ -941,11 +962,10 @@ function Sidebar({
                 justifyContent: 'flex-start',
                 fontSize: 'var(--font-size-2)',
               }}
+              onClick={onCreateProposal}
             >
-              <Link to="/">
-                <Plus size={16} />
-                Create a proposal
-              </Link>
+              <Plus size={16} />
+              Create a proposal
             </Button>
           )}
           {/* The one region that gives way when the viewport is short, so the brand, the primary
@@ -959,6 +979,12 @@ function Sidebar({
                   to="/studio"
                   icon={<MessageCircle size={18} />}
                   label="Agent Studio"
+                  collapsed={collapsed}
+                />
+                <SidebarNavItem
+                  to="/clients"
+                  icon={<Users size={18} />}
+                  label="Existing clients"
                   collapsed={collapsed}
                 />
                 <SidebarNavItem

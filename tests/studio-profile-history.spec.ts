@@ -166,10 +166,13 @@ test('a returning profile preserves private details and structured trip feedback
         },
       ],
     });
-    await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get(`/api/studio/workspaces/${first.id}`)).json()).workspace
+            .brief.clientId,
+      )
+      .toBe(profileId);
     await openStudioClientDesk(page);
     await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(page.getByLabel('Saved client', { exact: true })).toHaveValue(profileId);
@@ -255,10 +258,13 @@ test('a returning profile preserves private details and structured trip feedback
     await openStudioClientProfiles(page, 'Client profiles · new or returning');
     await page.getByLabel('Saved client', { exact: true }).selectOption(profileId);
     await expect.poll(() => researchRequests.length).toBe(3);
-    await expect(page.getByRole('tab', { name: 'Route', exact: true })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    await expect
+      .poll(
+        async () =>
+          (await (await page.request.get(`/api/studio/workspaces/${next.id}`)).json()).workspace
+            .brief.clientId,
+      )
+      .toBe(profileId);
     await openStudioClientDesk(page);
     await openStudioClientProfiles(page, 'Client profiles · Fictional Profile Traveller');
     await expect(page.getByText('View travel history (3)', { exact: true })).toBeVisible();

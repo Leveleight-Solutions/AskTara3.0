@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import type { StudioWorkspace } from '../shared/studio.ts';
 import {
   normalizeStudioCountry,
@@ -98,12 +99,44 @@ function preferences(workspace: StudioWorkspace) {
     endDate: brief.endDate,
     tripLength: brief.tripLength ?? null,
     interests: brief.interests.map(safe),
+    foodPreferences: (brief.foodPreferences || []).map(safe),
     budget: brief.budget,
     currency: brief.currency,
     adults: brief.adults,
     children: brief.children,
     origin: safe(brief.origin),
   };
+}
+/** Private context affects invalidation but is hashed, never sent to destination research. */
+export function studioDestinationResearchInputKey(
+  workspace: StudioWorkspace,
+  history: StudioTravelHistoryEntry[] = [],
+  profile?: { context: string; interests: string[]; foodPreferences: string[] },
+) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        clientId: workspace.brief.clientId || '',
+        privateContext: workspace.brief.context,
+        profile: profile
+          ? {
+              context: profile.context,
+              interests: profile.interests,
+              foodPreferences: profile.foodPreferences,
+            }
+          : null,
+        trip: preferences(workspace),
+        history: studioRecommendationHistory(history),
+        route: workspace.stops.map(({ id, name, country, arrivalDate, departureDate }) => ({
+          id,
+          name,
+          country,
+          arrivalDate,
+          departureDate,
+        })),
+      }),
+    )
+    .digest('hex');
 }
 const stamp = () => new Date().toISOString();
 const evidenceDate = (value: string) =>
@@ -434,7 +467,7 @@ Write all user-facing prose, including notes, in plain travel-planning language.
       candidates[0].sources.push(sourceFor(url, sources, 'other', checkedAt));
   return {
     checkedAt,
-    inputKey: JSON.stringify(trip),
+    inputKey: studioDestinationResearchInputKey(workspace, history),
     historyUsed: safeHistory.length > 0,
     candidates,
     notes: [
