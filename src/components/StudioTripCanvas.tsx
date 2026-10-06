@@ -20,7 +20,7 @@ import type { StudioWorkspace } from '../../shared/studio';
 import { money, readableDate } from '../api';
 import { studioCanvasBudget } from './studioCanvasBudget';
 import { STUDIO_TRIP_BRIEFING_FRESH_MS } from '../../shared/studio-trip-briefing';
-import { studioTripBriefingDisplay } from './studioTripBriefingView';
+import { studioCanvasTravelStatus } from './studioCanvasTravelStatus';
 import './StudioTripCanvas.css';
 
 export type StudioCanvasTool =
@@ -49,7 +49,7 @@ export function StudioTripCanvas({
   const selected = workspace.items.filter((item) => item.included);
   const budget = studioCanvasBudget(workspace);
   const [clock, setClock] = useState(Date.now);
-  const briefing = studioTripBriefingDisplay(workspace, Math.max(clock, Date.now()));
+  const travelStatus = studioCanvasTravelStatus(workspace, Math.max(clock, Date.now()));
   useEffect(() => {
     const now = Date.now();
     const times = [
@@ -141,16 +141,11 @@ export function StudioTripCanvas({
         <div className="studio-travel-status" aria-label="Travel checks overview">
           <span>
             <ShieldCheck size={13} />
-            {briefing.rows.length &&
-            briefing.rows.every((row) => row.entryRequirements?.status === 'corroborated')
-              ? 'Entry sources checked'
-              : 'Entry checks pending'}
+            {travelStatus.entryLabel}
           </span>
           <span>
             <CloudSun size={13} />
-            {briefing.rows.some((row) => row.weather?.kind === 'seasonal_outlook')
-              ? 'Seasonal outlook ready'
-              : 'Weather guidance pending'}
+            {travelStatus.weatherLabel}
           </span>
           <button disabled={busy} onClick={() => onEdit('structure')}>
             Details

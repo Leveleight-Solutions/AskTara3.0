@@ -158,7 +158,15 @@ try {
     entryStatuses: workspace.tripBriefing.stops.map(
       (stop) => stop.entryRequirements?.status || 'missing',
     ),
+    entryErrors: workspace.tripBriefing.stops.map((stop) => stop.entryError),
   };
+  check(
+    workspace.tripBriefing.stops.every(
+      (stop) => stop.entryRequirements || Boolean(stop.entryError),
+    ),
+    'Automatic entry checks finish with sourced evidence or an explicit review reason',
+  );
+  await expect(page.getByTestId('studio-trip-board')).not.toContainText('Entry checks pending');
   await waitMutation('/itinerary', () =>
     page
       .getByRole('region', { name: 'Tara planning actions' })
