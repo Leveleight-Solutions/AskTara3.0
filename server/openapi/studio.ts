@@ -1339,7 +1339,9 @@ export const studioPaths: OpenAPIV3_1.PathsObject = {
         '404': error('Workspace not found.'),
         '409': error('Revision conflict, including edits made while searching.'),
         '502': error('Flight provider failed or returned invalid offers.'),
-        '503': error('No flight provider is configured.'),
+        '503': error(
+          'No flight provider is configured, or a supplier is temporarily unavailable (FLIGHTS_PROVIDER_UNAVAILABLE). The saved trip is unchanged and no new quotes or bookings are created.',
+        ),
       },
     }),
   },
